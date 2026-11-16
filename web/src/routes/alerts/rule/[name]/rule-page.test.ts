@@ -111,6 +111,37 @@ describe('Suricata rule page', () => {
 		expect(docs).toHaveAttribute('rel', 'noopener noreferrer');
 	});
 
+	it('opens an exact window from the URL as Custom, and the range pills replace it', async () => {
+		const [from, to] = ['2026-11-01T08:00:00.000Z', '2026-11-01T20:00:00.000Z'];
+		goTo(RULE_NAME, `?from=${from}&to=${to}&range=6h`);
+		stubDaemon(SURICATA_RULE);
+		render(Page);
+		await loaded();
+		expect([figuresCall().searchParams.get('from'), figuresCall().searchParams.get('to')]).toEqual([from, to]);
+		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByText(/^What this rule means, when it fired and which addresses it involved · window /)).toBeInTheDocument();
+		// the links carry the URL's range for their words, beside the response's bounds
+		expect(query(kpi('Alerts').getAttribute('href'))).toEqual({ signature: RULE_NAME, ...WIN, range: '6h', count: '180' });
+		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
+		expect(goto).toHaveBeenCalledWith(`/alerts/rule/${encodeURIComponent(RULE_NAME)}?range=30d`, { replaceState: true, keepFocus: true, noScroll: true });
+	});
+
+	it("links each SID's category to its page, except from the activity list", async () => {
+		goTo(RULE_NAME);
+		stubDaemon(SURICATA_RULE);
+		render(Page);
+		await loaded();
+		const category = within(card('Rule details')).getByRole('link', { name: 'Attempted Administrator Privilege Gain' });
+		const href = new URL(category.getAttribute('href')!, 'http://x');
+		expect(href.pathname).toBe('/alerts/suricata/Attempted%20Administrator%20Privilege%20Gain');
+		expect(Object.fromEntries(href.searchParams)).toEqual(WIN);
+		goTo(RULE_NAME, '?activity=true');
+		stubDaemon({ ...SURICATA_RULE, activity: true, total: 12, severity: { high: 0, medium: 0, low: 12, info: 0 }, timeline: [{ t: SURICATA_RULE.from, n: 12 }] });
+		await refreshPage();
+		await loaded('12');
+		expect(within(card('Rule details')).getByText('Attempted Administrator Privilege Gain').closest('a')).toBeNull();
+	});
+
 	it("keeps each SID's own facts", async () => {
 		goTo(RULE_NAME);
 		stubDaemon(SURICATA_RULE);

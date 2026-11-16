@@ -25,9 +25,11 @@ from services.owner_rules_validator import SID_MAX, SID_MIN
 
 MAX_LINKS = 6
 
-TECHNIQUE_ID = re.compile(r"T\d{4}(?:\.\d{3})?")
-TACTIC_ID = re.compile(r"TA\d{4}")
-CVE_ID = re.compile(r"CVE-\d{4}-\d{4,7}")
+# OLD CODE: TECHNIQUE_ID = re.compile(r"T\d{4}(?:\.\d{3})?"), TACTIC_ID r"TA\d{4}", CVE_ID r"CVE-\d{4}-\d{4,7}" (review: ASCII digits)
+# [0-9], not \d: \d also matches other scripts' digits, which no ATT&CK or CVE id uses
+TECHNIQUE_ID = re.compile(r"T[0-9]{4}(?:\.[0-9]{3})?")
+TACTIC_ID = re.compile(r"TA[0-9]{4}")
+CVE_ID = re.compile(r"CVE-[0-9]{4}-[0-9]{4,7}")
 _DBL_NAME = re.compile(r"IPFire DBL \[([^\]]+)\]", re.IGNORECASE)
 
 MITRE = "MITRE ATT&CK"

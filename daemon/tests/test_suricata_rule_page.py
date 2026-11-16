@@ -201,7 +201,9 @@ class TestFiguresOpenTheirLists(RuleCase):
         self.assertFalse(page["activity"])
 
     async def test_each_address_row_equals_its_ip_list(self):
-        page = await self.page(DROP)
+        # one address per exact-count search, so every row's figures come from its own batch
+        with patch.object(suricata_rule, "EXACT_BATCH", 1):
+            page = await self.page(DROP)
         devices = {r["ip"]: r for r in page["devices"]["rows"]}
         # d4 is L1 at both ends: one alert in the list, once as source and once as target
         self.assertEqual(
@@ -321,6 +323,54 @@ class TestRuleFacts(RuleCase):
         # ids and names no longer line up once X1 is dropped, so names are not guessed
         self.assertEqual(two["techniques"], [{"id": "T1083", "name": None}])
         self.assertEqual(two["cves"], [])
+
+    async def test_names_pair_with_their_ids_before_bad_ids_go(self):
+        self.os.docs = [
+            *DOCS,
+            _alert(
+                "p1",
+                L1,
+                R1,
+                "ET INFO paired names",
+                2000050,
+                threat__technique__id=["X1", "T1071", "", "T1572"],
+                threat__technique__name=[
+                    "Bad",
+                    "Application Layer Protocol",
+                    "Blank",
+                    "Protocol Tunneling",
+                ],
+            ),
+        ]
+        page = await self.page("ET INFO paired names")
+        self.assertEqual(
+            page["rules"][0]["techniques"],
+            [
+                {"id": "T1071", "name": "Application Layer Protocol"},
+                {"id": "T1572", "name": "Protocol Tunneling"},
+            ],
+        )
+
+    async def test_a_curated_text_filed_under_another_rule_is_not_used(self):
+        # data/suricata_descriptions.json files Bitcoin mining under 2016149, which is STUN
+        page = await self.page(STUN, f"{WINDOW}&activity=true")
+        self.assertEqual(page["rules"][0]["sid"], "2016149")
+        self.assertIsNone(page["rules"][0]["advice"])
+        self.assertEqual(page["explanation"], rx.explain_name(STUN, 3))
+        self.assertNotIn("mining", str(page).lower())
+
+    async def test_one_credential_sid_explains_the_page_as_a_credential(self):
+        name = "ET POLICY Outgoing Basic Auth Base64 HTTP Password detected unencrypted (one)"
+        self.os.docs = [
+            *DOCS,
+            _alert("c9", L1, R1, name, 2006399, et=["Informational"]),
+        ]
+        # NetTap counts a secret in the clear, whatever ET's rating
+        page = await self.page(name)
+        self.assertEqual([r["credential"] for r in page["rules"]], [True])
+        # the name alone says "policy"; the one SID's credential advice says what it is
+        self.assertEqual(rx.explain_name(name, 2)["family"], "policy")
+        self.assertEqual(page["explanation"], rx.credential_advice())
 
     async def test_a_repeated_attack_id_is_listed_once(self):
         # two techniques under one tactic: Malcolm repeats the tactic, and the page keys on the id

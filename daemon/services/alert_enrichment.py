@@ -345,9 +345,21 @@ class AlertEnrichment:
                 exc,
             )
 
-    def sid_text(self, sid: str) -> dict | None:
-        """The curated {what, risk, todo} for one SID, or None when it has none (rule page)."""
-        info = self._sid_descriptions.get(str(sid))
+    def _curated(self, sid: str, name: str) -> dict | None:
+        """A SID's curated entry, only when its signature is this rule's name or the start of it:
+        some SIDs in the file name another rule (2016149 is STUN, not Bitcoin mining)."""
+        info = self._sid_descriptions.get(str(sid)) or {}
+        signature = info.get("signature", "")
+        return info if signature and (name or "").startswith(signature) else None
+
+    # OLD CODE START — looked up by SID alone, so a SID filed under another rule's text showed it
+    # def sid_text(self, sid: str) -> dict | None:
+    #     """The curated {what, risk, todo} for one SID, or None when it has none (rule page)."""
+    #     info = self._sid_descriptions.get(str(sid))
+    # OLD CODE END
+    def sid_text(self, sid: str, name: str) -> dict | None:
+        """The curated {what, risk, todo} for one SID and rule name, or None (rule page)."""
+        info = self._curated(sid, name)
         if not info:
             return None
         return {
@@ -376,8 +388,12 @@ class AlertEnrichment:
         severity = alert_data.get("severity", 3)
 
         # Try SID lookup first
-        if sid and sid in self._sid_descriptions:
-            sid_info = self._sid_descriptions[sid]
+        # OLD CODE START — by SID alone; the curated text must name this rule too
+        # if sid and sid in self._sid_descriptions:
+        #     sid_info = self._sid_descriptions[sid]
+        # OLD CODE END
+        sid_info = self._curated(sid, signature) if sid else None
+        if sid_info:
             alert["plain_description"] = sid_info.get("description", "")
             alert["risk_context"] = sid_info.get(
                 "risk_context",

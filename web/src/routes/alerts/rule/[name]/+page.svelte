@@ -25,6 +25,7 @@
 		pickWindow,
 		rangeWindow,
 		startRange,
+		suricataCategoryHref,
 		withCount,
 		type DrillRange,
 		type TimeChart,
@@ -308,7 +309,14 @@
 					<dl class="facts">
 						<dt>ET rating</dt>
 						<dd>{ratingWords(rule.et_ratings)}</dd>
-						{#if rule.categories.length}<dt>Category</dt><dd>{rule.categories.join(', ')}</dd>{/if}
+						<!-- OLD CODE: {#if rule.categories.length}<dt>Category</dt><dd>{rule.categories.join(', ')}</dd>{/if} (each opens its category page) -->
+						<!-- The category page counts only counted alerts, so the activity list doesn't link to it (as on Alerts) -->
+						{#if rule.categories.length}
+							<dt>Category</dt>
+							<dd>
+								{#each rule.categories as c, i (i)}{#if i > 0}, {/if}{#if data.activity}{c}{:else}<a href={suricataCategoryHref(c, figuresWindow)}>{c}</a>{/if}{/each}
+							</dd>
+						{/if}
 						{#if rule.techniques.length || rule.tactics.length}
 							<dt>MITRE ATT&CK</dt>
 							<dd class="chips">

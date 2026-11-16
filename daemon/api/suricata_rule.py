@@ -84,17 +84,15 @@ def valid_rule_name(raw: object) -> str | None:
     return None
 
 
-def _query(
-    from_ts: str, to_ts: str, name: str, activity: bool, severity: str = ""
-) -> dict:
-    """The list's query for signature=name (activity=, severity= when given)."""
-    narrow, exclude = severity_clauses(severity)
+# OLD CODE START — review: no caller passed severity=
+# def _query(from_ts, to_ts, name, activity, severity=""):
+#     narrow, exclude = severity_clauses(severity)
+#     return alert_query(from_ts, to_ts, [{"term": {"rule.name": name}}, *narrow], exclude, activity=activity)
+# OLD CODE END
+def _query(from_ts: str, to_ts: str, name: str, activity: bool) -> dict:
+    """The list's query for signature=name and activity=."""
     return alert_query(
-        from_ts,
-        to_ts,
-        [{"term": {"rule.name": name}}, *narrow],
-        exclude,
-        activity=activity,
+        from_ts, to_ts, [{"term": {"rule.name": name}}], activity=activity
     )
 
 
@@ -104,14 +102,28 @@ def _listed(value: Any) -> list[str]:
     return [str(v) for v in found if v is not None and str(v) != ""]
 
 
-def _paired(ids: list[str], names: list[str], pattern: re.Pattern) -> list[dict]:
-    """ATT&CK ids with their names (Malcolm writes parallel lists), invalid ids dropped, each
-    id once (two techniques under one tactic repeat the tactic, and the page keys on the id)."""
-    lined_up = len(ids) == len(names)
+# OLD CODE START — review: paired after _listed dropped empties, so the lists could stop lining up
+# def _paired(ids: list[str], names: list[str], pattern: re.Pattern) -> list[dict]:
+#     lined_up = len(ids) == len(names)
+#     paired = [{"id": tid, "name": names[i] if lined_up else None} for i, tid in enumerate(ids) if pattern.fullmatch(tid)]
+#     return list({t["id"]: t for t in paired}.values())
+# OLD CODE END
+def _paired(ids: Any, names: Any, pattern: re.Pattern) -> list[dict]:
+    """ATT&CK ids with their names, from Malcolm's raw parallel lists: paired by position first,
+    then invalid ids dropped (so a name never shifts onto another id), each id once (two
+    techniques under one tactic repeat the tactic, and the page keys on the id)."""
+    raw_ids = ids if isinstance(ids, list) else [ids]
+    raw_names = names if isinstance(names, list) else [names]
+    lined_up = len(raw_ids) == len(raw_names)
     paired = [
-        {"id": tid, "name": names[i] if lined_up else None}
-        for i, tid in enumerate(ids)
-        if pattern.fullmatch(tid)
+        {
+            "id": str(tid),
+            "name": str(raw_names[i])
+            if lined_up and raw_names[i] not in (None, "")
+            else None,
+        }
+        for i, tid in enumerate(raw_ids)
+        if tid is not None and pattern.fullmatch(str(tid))
     ]
     return list({t["id"]: t for t in paired}.values())
 
@@ -124,12 +136,9 @@ def _sid_facts(sid: str, alerts: int, src: dict, name: str) -> dict:
     tactic = threat.get("tactic") or {}
     meta = ((src.get("suricata") or {}).get("alert") or {}).get("metadata") or {}
     et_ratings = _listed(meta.get("signature_severity"))
-    techniques = _paired(
-        _listed(technique.get("id")), _listed(technique.get("name")), rx.TECHNIQUE_ID
-    )
-    tactics = _paired(
-        _listed(tactic.get("id")), _listed(tactic.get("name")), rx.TACTIC_ID
-    )
+    # OLD CODE: techniques = _paired(_listed(technique.get("id")), _listed(technique.get("name")), …) (and tactics; raw lists now)
+    techniques = _paired(technique.get("id"), technique.get("name"), rx.TECHNIQUE_ID)
+    tactics = _paired(tactic.get("id"), tactic.get("name"), rx.TACTIC_ID)
     cves = [
         c
         for c in _listed((src.get("vulnerability") or {}).get("id"))
@@ -153,7 +162,10 @@ def _sid_facts(sid: str, alerts: int, src: dict, name: str) -> dict:
         "cisa_kev": cisa_kev,
         "dbl_lists": dbl,
         "credential": credential,
-        "advice": rx.sid_advice(_alert_enrichment.sid_text(sid), name, et_ratings),
+        # OLD CODE: "advice": rx.sid_advice(_alert_enrichment.sid_text(sid), name, et_ratings), (the curated text must name this rule)
+        "advice": rx.sid_advice(
+            _alert_enrichment.sid_text(sid, name), name, et_ratings
+        ),
         "learn_more": rx.sid_links(techniques, tactics, cves, cisa_kev, credential),
     }
 

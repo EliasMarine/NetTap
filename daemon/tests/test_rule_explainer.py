@@ -199,3 +199,20 @@ def test_every_url_is_a_verified_one(name, family):
     for link in links:
         assert link["url"].startswith(VERIFIED), link["url"]
         assert link["label"] and link["source"]
+
+
+def test_ids_take_ascii_digits_only():
+    # Arabic-Indic and full-width digits match \d, never a real ATT&CK or CVE id
+    for bad in ("T\u0661\u0660\u0667\u0661", "T\uff11\uff10\uff17\uff11"):
+        assert not rx.TECHNIQUE_ID.fullmatch(bad)
+    assert not rx.TACTIC_ID.fullmatch("TA\u0660\u0660\u0661\u0661")
+    assert not rx.CVE_ID.fullmatch("CVE-2021-\u0664\u0661\u0667\u0667\u0663")
+    assert (
+        rx.sid_links(
+            [{"id": "T\u0661\u0660\u0667\u0661", "name": None}], [], [], False, False
+        )
+        == []
+    )
+    assert rx.TECHNIQUE_ID.fullmatch("T1071.001") and rx.CVE_ID.fullmatch(
+        "CVE-2021-41773"
+    )
