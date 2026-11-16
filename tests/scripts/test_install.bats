@@ -353,3 +353,11 @@ _install_main() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"STEP step_bridge"* ]] || false
 }
+
+@test "apt runs unattended, so needrestart opens no dialog on Ubuntu 22.04" {
+    # A fresh 22.04 droplet stopped at needrestart's "Daemons using outdated libraries" box.
+    run bash -c "unset DEBIAN_FRONTEND NEEDRESTART_MODE; set -euo pipefail; source '$INSTALL_SH'
+        bash -c 'echo \"\$DEBIAN_FRONTEND \$NEEDRESTART_MODE\"'"
+    [ "$status" -eq 0 ]
+    [ "$output" = "noninteractive a" ]
+}
