@@ -205,9 +205,15 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.92em; }
 .built-on { padding-block: var(--sp-16) 0; }
 .built-on__title { text-align: center; font-size: var(--fs-display-m); font-weight: 500; letter-spacing: -0.025em; margin-bottom: var(--sp-10); }
 .logo-grid { display: grid; grid-template-columns: repeat(7, 1fr); border-block: 1px solid var(--line); }
+/* OLD CODE START — each tool is a link to its project now, so the cell's layout and hover moved to the link
 .logo-grid li { display: grid; gap: var(--sp-1); justify-items: center; align-content: center; padding: var(--sp-8) var(--sp-3); min-height: 116px; text-align: center; transition: background-color var(--dur) var(--ease); }
-.logo-grid li + li { border-left: 1px solid var(--line); }
 .logo-grid li:hover { background: var(--surface-1); }
+OLD CODE END */
+.logo-grid li { display: grid; }
+.logo-grid a { display: grid; gap: var(--sp-1); justify-items: center; align-content: center; padding: var(--sp-8) var(--sp-3); min-height: 116px; text-align: center; text-decoration: none; transition: background-color var(--dur) var(--ease); }
+.logo-grid a:hover { background: var(--surface-1); }
+.logo-grid a:focus-visible { outline-offset: -2px; }
+.logo-grid li + li { border-left: 1px solid var(--line); }
 .logo-grid strong { color: var(--text-1); font: 600 1.25rem/1.1 var(--font-display); letter-spacing: -0.03em; }
 .logo-grid span { color: var(--text-3); font: 500 var(--text-micro)/1.2 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
 .built-on__note { margin-top: var(--sp-4); text-align: center; color: var(--text-3); font-size: var(--text-xs); }
