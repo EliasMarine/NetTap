@@ -485,3 +485,54 @@ class TestBeaconsAreCallsHome:
         ]
         assert complete is True
         assert any("composite" in str(b.get("aggs")) for b in client.bodies)
+
+
+# ---------------------------------------------------------------------------
+# The DNS checks' evidence, which the drill-downs show instead of re-implementing the rules
+# ---------------------------------------------------------------------------
+
+
+class TestDnsNameEvidence:
+    def _found(self, name: str) -> dict:
+        from services.threat_detection import analyze_dns_anomalies
+        from tests.fake_opensearch import FakeOpenSearch
+
+        return analyze_dns_anomalies(FakeOpenSearch([_dns(name)]), *_DAY)
+
+    def test_the_g11_dga_finding(self):
+        from services.threat_detection import dns_name_evidence
+
+        evidence = dns_name_evidence("static.cloudflareinsights.com")
+        assert evidence["dga"]["label"] == "cloudflareinsights"
+        assert evidence["dga"]["length"] == 18
+        assert round(evidence["dga"]["entropy"], 3) == 3.837
+        assert evidence["dga"]["threshold"] == 3.8
+        assert evidence["tunnel"] is None
+        # the detector lists exactly this
+        row = self._found("static.cloudflareinsights.com")["dga_suspects"][0]
+        assert row["entropy"] == 3.837
+
+    def test_names_the_checks_skip_have_no_evidence(self):
+        from services.threat_detection import dns_name_evidence
+
+        for name in ("foo.local", "foo.arpa", "1.0.168.192.in-addr.arpa", "laptop"):
+            assert dns_name_evidence(name) is None, name
+
+    def test_a_trailing_dot_is_measured_as_stored(self):
+        from services.threat_detection import dns_name_evidence
+
+        name = "a" * 50 + ".example.com."
+        tunnel = dns_name_evidence(name)["tunnel"]
+        assert tunnel["length"] == 58
+        assert tunnel["labels"] == ["a" * 50, "example"]
+        assert tunnel["threshold"] == 50
+        assert self._found(name)["tunnel_suspects"][0]["subdomain_length"] == 58
+
+    def test_mixed_case_is_measured_as_stored(self):
+        from services.threat_detection import dns_name_evidence
+
+        raw = "aAbBcCdDeEfFgGhH.com"
+        assert dns_name_evidence(raw)["dga"]["entropy"] == 4.0
+        # lower case repeats every letter, so the same name in lower case isn't listed
+        assert dns_name_evidence(raw.lower())["dga"] is None
+        assert [r["domain"] for r in self._found(raw)["dga_suspects"]] == [raw]
