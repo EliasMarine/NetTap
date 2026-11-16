@@ -34,10 +34,14 @@ page if needed); make a DNS anomaly row clickable, with an explanation that fits
   - `api/domains.py`: `?finding=<raw name>` (must canonicalise to the route's name, else 400) counts
     every device, marks the excluded askers, and returns the check's evidence.
   - `api/server.py`: registers the two routes.
+  - `services/investigation.py`: an investigation's alert carries its group's exact `rule_name` and
+    `activity`, so the page can link the rule's own page.
 - **Web**
   - `routes/threats/+page.svelte`: the sections get their own grid with the todo below it; a narrow
     section stacks label over value; an IPv6 address breaks only after a colon. A beaconing row opens
-    its pair; a many-hosts device links to its page; a DNS row opens why it was listed.
+    its pair; a many-hosts device links to its page; a DNS row opens why it was listed. An expanded
+    investigation links `/alerts/rule/<rule.name>` (from #311) over the report's window; the link
+    sits in the body because the title is inside the head button. Kill chains show no rule names.
   - New pages `routes/threats/beaconing/[device]/[server]/[port]` and
     `routes/threats/failed-lookups/[ip]`.
   - `routes/domain/[name]/+page.svelte`: finding mode ("Why NetTap's DNS check lists this name",
@@ -51,7 +55,7 @@ page if needed); make a DNS anomaly row clickable, with an explanation that fits
 
 Daemon: `services/threat_detection.py`, `api/threat_drilldowns.py`, `api/domains.py`, `api/server.py`,
 `tests/fake_drill_opensearch.py`, `tests/test_threat_drilldowns_api.py`, `tests/test_domains_api.py`,
-`tests/test_threat_detection.py`.
+`tests/test_threat_detection.py`, `services/investigation.py`, `tests/test_investigation.py`.
 Web: the files above plus their tests, `e2e/visual/fixtures/threats.ts`, `e2e/visual/routes.ts`,
 `e2e/visual/threats-layout.visual.ts`.
 

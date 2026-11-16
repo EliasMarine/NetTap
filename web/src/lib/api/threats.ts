@@ -125,6 +125,10 @@ export interface Investigation {
 		source_ip: string;
 		destination_ip: string;
 		count: number;
+		/** The group's exact rule.name (the shown signature can differ); absent from an older daemon. */
+		rule_name?: string | null;
+		/** ET rates the rule informational, so its page opens on the activity list. */
+		activity?: boolean;
 	};
 	generated_at: string;
 	sections: InvestigationSection;

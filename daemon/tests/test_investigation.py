@@ -197,3 +197,25 @@ def test_failed_investigation_is_a_failed_check_not_zero_counts():
 
     assert report["investigations"] == []
     assert report["failed_checks"] == ["investigations"]
+
+
+def test_an_investigation_carries_its_groups_exact_rule_name():
+    """The shown signature can be a sample's alert.signature; the rule page needs rule.name."""
+    from services.investigation import auto_investigate
+
+    client = MagicMock()
+    client.search.return_value = {
+        "hits": {"total": {"value": 0}, "hits": []},
+        "aggregations": {},
+    }
+    alert = {
+        "signature": "ET MALWARE Example CnC (shown)",
+        "source_ip": "192.168.1.66",
+        "destination_ip": "203.0.113.9",
+        "activity": True,
+        "key": {"rule_name": "ET MALWARE Example CnC", "source_ip": "192.168.1.66"},
+    }
+    found = asyncio.run(auto_investigate(client, alert))["alert"]
+    assert (found["rule_name"], found["activity"]) == ("ET MALWARE Example CnC", True)
+    found = asyncio.run(auto_investigate(client, {"signature": "x"}))["alert"]
+    assert (found["rule_name"], found["activity"]) == (None, False)

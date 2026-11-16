@@ -319,6 +319,30 @@ describe('Threats page — drill-downs and the investigation layout', () => {
 		expect(screen.getByRole('button', { name: 'Open NXDOMAIN spike 192.168.1.116: why it was listed' })).toBeInTheDocument();
 	});
 
+	it("links an investigation's rule to its page by rule.name, over the report's window", async () => {
+		const investigation = (rule_name?: string | null) => ({
+			alert: { signature: 'ET MALWARE Example CnC (as shown)', severity_label: 'CRITICAL', category_label: 'Malware', source_ip: '192.168.1.42', destination_ip: '203.0.113.45', count: 3, rule_name, activity: true },
+			generated_at: '',
+			sections: { source_profile: { ip: '192.168.1.42', connection_count_24h: 1, unique_destinations: 1, total_bytes_24h: 1 } },
+			recommendation: 'Check the device.',
+		});
+		const from = '2026-11-15T00:00:00.000Z';
+		const to = '2026-11-16T00:00:00.000Z';
+		stubDaemon({ '/api/threats/report': { ...REPORT, from, to, failed_checks: [], incomplete_checks: [], investigations: [investigation('ET MALWARE Example CnC')] }, '/api/threats/intel': INTEL });
+		const { container, unmount } = render(ThreatsPage);
+		const link = await screen.findByRole('link', { name: 'What this rule means and which devices it involved' });
+		const href = new URL(link.getAttribute('href')!, 'http://x');
+		expect(href.pathname).toBe('/alerts/rule/ET%20MALWARE%20Example%20CnC');
+		expect(Object.fromEntries(href.searchParams)).toEqual({ from, to, range: '24h', activity: 'true' });
+		expectNoNestedInteractive(container);
+		unmount();
+		// an older daemon's investigation has no rule.name: no link rather than one by the shown signature
+		stubDaemon({ '/api/threats/report': { ...REPORT, failed_checks: [], incomplete_checks: [], investigations: [investigation(undefined)] }, '/api/threats/intel': INTEL });
+		render(ThreatsPage);
+		await screen.findByText('Source host profile');
+		expect(screen.queryByRole('link', { name: 'What this rule means and which devices it involved' })).not.toBeInTheDocument();
+	});
+
 	it('lays the investigation sections out apart from the todo, and breaks an IPv6 address only after a colon', async () => {
 		const v6 = '2001:0db8:85a3:0000:0000:8a2e:0370:7334';
 		const investigation = {

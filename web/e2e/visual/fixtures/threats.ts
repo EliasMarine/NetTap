@@ -100,7 +100,8 @@ const REPORT = {
 	],
 	investigations: [
 		{
-			alert: { signature: TOP_THREAT.signature, severity_label: 'CRITICAL', category_label: 'Malware & C2', source_ip: '192.168.1.42', destination_ip: '203.0.113.45', count: 142 },
+			// OLD CODE: alert: { …, count: 142 }, (the group's exact rule.name, for the rule page link)
+			alert: { signature: TOP_THREAT.signature, severity_label: 'CRITICAL', category_label: 'Malware & C2', source_ip: '192.168.1.42', destination_ip: '203.0.113.45', count: 142, rule_name: TOP_THREAT.signature, activity: false },
 			generated_at: TO,
 			sections: {
 				source_profile: { ip: '192.168.1.42', connection_count_24h: 5210, unique_destinations: 64, total_bytes_24h: 812_000_000, protocols: ['tcp', 'udp'], top_ports: [443, 8080, 53] },

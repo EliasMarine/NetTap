@@ -43,7 +43,8 @@
 	import { formatTime } from '$lib/utils/time';
 	// OLD CODE: import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-238: fmt, SCAN_CAP)
 	// OLD CODE: import { DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown'; (isHostName: a DNS row links only a host name)
-	import { DRILL_RANGES, fmt, isHostName, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, fmt, isHostName, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown'; (ruleHref)
+	import { DRILL_RANGES, fmt, isHostName, rangeWindow, ruleHref, SCAN_CAP, startRange } from '$lib/utils/drilldown';
 	// NET-228 (audit B5): "nothing needs attention" carries the pipeline's current state
 	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
 	// OLD CODE: import { nothingFound } from '$api/system'; (NET-242: and the page-level pipeline line)
@@ -117,6 +118,8 @@
 	let dnsAnomalies = $derived(report?.dns_anomalies ?? { dga_suspects: [], tunnel_suspects: [], nxdomain_spikes: [], suspicious_tlds: [] });
 	let lateralMoves = $derived(report?.lateral_movement ?? []);
 	let investigations = $derived(report?.investigations ?? []);
+	/** The report's own window, for a rule's page (none from an older daemon's empty bounds) */
+	let reportWindow = $derived(report?.from && report?.to ? { from: report.from, to: report.to, range: selectedRange } : undefined);
 	let failedChecks = $derived(new Set(report?.failed_checks ?? []));
 	let incompleteChecks = $derived(new Set(report?.incomplete_checks ?? []));
 	// NET-187: failed checks that ran out of time (also in failed_checks)
@@ -933,6 +936,12 @@
 							{#if expandedInvestigation === i}
 								<!-- OLD CODE: the three sections and the todo shared one auto-fit grid; the todo's 1 / -1 span kept the empty tracks, so sections sat in narrow columns -->
 								<div class="inv-body">
+									<!-- the rule's name is in the head button, so its link lives here; by rule.name, never the shown signature -->
+									{#if inv.alert.rule_name}
+										<p class="inv-rule">
+											<a href={ruleHref(inv.alert.rule_name, reportWindow, { activity: inv.alert.activity })}>What this rule means and which devices it involved</a>
+										</p>
+									{/if}
 									<div class="inv-sections">
 									{#if inv.sections.source_profile}
 										{@const p = inv.sections.source_profile}
@@ -1036,6 +1045,7 @@
 	.inv-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--sp-5); }
 	.inv-sections > section { container-type: inline-size; min-width: 0; }
 	.inv-body .eyebrow { margin-bottom: var(--sp-2); }
+	.inv-rule { margin: 0; font-size: var(--text-sm); }
 	/* system.css breaks .facts values anywhere; in these three narrow columns an IP split mid-address (NET-192).
 	   break-word keeps a value whole and breaks it only when it can't fit a line on its own. */
 	.inv-body .facts dd { overflow-wrap: break-word; }
