@@ -442,6 +442,7 @@
 			const q = searchQuery.trim().toLowerCase();
 			list = list.filter((d) =>
 				d.ip.toLowerCase().includes(q) ||
+				(d.mac && d.mac.toLowerCase().includes(q)) ||
 				(d.hostname && d.hostname.toLowerCase().includes(q)) ||
 				(d.manufacturer && d.manufacturer.toLowerCase().includes(q)) ||
 				(d.unifi_name && d.unifi_name.toLowerCase().includes(q)) ||
@@ -600,6 +601,8 @@
 	// Every column sorts (design system); the snippets are at the top of the markup
 	const columns: Column<Device>[] = [
 		{ key: 'ip', label: 'IP address', cell: ipCell },
+		// NET-314: the owner asked for each device's MAC; a missing one sorts last both ways
+		{ key: 'mac', label: 'MAC address', cell: macCell },
 		// OLD CODE: { key: 'name', label: 'Name', cell: nameCell, sortValue: (d) => d.unifi_name ?? d.hostname }, (NET-200)
 		{ key: 'name', label: 'Name', cell: nameCell, sortValue: (d) => d.custom_name ?? d.unifi_name ?? d.hostname },
 		// OLD CODE: { key: 'status', label: 'Status', cell: statusCell, sortValue: (d) => status(d).rank }, (PR #191 review: a past window has no status)
@@ -636,6 +639,7 @@
 </script>
 
 {#snippet ipCell(d: Device)}<span class="mono">{d.ip}</span>{/snippet}
+{#snippet macCell(d: Device)}<span class="mono">{d.mac ?? '—'}</span>{/snippet}
 {#snippet nameCell(d: Device)}
 	<!-- NET-200: the owner's name is in hostname already; the UniFi tag only when the UniFi name is the one shown -->
 	{#if d.custom_name}
