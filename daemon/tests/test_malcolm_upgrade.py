@@ -331,7 +331,7 @@ class TestRollback:
         assert "no new Zeek records" in result["error"].split("failed too")[1]
         assert "docker_opensearch-data-before-update" in result["error"]
         assert not any("volume rm" in t for t in docker.text())  # the backup is kept
-        assert up.take_unfinished()["step"] == "rollback_failed"
+        assert up.peek_unfinished()["step"] == "rollback_failed"
 
     def test_pcap_that_stops_rolls_back(self, tmp_path):
         docker = FakeDocker()
@@ -360,8 +360,9 @@ class TestRollback:
             "failed too" in result["error"]
             and "docker_opensearch-data-before-update" in result["error"]
         )
-        assert up.take_unfinished()["step"] == "rollback_failed"
-        assert up.take_unfinished() is None  # read once
+        assert up.peek_unfinished()["step"] == "rollback_failed"
+        up.clear_unfinished()
+        assert up.peek_unfinished() is None
 
     def test_peek_keeps_the_record_until_cleared(self, tmp_path):
         # the executor saves the record in its history before it clears it

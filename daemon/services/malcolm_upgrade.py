@@ -318,13 +318,6 @@ class MalcolmUpgrade:
     #     self._clear_state()
     #     return state
     # OLD CODE END
-    def take_unfinished(self) -> dict | None:
-        """An update the daemon didn't see finish (it restarted mid-way), read once."""
-        state = self.peek_unfinished()
-        if state is not None:
-            self.clear_unfinished()
-        return state
-
     def peek_unfinished(self) -> dict | None:
         """An update the daemon didn't see finish (it restarted mid-way); the record stays until
         clear_unfinished(), so the caller can save it first."""

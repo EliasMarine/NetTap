@@ -854,10 +854,6 @@ class FakeMalcolm:
         self.targets = []
         self.gate = None
 
-    def take_unfinished(self):
-        found, self.unfinished = self.unfinished, None
-        return found
-
     # the executor reads the record, saves it, and only then clears it
     def peek_unfinished(self):
         return self.unfinished
