@@ -244,7 +244,8 @@ describe('Devices — All devices table', () => {
 		const table = await screen.findByRole('table', { name: 'All devices' });
 
 		const headers = within(table).getAllByRole('columnheader');
-		expect(headers).toHaveLength(10);
+		// OLD CODE: expect(headers).toHaveLength(10); (NET-314: MAC address column)
+		expect(headers).toHaveLength(11);
 		for (const th of headers) expect(within(th).getByRole('button')).toBeInTheDocument();
 		// busiest first
 		expect(within(table).getAllByRole('row')[1]).toHaveTextContent('192.168.1.10');
@@ -284,6 +285,33 @@ describe('Devices — All devices table', () => {
 		await fireEvent.input(screen.getByLabelText('Search devices'), { target: { value: 'work lap' } });
 		expect(within(table).getAllByRole('row')).toHaveLength(2);
 		expect(within(table).getAllByRole('row')[1]).toHaveTextContent('192.168.1.10');
+	});
+
+	// NET-314: each row shows its MAC, a missing one is '—' and sorts last both ways, and search finds it
+	it('shows each MAC, sorts on it with a missing one last, and finds a device by it', async () => {
+		const macs = listReply([
+			{ ...DEVICE, ip: '192.168.1.10', mac: 'bb:00:00:00:00:02', total_bytes: 5000 },
+			{ ...DEVICE, ip: '192.168.1.9', mac: null, total_bytes: 300 },
+			{ ...DEVICE, ip: '192.168.1.8', mac: 'aa:00:00:00:00:01', total_bytes: 100 },
+		], { from: LIST_FROM });
+		stubDaemon({ '/api/capture/mode': BRIDGE, '/api/devices': macs, '/api/devices/count': { count: 3 } });
+		render(Page);
+		const table = await screen.findByRole('table', { name: 'All devices' });
+		const macColumn = () => within(table).getAllByRole('row').slice(1).map((r) => r.querySelectorAll('td')[1]?.textContent);
+
+		expect(within(table).getByRole('columnheader', { name: /MAC address/ })).toBeInTheDocument();
+		const sortByMac = within(within(table).getByRole('columnheader', { name: /MAC address/ })).getByRole('button');
+		await fireEvent.click(sortByMac);
+		const first = macColumn();
+		await fireEvent.click(sortByMac);
+		const second = macColumn();
+		const [asc, desc] = first[0] === 'aa:00:00:00:00:01' ? [first, second] : [second, first];
+		expect(asc).toEqual(['aa:00:00:00:00:01', 'bb:00:00:00:00:02', '—']);
+		expect(desc).toEqual(['bb:00:00:00:00:02', 'aa:00:00:00:00:01', '—']);
+
+		await fireEvent.input(screen.getByLabelText('Search devices'), { target: { value: 'AA:00' } });
+		expect(within(table).getAllByRole('row')).toHaveLength(2);
+		expect(within(table).getAllByRole('row')[1]).toHaveTextContent('192.168.1.8');
 	});
 
 	// the IPv6 notes only: in bridge mode NET-225 also shows its own note about devices behind NAT
