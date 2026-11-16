@@ -206,6 +206,8 @@ async def handle_apply_updates(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "components must be names NetTap can update"}, status=400
         )
+    # a repeated name gave two results with one key, which the Updates page's keyed lists reject
+    components = list(dict.fromkeys(components))
     try:
         result, status = await ue.start_update(components)
         return web.json_response(result, status=status)

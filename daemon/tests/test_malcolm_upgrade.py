@@ -357,6 +357,19 @@ class TestRollback:
         assert up.take_unfinished()["step"] == "rollback_failed"
         assert up.take_unfinished() is None  # read once
 
+    def test_peek_keeps_the_record_until_cleared(self, tmp_path):
+        # the executor saves the record in its history before it clears it
+        up = _upgrade(FakeDocker(fail="healthy"), tmp_path=tmp_path)
+        _apply(up)
+        assert up.peek_unfinished()["step"] == "rollback_failed"
+        assert up.peek_unfinished()["step"] == "rollback_failed"
+        up.clear_unfinished()
+        assert up.peek_unfinished() is None
+
+    def test_a_record_that_isnt_an_object_is_ignored(self, tmp_path):
+        (tmp_path / "state.json").write_text("[1, 2]")
+        assert _upgrade(FakeDocker(), tmp_path=tmp_path).peek_unfinished() is None
+
 
 class TestHelpers:
     def test_newer(self):

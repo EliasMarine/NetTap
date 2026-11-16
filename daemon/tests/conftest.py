@@ -303,3 +303,13 @@ def mock_nvme_cli_id_ctrl():
 def tmp_dir(tmp_path):
     """Alias for pytest's built-in ``tmp_path`` fixture."""
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _update_history_file(monkeypatch, tmp_path_factory):
+    """Every UpdateExecutor a test builds keeps its history in its own not-yet-existing file, never
+    in /opt/nettap/data. A test of the saved history passes one history_file to both executors."""
+    from uuid import uuid4
+
+    path = tmp_path_factory.getbasetemp() / f"update-history-{uuid4().hex}.json"
+    monkeypatch.setenv("UPDATE_HISTORY_FILE", str(path))

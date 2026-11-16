@@ -694,6 +694,18 @@ class TestApplyChecksNamesBeforeQueuing(_RealExecutorCase):
         self.ue.start_update.assert_awaited_once()
 
     @unittest_run_loop
+    async def test_a_repeated_name_is_queued_once(self):
+        """Two results with one component broke the Updates page's keyed lists."""
+        self.ue.start_update = AsyncMock(return_value=({"state": "in_progress"}, 202))
+        resp = await self.client.request(
+            "POST",
+            "/api/system/updates/apply",
+            json={"components": ["zeek", "suricata-rules", "zeek"]},
+        )
+        self.assertEqual(resp.status, 202)
+        self.ue.start_update.assert_awaited_once_with(["zeek", "suricata-rules"])
+
+    @unittest_run_loop
     async def test_unknown_names_are_refused(self):
         for components in (
             ["../../etc/passwd"],

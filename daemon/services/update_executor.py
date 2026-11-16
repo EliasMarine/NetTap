@@ -27,6 +27,7 @@ from services.malcolm_upgrade import (
     TESTED_MALCOLM_TAG,
     MalcolmUpgrade,
 )
+from services.capture_config import write_file_atomic
 from services.suricata_rules import SuricataRuleManager
 
 logger = logging.getLogger("nettap.services.update_executor")
@@ -71,6 +72,9 @@ APPLY_COMPONENTS = (
     | _MALCOLM_CONTAINERS
 )
 MAX_APPLY_COMPONENTS = 16
+# The history lives on the nettap-appdata volume: in memory it was lost on every daemon restart,
+# including the deploy right after a Malcolm update
+HISTORY_FILE_DEFAULT = "/opt/nettap/data/update-history.json"
 
 
 @dataclass
@@ -108,14 +112,19 @@ class UpdateExecutor:
         # OLD CODE END
         backup_dir: str = "/opt/nettap/backups",
         malcolm_upgrade: MalcolmUpgrade | None = None,
+        history_file: str | None = None,
     ) -> None:
         # OLD CODE: self._compose_file = compose_file (NET-288)
         self._backup_dir = backup_dir
         # runs the update in the Suricata container: the daemon has no suricata-update
         self._rule_manager = SuricataRuleManager()
         self._current_update: dict | None = None  # tracks in-progress update
-        self._update_history: list[dict] = []
+        self._history_file = history_file or os.environ.get(
+            "UPDATE_HISTORY_FILE", HISTORY_FILE_DEFAULT
+        )
         self._max_history = 50
+        # OLD CODE: self._update_history: list[dict] = [] (kept in memory only: every restart lost it)
+        self._update_history: list[dict] = self._load_history()
         self._version_manager = None  # Set externally after init
         self._update_checker = None  # Set externally after init
         # moves all of Malcolm's containers to the release this NetTap was tested with
@@ -124,9 +133,12 @@ class UpdateExecutor:
             UpdateResult
         ] = []  # results so far of the running batch
         self._task: asyncio.Task | None = None
-        unfinished = self._malcolm.take_unfinished()
-        if unfinished:  # the daemon restarted during a Malcolm update: say so once
-            self._update_history.append(_unfinished_entry(unfinished))
+        # OLD CODE START — the state file was deleted on read, so a failed history save lost the record
+        # unfinished = self._malcolm.take_unfinished()
+        # if unfinished:  # the daemon restarted during a Malcolm update: say so once
+        #     self._update_history.append(_unfinished_entry(unfinished))
+        # OLD CODE END
+        self._record_unfinished()
 
         # OLD CODE START — NET-288: no compose_file any more
         # logger.info(
@@ -140,6 +152,64 @@ class UpdateExecutor:
     def set_version_manager(self, vm: Any) -> None:
         """Set reference to VersionManager for current version lookups."""
         self._version_manager = vm
+
+    def _record_unfinished(self) -> None:
+        """The daemon restarted during a Malcolm update: say so once in the history.
+
+        The update's state file is cleared only once the entry is saved, so a save that fails is
+        retried on the next start; an entry already saved (a clear that failed) isn't repeated.
+        """
+        state = self._malcolm.peek_unfinished()
+        if not state:
+            return
+        entry = _unfinished_entry(state)
+        recorded = any(
+            h["started_at"] == entry["started_at"] and h["components"] == ["malcolm"]
+            for h in self._update_history
+        )
+        if not recorded:
+            self._update_history.append(entry)
+            self._update_history = self._update_history[-self._max_history :]
+            recorded = self._save_history()
+        if recorded:
+            self._malcolm.clear_unfinished()
+
+    def _load_history(self) -> list[dict]:
+        """The saved history, each batch rebuilt from the fields status and the page read."""
+        try:
+            with open(self._history_file) as fh:
+                raw = json.load(fh)
+        except FileNotFoundError:
+            return []
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "Couldn't read the update history %s: %s", self._history_file, exc
+            )
+            return []
+        if not isinstance(raw, list):
+            logger.warning(
+                "The update history %s isn't a list: ignored", self._history_file
+            )
+            return []
+        batches = [b for b in (_normalize_batch(item) for item in raw) if b is not None]
+        if len(batches) != len(raw):
+            logger.warning(
+                "Dropped %d unreadable entries from the update history %s",
+                len(raw) - len(batches),
+                self._history_file,
+            )
+        return batches[-self._max_history :]
+
+    def _save_history(self) -> bool:
+        """Write the history to its file; False (logged) when it couldn't be written."""
+        try:
+            write_file_atomic(self._history_file, json.dumps(self._update_history))
+            return True
+        except OSError as exc:
+            logger.warning(
+                "Couldn't save the update history to %s: %s", self._history_file, exc
+            )
+            return False
 
     def set_update_checker(self, uc: Any) -> None:
         """Set reference to UpdateChecker for available update lookups."""
@@ -359,6 +429,7 @@ class UpdateExecutor:
             # Trim history if needed
             if len(self._update_history) > self._max_history:
                 self._update_history = self._update_history[-self._max_history :]
+            self._save_history()
 
             logger.info(
                 "Update batch complete: %d succeeded, %d failed",
@@ -1235,6 +1306,57 @@ def _swap_in(source: str, target: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def _str(value: Any, default: str) -> str:
+    return value if isinstance(value, str) else default
+
+
+def _normalize_result(raw: Any) -> dict | None:
+    """An UpdateResult dict from a saved one, or None if it lacks a component or a success flag."""
+    if not isinstance(raw, dict):
+        return None
+    component, success = raw.get("component"), raw.get("success")
+    if not isinstance(component, str) or not component or not isinstance(success, bool):
+        return None
+    error = raw.get("error")
+    return UpdateResult(
+        component=component,
+        success=success,
+        old_version=_str(raw.get("old_version"), "unknown"),
+        new_version=_str(raw.get("new_version"), "unknown"),
+        started_at=_str(raw.get("started_at"), ""),
+        completed_at=_str(raw.get("completed_at"), ""),
+        error=error if isinstance(error, str) else None,
+        rollback_available=raw.get("rollback_available") is True,
+    ).to_dict()
+
+
+def _normalize_batch(raw: Any) -> dict | None:
+    """A history batch from a saved one (the file is ours, but a bad entry mustn't break /status)."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("results"), list):
+        return None
+    results = [
+        r for r in (_normalize_result(x) for x in raw["results"]) if r is not None
+    ]
+    if not results:
+        return None
+    components = raw.get("components")
+    if not (
+        isinstance(components, list) and all(isinstance(c, str) for c in components)
+    ):
+        components = [r["component"] for r in results]
+    succeeded = sum(1 for r in results if r["success"])
+    return {
+        "results": results,
+        "success": succeeded == len(results),
+        "total": len(results),
+        "succeeded": succeeded,
+        "failed": len(results) - succeeded,
+        "components": components,
+        "started_at": _str(raw.get("started_at"), ""),
+        "completed_at": _str(raw.get("completed_at"), ""),
+    }
 
 
 def _unfinished_entry(state: dict) -> dict:

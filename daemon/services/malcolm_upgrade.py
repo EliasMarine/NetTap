@@ -288,15 +288,37 @@ class MalcolmUpgrade:
         self._clear_state()
         return _result(True, old, target, None)
 
+    # OLD CODE START — read and deleted in one go: a history save that failed afterwards lost the record
+    # def take_unfinished(self) -> dict | None:
+    #     """An update the daemon didn't see finish (it restarted mid-way), read once."""
+    #     try:
+    #         with open(self._state_file) as fh:
+    #             state = json.load(fh)
+    #     except (OSError, ValueError):
+    #         return None
+    #     self._clear_state()
+    #     return state
+    # OLD CODE END
     def take_unfinished(self) -> dict | None:
         """An update the daemon didn't see finish (it restarted mid-way), read once."""
+        state = self.peek_unfinished()
+        if state is not None:
+            self.clear_unfinished()
+        return state
+
+    def peek_unfinished(self) -> dict | None:
+        """An update the daemon didn't see finish (it restarted mid-way); the record stays until
+        clear_unfinished(), so the caller can save it first."""
         try:
             with open(self._state_file) as fh:
                 state = json.load(fh)
         except (OSError, ValueError):
             return None
+        return state if isinstance(state, dict) else None
+
+    def clear_unfinished(self) -> None:
+        """Forget the unfinished update once its record is kept elsewhere."""
         self._clear_state()
-        return state
 
     # -- project and commands ------------------------------------------------
 

@@ -856,6 +856,13 @@ class FakeMalcolm:
         found, self.unfinished = self.unfinished, None
         return found
 
+    # the executor reads the record, saves it, and only then clears it
+    def peek_unfinished(self):
+        return self.unfinished
+
+    def clear_unfinished(self):
+        self.unfinished = None
+
     async def apply(self, target, on_step=None):
         self.targets.append(target)
         on_step("Downloading Malcolm 26.10.0's images", 1, 9)
