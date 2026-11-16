@@ -761,22 +761,46 @@ def _mac_key(mac: str | None) -> str:
     return DeviceRegistry._normalize_mac(mac) if mac else ""
 
 
-def _registry_names(request: web.Request, macs: list[str]) -> dict[str, str]:
-    """{normalized MAC: the name Home shows} for the MACs the device registry knows (#130).
-
-    The registry names a device by its MAC (UniFi alias, the owner's name, then the name it
-    gave DHCP), which DNS records can't do reliably; Devices and Home now agree.
-    """
+def _registry_known(request: web.Request, macs: list[str]) -> dict[str, dict]:
+    """{normalized MAC: registry device} for the MACs the registry knows; {} if it can't say."""
     registry = request.app.get("device_registry")
     if registry is None or not macs:
         return {}
     try:
-        known = registry.get_devices(macs)
+        return registry.get_devices(macs)
     except Exception as exc:
         logger.warning(
             "Device names from the registry unavailable, using DNS names: %s", exc
         )
         return {}
+
+
+def _registry_names(
+    request: web.Request, macs: list[str], known: dict[str, dict] | None = None
+) -> dict[str, str]:
+    """{normalized MAC: the name Home shows} for the MACs the device registry knows (#130).
+
+    The registry names a device by its MAC (UniFi alias, the owner's name, then the name it
+    gave DHCP), which DNS records can't do reliably; Devices and Home now agree.
+    `known` is a _registry_known reading the caller already made for these MACs.
+    """
+    # OLD CODE START — PR B: the read moved to _registry_known, which the list shares with known_since
+    # registry = request.app.get("device_registry")
+    # if registry is None or not macs:
+    #     return {}
+    # try:
+    #     known = registry.get_devices(macs)
+    # except Exception as exc:
+    #     logger.warning(
+    #         "Device names from the registry unavailable, using DNS names: %s", exc
+    #     )
+    #     return {}
+    # OLD CODE END
+    registry = request.app.get("device_registry")
+    if registry is None:
+        return {}
+    if known is None:
+        known = _registry_known(request, macs)
     # OLD CODE START — NET-200: the owner's name would reach _device_category; it is applied after
     # return {
     #     mac: name
@@ -1325,7 +1349,19 @@ def handle_device_list(request: web.Request) -> web.Response:
         from_ts,
         to_ts,
     )
-    names = _registry_names(request, [mac for mac, _, _ in lookups.values() if mac])
+    # OLD CODE START — PR B: the registry was asked about fingerprint MACs only, so an
+    # answer-only device's row had a MAC but never its registry name
+    # names = _registry_names(request, [mac for mac, _, _ in lookups.values() if mac])
+    # OLD CODE END
+    # an answer-only device has no MAC of its own records; its answered ones carry it
+    macs = {
+        b["key"]: lookups.get(b["key"], (None, None, None))[0] or b.get("mac")
+        for b in buckets
+        if not _is_skipped_device_ip(b["key"])
+    }
+    with_mac = [mac for mac in macs.values() if mac]
+    known = _registry_known(request, with_mac)
+    names = _registry_names(request, with_mac, known)
     devices = []
     for b in buckets:
         ip = b["key"]
@@ -1356,9 +1392,13 @@ def handle_device_list(request: web.Request) -> web.Response:
         # hostname = fingerprint.get_hostname_for_ip(client, ip, from_ts, to_ts)
         # os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
         # OLD CODE END
-        mac, hostname, os_hint = lookups.get(ip, (None, None, None))
-        # an answer-only device has no MAC of its own records; its answered ones carry it
-        mac = mac or b.get("mac")
+        # OLD CODE START — PR B: the effective MAC is resolved above, before the registry read
+        # mac, hostname, os_hint = lookups.get(ip, (None, None, None))
+        # # an answer-only device has no MAC of its own records; its answered ones carry it
+        # mac = mac or b.get("mac")
+        # OLD CODE END
+        _, hostname, os_hint = lookups.get(ip, (None, None, None))
+        mac = macs[ip]
         hostname = names.get(_mac_key(mac)) or hostname
         manufacturer = fingerprint.get_manufacturer(mac) if mac else None
 
@@ -1380,6 +1420,8 @@ def handle_device_list(request: web.Request) -> web.Response:
             **_guesses(os_hint, hostname, manufacturer),
             "first_seen": first_seen,
             "last_seen": last_seen,
+            # When the registry first saw the MAC, any time; None when it doesn't know it
+            "known_since": (known.get(_mac_key(mac)) or {}).get("first_seen"),
             # OLD CODE START — NET-226: the started side's figures, orig/resp named
             # "total_bytes": total_bytes,
             # "orig_bytes": orig_bytes,
