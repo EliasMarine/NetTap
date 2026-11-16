@@ -20,6 +20,11 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/alerts/malware', marker: /malware/i },
 	// NET-160 slice 2b-2: a raw Suricata category's page (the heading is the name, in every mode)
 	{ path: '/alerts/suricata/Misc%20activity', marker: 'Misc activity' },
+	// The rule page: a long ET name with "/", "&" and "%" (the heading is the name, in every mode)
+	{
+		path: `/alerts/rule/${encodeURIComponent('ET EXPLOIT Apache HTTP Server 2.4.49 - Path Traversal Attempt (CVE-2021-41773) M2 / outbound & encoded 50%')}`,
+		marker: 'ET EXPLOIT Apache HTTP Server 2.4.49 - Path Traversal Attempt (CVE-2021-41773) M2 / outbound & encoded 50%',
+	},
 	{ path: '/bandwidth', marker: 'Bandwidth' },
 	{ path: '/certificates', marker: 'Certificates' },
 	{ path: '/changelog', marker: 'Changelog' },

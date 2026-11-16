@@ -171,7 +171,7 @@ describe('getSuricataRule', () => {
 
 	it('asks for the rule encoded once, "/" included, with the bucket and list only when asked', async () => {
 		for (const body of [SURICATA_RULE, SURICATA_RULE_EMPTY]) {
-			const fetchMock = vi.fn(async () => reply(200, body));
+			const fetchMock = vi.fn(async (_url: string) => reply(200, body));
 			vi.stubGlobal('fetch', fetchMock);
 			await expect(getSuricataRule('ET INFO A/B & C 50%', 'a', 'b')).resolves.toEqual(body);
 			await getSuricataRule('x', 'a', 'b', '1h', true);
