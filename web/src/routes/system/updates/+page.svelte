@@ -169,7 +169,10 @@
 
 	const updatesAvailableCount = $derived(availableUpdates.length);
 	// updates NetTap can apply here; the others say how they arrive (applies_with)
-	const applicableCount = $derived(availableUpdates.filter((u) => !u.applies_with).length);
+	const applicableUpdates = $derived(availableUpdates.filter((u) => !u.applies_with));
+	const otherUpdates = $derived(availableUpdates.filter((u) => u.applies_with));
+	// OLD CODE: const applicableCount = $derived(availableUpdates.filter((u) => !u.applies_with).length);
+	const applicableCount = $derived(applicableUpdates.length);
 
 	const updatesMap = $derived.by(() => {
 		const map = new Map<string, AvailableUpdate>();
@@ -179,7 +182,13 @@
 		return map;
 	});
 
-	const selectedCount = $derived(selectedComponents.size);
+	// OLD CODE: const selectedCount = $derived(selectedComponents.size); (a refresh while picking could leave a pick no longer listed)
+	const pickedComponents = $derived(
+		applicableUpdates.filter((u) => selectedComponents.has(u.component)).map((u) => u.component),
+	);
+	const selectedCount = $derived(pickedComponents.length);
+	// the picker never shows with nothing to pick (Review used to open it so, NET-311); a start, a run or a result always shows
+	const panelShown = $derived(showUpdatePanel && (updateInProgress || updateCompleted || applicableCount > 0));
 
 	// polling can stop before the daemon says the batch finished: that isn't "complete"
 	// a finished batch whose Malcolm update rolled back is "completed" too: its results decide
@@ -271,6 +280,12 @@
 
 		const months = Math.floor(days / 30);
 		return `${months}mo ago`;
+	}
+
+	// a one-sentence status ("rules are 12 day(s) old") reads inline; an accordion that opened to it read as broken
+	const CHANGELOG_INLINE_MAX = 160;
+	function changelogInline(text: string): boolean {
+		return !text.includes('\n') && text.length < CHANGELOG_INLINE_MAX;
 	}
 
 	function truncateChangelog(text: string, maxLength = 200): string {
@@ -433,14 +448,17 @@
 	}
 
 	async function handleApplyUpdates() {
-		if (selectedComponents.size === 0) return;
+		// OLD CODE: if (selectedComponents.size === 0) return;
+		const picked = pickedComponents;
+		if (picked.length === 0) return;
 		applying = true;
 		updateInProgress = true;
 		updateCompleted = false;
 		actionError = '';
 
 		try {
-			const status = await applyUpdates([...selectedComponents]);
+			// OLD CODE: const status = await applyUpdates([...selectedComponents]);
+			const status = await applyUpdates(picked);
 
 			// 409: another tab (or this one before a reload) already started an update; follow it
 			if (status.already_running) {
@@ -710,6 +728,19 @@
 	{/if}
 {/snippet}
 
+<!-- updates NetTap can't apply: information only, each one says how it arrives -->
+{#snippet otherList(updates: AvailableUpdate[])}
+	<ul class="other-list">
+		{#each updates as update (update.component)}
+			<li>
+				<span class="pick-head"><b>{update.component}</b><span class="mono dim">{update.current_version} → {update.latest_version}</span></span>
+				{#if update.changelog}<span class="dim">{update.changelog}</span>{/if}
+				<span>{update.applies_with}</span>
+			</li>
+		{/each}
+	</ul>
+{/snippet}
+
 {#snippet historyResultCell(result: UpdateResult)}
 	<span class={['chip', result.success ? 'is-ok' : 'is-bad']}>
 		<Icon name={result.success ? 'check' : 'close'} />{result.success ? 'Success' : 'Failed'}
@@ -777,7 +808,8 @@
 
 <div class="grid">
 	<!-- Update banner -->
-	{#if updatesAvailableCount > 0 && !showUpdatePanel}
+	<!-- OLD CODE: {#if updatesAvailableCount > 0 && !showUpdatePanel} (panelShown also hides a picker with nothing to pick) -->
+	{#if updatesAvailableCount > 0 && !panelShown}
 		<Card
 			hero
 			class="c-12"
@@ -788,20 +820,25 @@
 		>
 			<!-- the sub was always "Review and apply…", also when none could be applied here -->
 			{#snippet actions()}
-				<div class="actions">
-					<button class="btn" type="button" onclick={() => openUpdatePanel(true)}>Review</button>
-					<!-- was always shown: with nothing applicable it opened a panel with nothing to pick -->
-					{#if applicableCount > 0}
+				<!-- OLD CODE: Review sat outside this #if: with nothing applicable it opened "Apply updates" with nothing to pick (NET-311) -->
+				{#if applicableCount > 0}
+					<div class="actions">
+						<button class="btn" type="button" onclick={() => openUpdatePanel(true)}>Review</button>
+						<!-- was always shown: with nothing applicable it opened a panel with nothing to pick -->
 						<button class="btn primary" type="button" onclick={() => openUpdatePanel(true)}>Update all</button>
-					{/if}
-				</div>
+					</div>
+				{/if}
 			{/snippet}
+			{#if applicableCount === 0}
+				{@render otherList(otherUpdates)}
+			{/if}
 		</Card>
 	{/if}
 
 	<!-- Update panel -->
 	<!-- OLD CODE: the in-progress sub always said "A Malcolm update takes 10 to 40 minutes", also for a rules-only update -->
-	{#if showUpdatePanel}
+	<!-- OLD CODE: {#if showUpdatePanel} -->
+	{#if panelShown}
 		<Card
 			class="c-12"
 			title={updateCompleted ? finishedTitle : updateInProgress ? 'Updating…' : 'Apply updates'}
@@ -862,7 +899,8 @@
 					{/if}
 				</div>
 				<ul class="rows">
-					{#each [...selectedComponents] as component (component)}
+					<!-- OLD CODE: {#each [...selectedComponents] as component (component)} (the page's picks, not what the daemon started) -->
+					{#each updateStatus.components as component, i (i)}
 						{@const icon = componentStatusIcon(component, updateStatus)}
 						<li class="row">
 							<span class={['row-ic', icon === 'success' && 'is-ok', icon === 'failed' && 'is-bad']}>
@@ -892,25 +930,32 @@
 				{#if updateStatus.current_component}
 					<p class="mono dim current">Updating: {updateStatus.current_component}</p>
 				{/if}
+			{:else if updateInProgress}
+				<!-- the start request is pending: the picks it sent can't be changed (the picker used to show here) -->
+				<p class="help" role="status">Starting the update…</p>
 			{:else}
 				<!-- Component selection -->
 				<p class="help">Select the components you want to update:</p>
 				<ul class="checklist">
-					{#each availableUpdates as update (update.component)}
+					<!-- OLD CODE: {#each availableUpdates as update (update.component)} (listed updates NetTap can't apply, as dead checkboxes) -->
+					{#each applicableUpdates as update (update.component)}
 						<li>
 							<label class="check-row pick">
-								<!-- applies_with: NetTap can't apply it, so it can't be picked -->
+								<!-- OLD CODE: checked={!update.applies_with && …} disabled={!!update.applies_with} (those now sit in the list below, with no checkbox) -->
 								<input
 									type="checkbox"
-									checked={!update.applies_with && selectedComponents.has(update.component)}
-									disabled={!!update.applies_with}
+									checked={selectedComponents.has(update.component)}
 									onchange={() => toggleComponent(update.component)}
 								/>
 								<span class="pick-info">
 									<span class="pick-head">
 										<b>{update.component}</b>
-										<span class="tag">{update.update_type}</span>
-										{#if update.requires_restart && !update.applies_with}
+										<!-- OLD CODE: <span class="tag">{update.update_type}</span> (printed "unknown") -->
+										{#if update.update_type !== 'unknown'}
+											<span class="tag">{update.update_type}</span>
+										{/if}
+										<!-- OLD CODE: {#if update.requires_restart && !update.applies_with} -->
+										{#if update.requires_restart}
 											<span class="tag">Restart required</span>
 										{/if}
 									</span>
@@ -920,16 +965,19 @@
 										<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
 									{/if}
 									OLD CODE END -->
-									{#if update.applies_with}
-										<span class="dim">{update.applies_with}</span>
-									{:else if update.size_mb == null}
+									<!-- OLD CODE: an {#if update.applies_with} branch came first here (no such row is listed now) -->
+									{#if update.size_mb == null}
 										<span class="dim">size unknown</span>
 									{:else if update.size_mb > 0}
 										<span class="dim">{formatSizeMB(update.size_mb)}</span>
 									{/if}
+									{#if update.changelog && changelogInline(update.changelog)}
+										<span class="dim">{update.changelog}</span>
+									{/if}
 								</span>
 							</label>
-							{#if update.changelog}
+							<!-- OLD CODE: {#if update.changelog} (also a one-sentence status, behind an accordion) -->
+							{#if update.changelog && !changelogInline(update.changelog)}
 								<Collapsible title="Changelog" subtitle={update.latest_version}>
 									<pre class="changelog">{update.changelog}</pre>
 								</Collapsible>
@@ -937,6 +985,10 @@
 						</li>
 					{/each}
 				</ul>
+				{#if otherUpdates.length > 0}
+					<h3 class="eyebrow other-head">Can't be updated from here</h3>
+					{@render otherList(otherUpdates)}
+				{/if}
 				<div class="form-actions">
 					<button class="btn" type="button" onclick={closeUpdatePanel}>Cancel</button>
 					<button class="btn primary" type="button" onclick={handleApplyUpdates} disabled={selectedCount === 0 || applying}>
@@ -1051,6 +1103,10 @@
 	.pick input { margin-top: 2px; }
 	.pick-info { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
 	.pick-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+	.other-head { margin: var(--sp-4) 0 var(--sp-2); }
+	.other-list { list-style: none; margin: 0; padding: 0; }
+	.other-list > li { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-2) 0; font-size: var(--text-sm); color: var(--text-2); }
+	.other-list > li + li { border-top: 1px solid var(--line); }
 	.changelog { margin: 0; white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-2); }
 	.facts.flush { border-top: 0; padding-top: 0; }
 </style>
