@@ -27,7 +27,7 @@
 	import SeverityGauge from '$components/ui/charts/SeverityGauge.svelte';
 	import { severityBuckets } from '$lib/utils/severity';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { upDownLocal } from '$lib/utils/up-down';
+	import { recorded, upDownLocal } from '$lib/utils/up-down';
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots, snapshotWindow } from '$lib/stores/alertSnapshot';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
@@ -606,14 +606,28 @@
 	// { key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.orig_bytes })) },
 	// return p ? `${pointLabel(p.timestamp)} · ↓ ${formatBytes(p.resp_bytes)} · ↑ ${formatBytes(p.orig_bytes)}` : '';
 	// OLD CODE END
+	// OLD CODE START — chart gaps: a slot with no connection record drew as 0 B, a flat line where NetTap had no data
+	// const bandwidthSeries = $derived<AreaSeries[]>([
+	// 	{ key: 'down', label: 'Downloaded', colour: 1, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.download_bytes })) },
+	// 	{ key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.upload_bytes })) },
+	// 	{ key: 'local', label: 'On your network', colour: 3, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.local_bytes })) },
+	// ]);
+	// const bandwidthTip = (i: number) => {
+	// 	const p = bandwidthData[i];
+	// 	return p ? `${pointLabel(p.timestamp)} · ${upDownLocal(p, formatBytes, false)}` : '';
+	// };
+	// OLD CODE END
+	/** A slot's bytes, or NaN (a "No data" gap) when it has no connection record */
+	const bytesOf = (p: BandwidthPoint, v: number) => (recorded(p) ? v : Number.NaN);
 	const bandwidthSeries = $derived<AreaSeries[]>([
-		{ key: 'down', label: 'Downloaded', colour: 1, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.download_bytes })) },
-		{ key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.upload_bytes })) },
-		{ key: 'local', label: 'On your network', colour: 3, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.local_bytes })) },
+		{ key: 'down', label: 'Downloaded', colour: 1, points: bandwidthData.map((p) => ({ t: p.timestamp, v: bytesOf(p, p.download_bytes) })) },
+		{ key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: bytesOf(p, p.upload_bytes) })) },
+		{ key: 'local', label: 'On your network', colour: 3, points: bandwidthData.map((p) => ({ t: p.timestamp, v: bytesOf(p, p.local_bytes) })) },
 	]);
 	const bandwidthTip = (i: number) => {
 		const p = bandwidthData[i];
-		return p ? `${pointLabel(p.timestamp)} · ${upDownLocal(p, formatBytes, false)}` : '';
+		if (!p) return '';
+		return `${pointLabel(p.timestamp)} · ${recorded(p) ? upDownLocal(p, formatBytes, false) : 'no data'}`;
 	};
 	const busiestText = $derived(
 		busiest >= 0
@@ -864,10 +878,12 @@ OLD CODE END -->
 				<li><span class="sw line c-d3"></span>On your network</li>
 			</ul>
 		{/snippet}
-		{#if bandwidthData.length > 0}
+		<!-- OLD CODE: {#if bandwidthData.length > 0} (chart gaps: a window with no connection record is the empty state, not an all-hatched chart) -->
+		{#if bandwidthData.some(recorded)}
 			<AreaChart
 				series={bandwidthSeries}
 				bytes
+				gaps
 				formatX={axisLabel}
 				formatY={formatBytesShort}
 				formatTip={bandwidthTip}
