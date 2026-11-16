@@ -181,15 +181,23 @@ class UpdateExecutor:
                 raw = json.load(fh)
         except FileNotFoundError:
             return []
+        # OLD CODE START — the next save overwrote the file it couldn't read
+        # except (OSError, ValueError) as exc:
+        #     logger.warning(
+        #         "Couldn't read the update history %s: %s", self._history_file, exc
+        #     )
+        #     return []
+        # if not isinstance(raw, list):
+        #     logger.warning(
+        #         "The update history %s isn't a list: ignored", self._history_file
+        #     )
+        #     return []
+        # OLD CODE END
         except (OSError, ValueError) as exc:
-            logger.warning(
-                "Couldn't read the update history %s: %s", self._history_file, exc
-            )
+            self._set_aside(f"couldn't be read ({exc})")
             return []
         if not isinstance(raw, list):
-            logger.warning(
-                "The update history %s isn't a list: ignored", self._history_file
-            )
+            self._set_aside("isn't a list")
             return []
         batches = [b for b in (_normalize_batch(item) for item in raw) if b is not None]
         if len(batches) != len(raw):
@@ -199,6 +207,25 @@ class UpdateExecutor:
                 self._history_file,
             )
         return batches[-self._max_history :]
+
+    def _set_aside(self, why: str) -> None:
+        """Move an unusable history file out of the way, so the next save starts a new one."""
+        aside = self._history_file + ".unreadable"
+        try:
+            os.replace(self._history_file, aside)
+            logger.warning(
+                "The update history %s %s: moved it to %s",
+                self._history_file,
+                why,
+                aside,
+            )
+        except OSError as exc:
+            logger.warning(
+                "The update history %s %s, and couldn't be moved aside: %s",
+                self._history_file,
+                why,
+                exc,
+            )
 
     def _save_history(self) -> bool:
         """Write the history to its file; False (logged) when it couldn't be written."""

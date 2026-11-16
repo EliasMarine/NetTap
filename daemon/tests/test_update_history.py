@@ -59,6 +59,21 @@ def test_corrupt_or_non_list_files_read_as_empty(tmp_path):
         assert asyncio.run(ue.get_status())["state"] == "idle"
 
 
+def test_an_unreadable_file_is_moved_aside_not_overwritten(tmp_path, caplog):
+    """Review: the next save replaced a file it couldn't read, losing whatever was in it."""
+    path = tmp_path / "update-history.json"
+    for content in ("{not json", '{"history": []}'):
+        path.write_text(content)
+        ue = _executor(path)
+        aside = tmp_path / "update-history.json.unreadable"
+        assert aside.read_text() == content
+        assert not path.exists()
+        assert "moved it to" in caplog.text
+        asyncio.run(ue.apply_update(["malcolm"]))  # the next save starts a new file
+        assert len(json.loads(path.read_text())) == 1
+        assert aside.read_text() == content
+
+
 def test_malformed_entries_are_dropped_or_rebuilt(tmp_path):
     path = tmp_path / "update-history.json"
     path.write_text(
