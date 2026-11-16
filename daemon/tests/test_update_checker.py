@@ -587,7 +587,9 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
             ),
             (TESTED_MALCOLM_TAG, "minor", None),
         )
-        self.assertIn("backed up first", malcolm["changelog"])
+        # OLD CODE: self.assertIn("backed up first", malcolm["changelog"]) (the text now says what pauses)
+        self.assertIn("backs up OpenSearch's data", malcolm["changelog"])
+        self.assertIn("capture keeps recording", malcolm["changelog"])
         self.assertEqual(
             by_component["nettap-opensearch"]["applies_with"], MALCOLM_ROW_APPLIES_WITH
         )
