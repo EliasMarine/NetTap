@@ -253,7 +253,8 @@ describe('Devices — All devices table', () => {
 		const headers = within(table).getAllByRole('columnheader');
 		// OLD CODE: expect(headers).toHaveLength(10); (NET-314: MAC address column)
 		// OLD CODE: expect(headers).toHaveLength(11); (NET-316: Upload and Download)
-		expect(headers).toHaveLength(13);
+		// OLD CODE: expect(headers).toHaveLength(13); (NET-317: Protocols and First seen)
+		expect(headers).toHaveLength(15);
 		for (const th of headers) expect(within(th).getByRole('button')).toBeInTheDocument();
 		// busiest first
 		expect(within(table).getAllByRole('row')[1]).toHaveTextContent('192.168.1.10');
@@ -396,6 +397,93 @@ describe('Devices — All devices table', () => {
 		});
 	});
 
+	// NET-317: the daemon's services and the registry's first seen
+	describe('NET-317 Protocols and First seen', () => {
+		const HOUR = 60 * 60 * 1000;
+		const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+		const reply = (extra: Record<string, unknown>[]) => listReply([
+			{ ...DEVICE, ip: '192.168.1.10', hostname: 'phone', total_bytes: 5000, services: ['ssl', 'quic', 'dns'], known_since: ago(2 * HOUR), ...extra[0] },
+			{ ...DEVICE, ip: '192.168.1.9', hostname: 'nas', total_bytes: 3000, services: ['http'], known_since: ago(40 * 24 * HOUR), ...extra[1] },
+			{ ...DEVICE, ip: '192.168.1.8', hostname: 'old', total_bytes: 100, services: [], known_since: null, ...extra[2] },
+		], { from: LIST_FROM });
+		const show = async (extra: Record<string, unknown>[] = [{}, {}, {}]) => {
+			stubDaemon({ '/api/capture/mode': BRIDGE, '/api/devices': reply(extra), '/api/devices/count': { count: 3 } });
+			render(Page);
+			return screen.findByRole('table', { name: 'All devices' });
+		};
+		const header = (table: HTMLElement, label: string) => within(table).getAllByRole('columnheader').find((th) => th.textContent?.includes(label))!;
+		const column = (table: HTMLElement, label: string) => {
+			const index = within(table).getAllByRole('columnheader').indexOf(header(table, label));
+			return within(table).getAllByRole('row').slice(1).map((r) => r.querySelectorAll('td')[index]?.textContent?.trim());
+		};
+		const bothWays = async (table: HTMLElement, label: string) => {
+			const button = within(header(table, label)).getByRole('button');
+			await fireEvent.click(button);
+			const first = column(table, label);
+			await fireEvent.click(button);
+			return [first, column(table, label)];
+		};
+
+		it('shows up to 3 protocols, ssl as TLS and the rest in capitals, and sorts with none last', async () => {
+			const table = await show();
+			expect(column(table, 'Protocols')).toEqual(['TLS · QUIC · DNS', 'HTTP', '—']);
+			expect(within(header(table, 'Protocols')).getByRole('button')).toHaveAttribute('title', expect.stringContaining('IPv4'));
+			const sorts = await bothWays(table, 'Protocols');
+			expect(sorts).toContainEqual(['HTTP', 'TLS · QUIC · DNS', '—']);
+			expect(sorts).toContainEqual(['TLS · QUIC · DNS', 'HTTP', '—']);
+			expect(screen.queryByText("Protocols couldn't be read for this period.")).not.toBeInTheDocument();
+		});
+
+		it('shows when NetTap first saw each device, sorting an unknown one last', async () => {
+			const table = await show();
+			expect(column(table, 'First seen')).toEqual(['2h ago', '40d ago', '—']);
+			const sorts = await bothWays(table, 'First seen');
+			expect(sorts).toContainEqual(['40d ago', '2h ago', '—']);
+			expect(sorts).toContainEqual(['2h ago', '40d ago', '—']);
+		});
+
+		it('marks only a device the registry first saw in the last 24 h as New', async () => {
+			const table = await show();
+			const rowOf = (ip: string) => within(table).getAllByRole('row').find((r) => r.textContent?.includes(ip))!;
+			expect(within(rowOf('192.168.1.10')).getByText('New')).toBeInTheDocument();
+			expect(within(rowOf('192.168.1.9')).queryByText('New')).not.toBeInTheDocument();
+			expect(within(rowOf('192.168.1.8')).queryByText('New')).not.toBeInTheDocument();
+		});
+
+		it('says when the protocols could not be read, apart from none identified', async () => {
+			const table = await show([{ services: null }, { services: null }, { services: null }]);
+			expect(column(table, 'Protocols')).toEqual(['Unknown', 'Unknown', 'Unknown']);
+			expect(screen.getByText("Protocols couldn't be read for this period.")).toBeInTheDocument();
+		});
+
+		// review: null is per device (one side cut), so the note counts them instead of blaming the period
+		it('counts the devices whose protocols could not be read', async () => {
+			const table = await show([{ services: null }, {}, {}]);
+			expect(column(table, 'Protocols')).toEqual(['Unknown', 'HTTP', '—']);
+			expect(screen.getByText("Protocols couldn't be read for 1 of 3 devices.")).toBeInTheDocument();
+		});
+
+		it('reads an older daemon without the fields as none, with no note and no New chip', async () => {
+			const old = { services: undefined, known_since: undefined };
+			const table = await show([old, old, old]);
+			expect(column(table, 'Protocols')).toEqual(['—', '—', '—']);
+			expect(column(table, 'First seen')).toEqual(['—', '—', '—']);
+			expect(within(table).queryByText('New')).not.toBeInTheDocument();
+			expect(screen.queryByText(/Protocols couldn't be read/)).not.toBeInTheDocument();
+		});
+
+		it("shows '—' for a first seen it can't read, never 'NaNd ago'", async () => {
+			const table = await show([{ known_since: 'not a date' }, {}, {}]);
+			expect(column(table, 'First seen')[0]).toBe('—');
+		});
+
+		it('keeps the New chip beside a UniFi name, not under it', async () => {
+			const table = await show([{ unifi_name: 'Kitchen iPad' }, {}, {}]);
+			const chip = within(table).getByText('New');
+			expect(chip.parentElement).toHaveTextContent(/^Kitchen iPad UniFi New$/);
+		});
+	});
+
 	// the IPv6 notes only: in bridge mode NET-225 also shows its own note about devices behind NAT
 	const ipv6Notes = () => screen.queryAllByRole('note').filter((n) => !n.textContent?.includes('inline bridge mode'));
 
@@ -416,8 +504,9 @@ describe('Devices — All devices table', () => {
 		expect(within(guess).getByText('from web traffic')).toBeInTheDocument();
 		expect(within(unknown).getByText('Unknown')).toBeInTheDocument();
 		expect(within(unknown).queryByText(/^from /)).not.toBeInTheDocument();
+		// OLD CODE: screen.getByText('Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.') (NET-317: + IPv4-only Protocols)
 		expect(
-			screen.getByText('Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.'),
+			screen.getByText('Traffic and connections count both directions and include IPv6, matched to each device by its MAC address. Protocols count IPv4 connections only.'),
 		).toBeInTheDocument();
 		expect(ipv6Notes()).toHaveLength(0);
 	});

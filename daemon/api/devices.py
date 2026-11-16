@@ -12,6 +12,7 @@ import logging
 import os
 import threading
 import time
+from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -709,6 +710,89 @@ def _accounted_devices(
     return rows
 
 
+# More than all the protocols Zeek names on the G11 (21 in the whole index on 2026-11-16), so no side
+# is cut; a cut side (sum_other_doc_count > 0) makes that device's protocols unknown, never a guess.
+# Worst case 500 IPs x 2 sides x (1 + 40) = 41k buckets, under OpenSearch's 65,535 max_buckets.
+SERVICES_PER_SIDE = 40
+_SERVICE_SIDES = (("started", "source.ip"), ("answered", "destination.ip"))
+
+
+# shortcut: services counts IPv4 connections only; upgrade by folding the IPv6 share's protocol counts in fold_ipv6.
+def _device_services(
+    client: Any, filters: list[dict], ips: list[str], what: str
+) -> dict[str, list[str] | None]:
+    """{ip: its 3 commonest network.protocol, or None if a side was cut}, IPv4, started or answered.
+
+    A connection between two listed devices counts for both. QueryFailed if the reply is
+    incomplete or malformed, so a broken reply never reads as "no protocols".
+    """
+    if not ips:
+        return {}
+    either = [{"terms": {field: ips}} for _, field in _SERVICE_SIDES]
+    body = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    *filters,
+                    {"bool": {"should": either, "minimum_should_match": 1}},
+                ]
+            }
+        },
+        # Each side's terms run inside a filter on the listed IPs, so size len(ips) drops none
+        "aggs": {
+            side: {
+                "filter": {"terms": {field: ips}},
+                "aggs": {
+                    "by_ip": {
+                        "terms": {"field": field, "size": len(ips)},
+                        "aggs": {
+                            "services": {
+                                "terms": {
+                                    "field": "network.protocol",
+                                    "size": SERVICES_PER_SIDE,
+                                }
+                            }
+                        },
+                    }
+                },
+            }
+            for side, field in _SERVICE_SIDES
+        },
+    }
+    reply = client.search(index=NETWORK_INDEX, body=body)
+    aggs = checked(reply, what, ("started", "answered"))["aggregations"]
+    counts: dict[str, Counter] = {}
+    cut: set[str] = set()
+    # A bucket without its key or count fails the read, so the list says "unknown", not 500
+    try:
+        for side, _ in _SERVICE_SIDES:
+            by_ip = aggs[side].get("by_ip") or {}
+            if not isinstance(by_ip.get("buckets"), list):
+                raise QueryFailed(f"{what}: missing aggregation")
+            if by_ip.get("sum_other_doc_count"):
+                raise QueryFailed(f"{what}: the {side} side stopped short")
+            for b in by_ip["buckets"]:
+                services = b.get("services") or {}
+                if not isinstance(services.get("buckets"), list):
+                    raise QueryFailed(f"{what}: missing aggregation")
+                found = {s["key"]: s["doc_count"] for s in services["buckets"]}
+                if any(
+                    not isinstance(n, int) for n in (b["doc_count"], *found.values())
+                ):
+                    raise QueryFailed(f"{what}: a doc_count that isn't a whole number")
+                if services.get("sum_other_doc_count"):
+                    cut.add(b["key"])
+                # Both sides' whole counts are added before the top 3 is taken
+                counts.setdefault(b["key"], Counter()).update(found)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise QueryFailed(f"{what}: malformed bucket ({exc!r})") from exc
+    return {
+        ip: None if ip in cut else [p for p, _ in seen.most_common(3)]
+        for ip, seen in counts.items()
+    }
+
+
 def _ipv6_mac_of(
     client: Any, app: Mapping[str, Any], ip: str, from_ts: str, to_ts: str
 ) -> str | None:
@@ -761,22 +845,47 @@ def _mac_key(mac: str | None) -> str:
     return DeviceRegistry._normalize_mac(mac) if mac else ""
 
 
-def _registry_names(request: web.Request, macs: list[str]) -> dict[str, str]:
-    """{normalized MAC: the name Home shows} for the MACs the device registry knows (#130).
-
-    The registry names a device by its MAC (UniFi alias, the owner's name, then the name it
-    gave DHCP), which DNS records can't do reliably; Devices and Home now agree.
-    """
+def _registry_known(request: web.Request, macs: list[str]) -> dict[str, dict]:
+    """{normalized MAC: registry device} for the MACs the registry knows; {} if it can't say."""
     registry = request.app.get("device_registry")
     if registry is None or not macs:
         return {}
     try:
-        known = registry.get_devices(macs)
+        return registry.get_devices(macs)
     except Exception as exc:
+        # OLD CODE: "Device names from the registry unavailable, using DNS names: %s" (NET-317: known_since too)
         logger.warning(
-            "Device names from the registry unavailable, using DNS names: %s", exc
+            "Device registry unavailable, using DNS names and no first seen: %s", exc
         )
         return {}
+
+
+def _registry_names(
+    request: web.Request, macs: list[str], known: dict[str, dict] | None = None
+) -> dict[str, str]:
+    """{normalized MAC: the name Home shows} for the MACs the device registry knows (#130).
+
+    The registry names a device by its MAC (UniFi alias, the owner's name, then the name it
+    gave DHCP), which DNS records can't do reliably; Devices and Home now agree.
+    `known` is a _registry_known reading the caller already made for these MACs.
+    """
+    # OLD CODE START — PR B: the read moved to _registry_known, which the list shares with known_since
+    # registry = request.app.get("device_registry")
+    # if registry is None or not macs:
+    #     return {}
+    # try:
+    #     known = registry.get_devices(macs)
+    # except Exception as exc:
+    #     logger.warning(
+    #         "Device names from the registry unavailable, using DNS names: %s", exc
+    #     )
+    #     return {}
+    # OLD CODE END
+    registry = request.app.get("device_registry")
+    if registry is None:
+        return {}
+    if known is None:
+        known = _registry_known(request, macs)
     # OLD CODE START — NET-200: the owner's name would reach _device_category; it is applied after
     # return {
     #     mac: name
@@ -1319,13 +1428,38 @@ def handle_device_list(request: web.Request) -> web.Response:
 
     # Build device list with enrichment — skip broadcast/gateway IPs
     # Fingerprint lookups for every device at once (#21: 4 round trips per device before)
-    lookups = fingerprint.lookup_many(
-        client,
-        [b["key"] for b in buckets if not _is_skipped_device_ip(b["key"])],
-        from_ts,
-        to_ts,
-    )
-    names = _registry_names(request, [mac for mac, _, _ in lookups.values() if mac])
+    # OLD CODE START — PR B: the listed IPs are shared with the services read below
+    # lookups = fingerprint.lookup_many(
+    #     client,
+    #     [b["key"] for b in buckets if not _is_skipped_device_ip(b["key"])],
+    #     from_ts,
+    #     to_ts,
+    # )
+    # OLD CODE END
+    listed = [b["key"] for b in buckets if not _is_skipped_device_ip(b["key"])]
+    lookups = fingerprint.lookup_many(client, listed, from_ts, to_ts)
+    # OLD CODE START — PR B: the registry was asked about fingerprint MACs only, so an
+    # answer-only device's row had a MAC but never its registry name
+    # names = _registry_names(request, [mac for mac, _, _ in lookups.values() if mac])
+    # OLD CODE END
+    # an answer-only device has no MAC of its own records; its answered ones carry it
+    macs = {
+        b["key"]: lookups.get(b["key"], (None, None, None))[0] or b.get("mac")
+        for b in buckets
+        if not _is_skipped_device_ip(b["key"])
+    }
+    with_mac = [mac for mac in macs.values() if mac]
+    known = _registry_known(request, with_mac)
+    names = _registry_names(request, with_mac, known)
+    # Only the listed devices, after the cut, so this reads at most _MAX_DEVICE_LIMIT IPs
+    try:
+        services = _device_services(
+            client, _conn_filters(from_ts, to_ts), listed, "device services"
+        )
+    except (QueryFailed, OpenSearchException) as exc:
+        # Protocols are an extra: the list still answers, and every row says they're unknown
+        logger.warning("Device protocols unavailable for the list: %s", exc)
+        services = None
     devices = []
     for b in buckets:
         ip = b["key"]
@@ -1356,9 +1490,13 @@ def handle_device_list(request: web.Request) -> web.Response:
         # hostname = fingerprint.get_hostname_for_ip(client, ip, from_ts, to_ts)
         # os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
         # OLD CODE END
-        mac, hostname, os_hint = lookups.get(ip, (None, None, None))
-        # an answer-only device has no MAC of its own records; its answered ones carry it
-        mac = mac or b.get("mac")
+        # OLD CODE START — PR B: the effective MAC is resolved above, before the registry read
+        # mac, hostname, os_hint = lookups.get(ip, (None, None, None))
+        # # an answer-only device has no MAC of its own records; its answered ones carry it
+        # mac = mac or b.get("mac")
+        # OLD CODE END
+        _, hostname, os_hint = lookups.get(ip, (None, None, None))
+        mac = macs[ip]
         hostname = names.get(_mac_key(mac)) or hostname
         manufacturer = fingerprint.get_manufacturer(mac) if mac else None
 
@@ -1380,6 +1518,8 @@ def handle_device_list(request: web.Request) -> web.Response:
             **_guesses(os_hint, hostname, manufacturer),
             "first_seen": first_seen,
             "last_seen": last_seen,
+            # When the registry first saw the MAC, any time; None when it doesn't know it
+            "known_since": (known.get(_mac_key(mac)) or {}).get("first_seen"),
             # OLD CODE START — NET-226: the started side's figures, orig/resp named
             # "total_bytes": total_bytes,
             # "orig_bytes": orig_bytes,
@@ -1388,6 +1528,8 @@ def handle_device_list(request: web.Request) -> web.Response:
             # OLD CODE END
             **_traffic_fields(b),
             "protocols": protocols,
+            # None: the read failed; []: no identified protocol
+            "services": services.get(ip, []) if services is not None else None,
             "alert_count": alert_count,
         }
 

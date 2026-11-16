@@ -23,14 +23,16 @@
 	// OLD CODE: import { countDifference, customRange, DRILL_RANGES, fmt, … } (NET-296: fmt was By type's connections)
 	import { countDifference, customRange, DRILL_RANGES, linkedCount, rangeWindow, startRange, type LinkedCount } from '$lib/utils/drilldown';
 	// OLD CODE: import { getNewDeviceCount, getRegistryDevices, isNewDevice } … (NET-296: isNewDevice was By type's New chip)
-	import { getNewDeviceCount, getRegistryDevices } from '$api/devices-registry';
+	// OLD CODE: import { getNewDeviceCount, getRegistryDevices } from '$api/devices-registry'; (NET-317: the New chip is back, from known_since)
+	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
 	import { BRIDGE_NO_DEVICES, getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { nothingFound } from '$api/system';
 	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
-	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
+	// OLD CODE: import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs'; (NET-317: protocol labels)
+	import { formatBytes, formatCompactNumber as formatNumber, protocolLabel } from '$lib/api/logs';
 	// OLD CODE: import { withTraffic } from '$lib/utils/registry-traffic'; (NET-296: By type only)
 	import { likelyType, osBasis, typeBasis } from '$lib/utils/device-guess';
 	import { ipv6ListNotes } from '$lib/utils/ipv6-coverage';
@@ -600,6 +602,22 @@
 	// "1.2 GB" as the KPI's value and unit
 	const topBytes = $derived(topConsumer ? formatBytes(topConsumer.total_bytes).split(' ') : null);
 
+	/** NET-317: "ssl" reads TLS (protocolLabel); a name it doesn't know reads in capitals, quic as QUIC. */
+	function serviceLabel(protocol: string): string {
+		const label = protocolLabel(protocol);
+		return label === protocol ? protocol.toUpperCase() : label;
+	}
+	const servicesText = (d: Device) => (d.services?.length ? d.services.map(serviceLabel).join(' · ') : null);
+	/** The registry first saw it in the last 24 h: the banner's and the KPI's rule. */
+	const isNew = (d: Device) => !!d.known_since && isNewDevice({ first_seen: d.known_since });
+	// OLD CODE: const protocolsFailed = $derived(devices.some((d) => d.services === null)); (review: null is per device)
+	const unreadProtocols = $derived(devices.filter((d) => d.services === null).length);
+	const unreadProtocolsNote = $derived(
+		unreadProtocols === devices.length
+			? "Protocols couldn't be read for this period."
+			: `Protocols couldn't be read for ${unreadProtocols} of ${devices.length} devices.`,
+	);
+
 	// Every column sorts (design system); the snippets are at the top of the markup
 	const columns: Column<Device>[] = [
 		{ key: 'ip', label: 'IP address', cell: ipCell },
@@ -617,7 +635,13 @@
 		{ key: 'upload_bytes', label: 'Upload', numeric: true, cell: uploadCell },
 		{ key: 'download_bytes', label: 'Download', numeric: true, cell: downloadCell },
 		{ key: 'connection_count', label: 'Connections', numeric: true, cell: connCell },
+		// NET-317: the daemon's services (IPv4, both directions) and the registry's first seen
+		{ key: 'services', label: 'Protocols', cell: servicesCell, sortValue: servicesText, title: "Commonest protocols in the device's IPv4 connections, both directions" },
 		{ key: 'alert_count', label: 'Alerts', numeric: true, cell: alertCell },
+		{
+			key: 'known_since', label: 'First seen', cell: knownCell, title: 'When NetTap first saw this device (any time, not just this period)',
+			sortValue: (d) => (d.known_since ? Date.parse(d.known_since) : null),
+		},
 		{ key: 'last_seen', label: 'Last seen', cell: seenCell, sortValue: (d) => (d.last_seen ? Date.parse(d.last_seen) : null) },
 	];
 
@@ -660,14 +684,16 @@
 {#snippet macCell(d: Device)}{#if d.mac}<MacAddress mac={d.mac} />{:else}—{/if}{/snippet}
 {#snippet nameCell(d: Device)}
 	<!-- NET-200: the owner's name is in hostname already; the UniFi tag only when the UniFi name is the one shown -->
+	<!-- NET-317: the New chip inside each branch; after .two (a column) it dropped under a UniFi name -->
 	{#if d.custom_name}
-		{d.custom_name}
+		{d.custom_name} {@render newChip(d)}
 	{:else if d.unifi_name}
-		<span class="two"><span>{d.unifi_name} <span class="tag">UniFi</span></span><span class="mono">{d.hostname ?? '—'}</span></span>
+		<span class="two"><span>{d.unifi_name} <span class="tag">UniFi</span> {@render newChip(d)}</span><span class="mono">{d.hostname ?? '—'}</span></span>
 	{:else}
-		{d.hostname ?? '—'}
+		{d.hostname ?? '—'} {@render newChip(d)}
 	{/if}
 {/snippet}
+{#snippet newChip(d: Device)}{#if isNew(d)}<span class="chip is-ok">New</span>{/if}{/snippet}
 {#snippet statusCell(d: Device)}
 	{@const s = status(d)}
 	<span class={['res', s.rank === 2 && 'is-live']}>{s.label}</span>
@@ -693,7 +719,9 @@ OLD CODE END -->
 {#snippet uploadCell(d: Device)}{d.upload_bytes == null ? '—' : formatBytes(d.upload_bytes)}{/snippet}
 {#snippet downloadCell(d: Device)}{d.download_bytes == null ? '—' : formatBytes(d.download_bytes)}{/snippet}
 {#snippet connCell(d: Device)}{formatNumber(d.connection_count)}{/snippet}
+{#snippet servicesCell(d: Device)}{#if d.services === null}<span class="dim">Unknown</span>{:else}{servicesText(d) ?? '—'}{/if}{/snippet}
 {#snippet alertCell(d: Device)}{formatNumber(d.alert_count)}{/snippet}
+{#snippet knownCell(d: Device)}{d.known_since && Number.isFinite(Date.parse(d.known_since)) ? timeAgo(d.known_since) : '—'}{/snippet}
 {#snippet seenCell(d: Device)}{timeAgo(d.last_seen)}{/snippet}
 
 <!-- OLD CODE START — NET-296: By type's row cells (inner comments written <! - - … - - >)
@@ -970,7 +998,11 @@ OLD CODE END -->
 						{columns}
 					/>
 				{/if}
-				<p class="note table-note">Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.</p>
+				<!-- OLD CODE: <p class="note table-note">Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.</p> (NET-317: Protocols are IPv4 only) -->
+				<p class="note table-note">Traffic and connections count both directions and include IPv6, matched to each device by its MAC address. Protocols count IPv4 connections only.</p>
+				{#if unreadProtocols > 0}
+					<p class="notice is-warn table-note" role="note"><Icon name="warn" /><span>{unreadProtocolsNote}</span></p>
+				{/if}
 				{#each ipv6ListNotes(devices) as note (note)}
 					<p class="notice is-warn table-note" role="note"><Icon name="warn" /><span>{note}</span></p>
 				{/each}

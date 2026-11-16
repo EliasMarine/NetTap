@@ -151,12 +151,21 @@ class Registry:
 
     NAMES = {M_PHONE: "Kitchen phone", M_CAM: "Cam._hap._tcp.local"}
 
+    # OLD CODE START — PR B: the list reads known_since off each entry, so entries are dicts,
+    # as DeviceRegistry.get_devices answers
+    # def get_devices(self, macs: list[str]) -> dict:
+    #     # keyed by the normalized MAC, as DeviceRegistry.get_devices answers
+    #     return {m.upper(): m.upper() for m in macs if m.upper() in self.NAMES}
+    #
+    # def get_name(self, device: str, own: bool = True) -> str:
+    #     return self.NAMES[device]
+    # OLD CODE END
     def get_devices(self, macs: list[str]) -> dict:
         # keyed by the normalized MAC, as DeviceRegistry.get_devices answers
-        return {m.upper(): m.upper() for m in macs if m.upper() in self.NAMES}
+        return {m.upper(): {"mac": m.upper()} for m in macs if m.upper() in self.NAMES}
 
-    def get_name(self, device: str, own: bool = True) -> str:
-        return self.NAMES[device]
+    def get_name(self, device: dict, own: bool = True) -> str:
+        return self.NAMES[device["mac"]]
 
 
 def _register(app, client):
