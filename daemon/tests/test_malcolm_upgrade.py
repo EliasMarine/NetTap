@@ -618,6 +618,37 @@ class TestSuricataIsNeverRestartedUnderARuleUpdate:
             i for i, t in enumerate(text) if t.endswith("--no-build opensearch")
         ) < text.index("RELEASED")
 
+    def test_a_rollback_recreates_suricata_even_when_a_rule_update_keeps_the_lock(
+        self, tmp_path, rules_dir, monkeypatch, caplog
+    ):
+        """Review: a rollback that gave up here left OpenSearch restored and the rest stopped."""
+        monkeypatch.setattr(mu, "RULES_LOCK_UP_WAIT_S", 0)
+        docker = FakeDocker()
+        held = []
+
+        def hook(
+            cmd,
+        ):  # a rule update takes the lock during the download and never lets go
+            if " pull " in " ".join(cmd) and not held:
+                held.append(_hold(rules_dir))
+
+        docker.hook = hook
+        try:
+            result = _apply(_upgrade(docker, tmp_path=tmp_path))
+        finally:
+            for fd in held:
+                os.close(fd)
+
+        # the update itself still refuses to restart Suricata under it, and rolls back
+        assert result["success"] is False and result["rolled_back"] is True
+        assert "kept its lock" in result["error"]
+        assert "rolled back to Malcolm 26.02.0" in result["error"], result["error"]
+        # the rollback recreated everything, Suricata included, on the old release
+        ups = [t for t in docker.text() if " up -d " in t and "suricata-live" in t]
+        assert len(ups) == 1 and "MALCOLM_IMAGE_TAG=26.02.0" in ups[0]
+        assert set(docker.tags.values()) == {"26.02.0"}
+        assert "rolling back Suricata anyway" in caplog.text
+
     def test_the_lock_is_held_for_the_recreate_and_free_for_the_health_waits(
         self, tmp_path, rules_dir
     ):

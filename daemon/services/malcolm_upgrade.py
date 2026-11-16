@@ -594,7 +594,10 @@ class MalcolmUpgrade:
     #             f"Starting {', '.join(services)}",
     #         )
     # OLD CODE END
-    async def _up(self, p: dict, tag: str, services: list[str]) -> None:
+    async def _up(
+        self, p: dict, tag: str, services: list[str], abort_on_busy: bool = True
+    ) -> None:
+        """abort_on_busy=False (the rollback) recreates Suricata even if a rule update keeps its lock."""
         if not services:
             return
         async with contextlib.AsyncExitStack() as stack:
@@ -607,10 +610,19 @@ class MalcolmUpgrade:
                         rules_lock.rules_lock(RULES_LOCK_UP_WAIT_S)
                     )
                 except rules_lock.RulesBusyError as exc:
-                    raise UpgradeError(
-                        f"A Suricata rule update kept its lock for {RULES_LOCK_UP_WAIT_S // 60} minutes, "
-                        "so Suricata couldn't be restarted safely."
-                    ) from exc
+                    # a half-done rollback (OpenSearch restored, the rest stopped) is worse than one
+                    # cut-off rule update, which the next run redoes; the shim's flock -w waiter can
+                    # win every handover from this non-blocking poll
+                    if not abort_on_busy:
+                        logger.warning(
+                            "A Suricata rule update kept its lock for %d minutes: rolling back Suricata anyway",
+                            RULES_LOCK_UP_WAIT_S // 60,
+                        )
+                    else:
+                        raise UpgradeError(
+                            f"A Suricata rule update kept its lock for {RULES_LOCK_UP_WAIT_S // 60} minutes, "
+                            "so Suricata couldn't be restarted safely."
+                        ) from exc
                 except OSError as exc:  # as rules_lock does without the volume
                     logger.warning(
                         "Couldn't take Suricata's rules lock, restarting it without: %s",
@@ -783,7 +795,13 @@ class MalcolmUpgrade:
                 await self._copy(p, p["backup_volume"], p["data_volume"])
             await self._up(p, old, ["opensearch"])
             await self._wait_login(p)
-            await self._up(p, old, [s for s in p["services"] if s != "opensearch"])
+            # OLD CODE: await self._up(p, old, [s for s in p["services"] if s != "opensearch"]) (stopped half-way on a busy rules lock)
+            await self._up(
+                p,
+                old,
+                [s for s in p["services"] if s != "opensearch"],
+                abort_on_busy=False,
+            )
             since = self._now()
             await self._wait_healthy(p, old)
             # healthy containers aren't capture: Logstash took 4 minutes to start its pipelines on the G11
