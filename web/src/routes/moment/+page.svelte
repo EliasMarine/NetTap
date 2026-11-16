@@ -288,11 +288,12 @@
 			value={alertCount ? fmt(alertCount.counts.total) : '—'}
 			sub={kpiSub('alertCount', 'the alert count', alertCount && `${fmt(alertCount.counts.high)} high, ${fmt(alertCount.counts.medium)} med, ${fmt(alertCount.counts.low)} low`)}
 		/>
+		<!-- OLD CODE: href={withCount(`/devices?view=all&${windowQuery(exact, range)}`, deviceCount?.count)} (NET-296: Devices has no tabs) -->
 		<KpiCard
 			class="c-3"
 			label="Active devices"
 			icon="devices"
-			href={withCount(`/devices?view=all&${windowQuery(exact, range)}`, deviceCount?.count)}
+			href={withCount(`/devices?${windowQuery(exact, range)}`, deviceCount?.count)}
 			value={deviceCount ? fmt(deviceCount.count) : '—'}
 			sub={kpiSub('deviceCount', 'the device count', deviceCount && 'Devices seen on the network')}
 		/>

@@ -345,7 +345,8 @@ describe('Devices — page refresh contract', () => {
 		stubDaemon(ALL);
 		const { unmount } = render(Page);
 		expect(get(pageRefresh).available).toBe(true);
-		await screen.findByRole('region', { name: 'Phones and tablets' });
+		// OLD CODE: await screen.findByRole('region', { name: 'Phones and tablets' }); (NET-296: no By type)
+		await screen.findByRole('table', { name: 'All devices' });
 		expect(await refreshPage()).toBe('ok');
 		unmount();
 		expect(get(pageRefresh).available).toBe(false);
@@ -354,7 +355,8 @@ describe('Devices — page refresh contract', () => {
 	it('reports partial when one request fails', async () => {
 		stubDaemon({ ...ALL, '/api/devices/registry': undefined });
 		render(Page);
-		await screen.findByText("Couldn't load devices: the request failed.");
+		// OLD CODE: await screen.findByText("Couldn't load devices: the request failed."); (NET-296: By type said so; the banner's registry still counts)
+		await screen.findByRole('table', { name: 'All devices' });
 		expect(await refreshPage()).toBe('partial');
 	});
 
@@ -500,8 +502,16 @@ describe('Devices — the URL window and one reading', () => {
 		});
 	});
 
-	it('opens All devices from view=all, even in mirror mode', async () => {
-		goTo('?view=all&range=24h');
+	// OLD CODE START — NET-296: the By type / All devices tabs are gone
+	// it('opens All devices from view=all, even in mirror mode', async () => {
+	// 	goTo('?view=all&range=24h');
+	// 	…the same stub and table check…
+	// 	expect(screen.getByRole('tab', { name: 'All devices' })).toHaveAttribute('aria-selected', 'true');
+	// });
+	// OLD CODE END
+	// NET-296: a bookmarked or old link's `view=type` lands on the same table
+	it('opens All devices in mirror mode, with no tabs, whatever the link says', async () => {
+		goTo('?view=type&range=24h');
 		stubDaemon({
 			'/api/capture/mode': MIRROR,
 			'/api/devices/registry': { devices: [PHONE], total: 1 },
@@ -509,10 +519,12 @@ describe('Devices — the URL window and one reading', () => {
 		});
 		render(Page);
 		expect(await screen.findByRole('table', { name: 'All devices' })).toBeInTheDocument();
-		expect(screen.getByRole('tab', { name: 'All devices' })).toHaveAttribute('aria-selected', 'true');
+		expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+		expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument();
 	});
 
-	it('a range pill keeps the tab and drops the exact window', async () => {
+	// OLD CODE: it('a range pill keeps the tab and drops the exact window', … (NET-296: no tab to keep)
+	it('a range pill drops the exact window and the old view', async () => {
 		goTo(`?view=all&from=${FROM}&to=${TO}&range=24h`);
 		stub((url) => reading(url, [DEVICE]));
 		render(Page);
@@ -522,7 +534,8 @@ describe('Devices — the URL window and one reading', () => {
 		const [href] = vi.mocked(goto).mock.calls[0];
 		const target = new URL(String(href), 'http://localhost');
 		expect(target.pathname).toBe('/devices');
-		expect(Object.fromEntries(target.searchParams)).toEqual({ range: '7d', view: 'all' });
+		// OLD CODE: expect(Object.fromEntries(target.searchParams)).toEqual({ range: '7d', view: 'all' }); (NET-296)
+		expect(Object.fromEntries(target.searchParams)).toEqual({ range: '7d' });
 	});
 
 	it('Total devices and Online now come from the list reply, and the partial note from its total', async () => {

@@ -153,7 +153,8 @@ describe('Moment page', () => {
 		expect(params(kpi('Connections'))).toEqual({ ...conn, count: '321' });
 		expect(params(kpi('Alerts'))).toEqual({ from: FROM, to: TO, range: '1h', count: '12' });
 		expect(new URL(kpi('Active devices').getAttribute('href')!, 'http://x').pathname).toBe('/devices');
-		expect(params(kpi('Active devices'))).toEqual({ view: 'all', from: FROM, to: TO, range: '1h', count: '7' });
+		// OLD CODE: expect(params(kpi('Active devices'))).toEqual({ view: 'all', from: FROM, to: TO, range: '1h', count: '7' }); (NET-296)
+		expect(params(kpi('Active devices'))).toEqual({ from: FROM, to: TO, range: '1h', count: '7' });
 
 		// protocol bars: the endpoint's whole predicate, biggest first, empty services left out
 		const protocols = card('Protocols');

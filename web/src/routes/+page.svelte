@@ -843,11 +843,12 @@ OLD CODE END -->
 	<!-- href="/iot" -->
 	<!-- OLD CODE END -->
 	<!-- OLD CODE: href={deviceCountReply ? `/devices?view=all&${windowQuery(deviceCountReply, range)}` : `/devices?view=all&range=${range}`} (section D: the window's link carries the figure clicked) -->
+	<!-- OLD CODE: href={deviceCountReply ? withCount(`/devices?view=all&${windowQuery(…)}`, …) : `/devices?view=all&range=${range}`} (NET-296: Devices has no tabs, so no view) -->
 	<KpiCard
 		class="c-3"
 		label="Devices"
 		icon="devices"
-		href={deviceCountReply ? withCount(`/devices?view=all&${windowQuery(deviceCountReply, range)}`, deviceCountReply.count) : `/devices?view=all&range=${range}`}
+		href={deviceCountReply ? withCount(`/devices?${windowQuery(deviceCountReply, range)}`, deviceCountReply.count) : `/devices?range=${range}`}
 		value={deviceCount !== null ? formatNumber(deviceCount) : '—'}
 		note={span.window}
 		sub={devicesSub}

@@ -1,6 +1,8 @@
 /** NET-180: Devices By type in mirror mode. NET-201: the owner dropped the cards, so By type is the
  * List layout only: one sortable table per group, no Layout switch, no horizontal page scroll down
- * to 390 px, and screenshots in every theme. (The cards' line-up checks are kept below as OLD CODE.) */
+ * to 390 px, and screenshots in every theme. (The cards' line-up checks are kept below as OLD CODE.)
+ * NET-296: the owner dropped the By type tab, so mirror mode opens the All devices table: no tabs,
+ * no horizontal page scroll down to 390 px, screenshots in every theme. */
 import { test, expect, type Page } from '@playwright/test';
 import { VARIANTS, expectReached, setMode, setVariant, settle, stubUpstreams, watchApi } from './harness.ts';
 import { BY_TYPE_LAYOUT } from './fixtures/devices.ts';
@@ -35,9 +37,13 @@ async function open(page: Page): Promise<void> {
 	await page.goto('/devices');
 	await expectReached(page, '/devices', 'Devices');
 	await apiIdle();
-	await expect(page.getByRole('tab', { name: 'By type' })).toHaveAttribute('aria-selected', 'true');
-	// OLD CODE: await expect(page.locator('main .dev-card').filter({ hasText: 'DESKTOP-1H4Q4HV' })).toContainText('Maker unknown'); (NET-201: rows)
-	await expect(page.locator('main .type-group tr').filter({ hasText: 'DESKTOP-1H4Q4HV' })).toContainText('Maker unknown');
+	// OLD CODE START — NET-296: mirror mode opened on By type
+	// await expect(page.getByRole('tab', { name: 'By type' })).toHaveAttribute('aria-selected', 'true');
+	// // OLD CODE: await expect(page.locator('main .dev-card').filter({ hasText: 'DESKTOP-1H4Q4HV' })).toContainText('Maker unknown'); (NET-201: rows)
+	// await expect(page.locator('main .type-group tr').filter({ hasText: 'DESKTOP-1H4Q4HV' })).toContainText('Maker unknown');
+	// OLD CODE END
+	await expect(page.getByRole('table', { name: 'All devices' })).toBeVisible();
+	await expect(page.getByRole('tab')).toHaveCount(0);
 }
 
 // OLD CODE START — NET-201: the cards' band and line helpers
@@ -63,7 +69,8 @@ async function open(page: Page): Promise<void> {
 // }
 // OLD CODE END
 
-test.describe('Devices By type layout (NET-180)', () => {
+// OLD CODE: test.describe('Devices By type layout (NET-180)', () => { (NET-296)
+test.describe('Devices layout in mirror mode (NET-180, NET-296)', () => {
 	// OLD CODE START — NET-201: no cards to line up
 	// for (const variant of VARIANTS) {
 	// 	test(`every card's stats line up with its neighbours' in ${variant}`, async ({ page }, testInfo) => {
@@ -88,16 +95,33 @@ test.describe('Devices By type layout (NET-180)', () => {
 	// }
 	// OLD CODE END
 
-	test('List shows one sortable table per group and fits the page down to 390 px', async ({ page }, testInfo) => {
+	// OLD CODE START — NET-296: By type's one-table-per-group layout is gone
+	// test('List shows one sortable table per group and fits the page down to 390 px', async ({ page }, testInfo) => {
+	// 	await open(page);
+	// 	// OLD CODE: await page.getByRole('group', { name: 'Layout' }).getByRole('button', { name: 'List' }).click(); (NET-201: the list is all there is)
+	// 	await expect(page.getByRole('group', { name: 'Layout' })).toHaveCount(0);
+	// 	const groups = await page.locator('main .type-group').count();
+	// 	await expect(page.locator('main .type-group table')).toHaveCount(groups);
+	// 	await expect(page.locator('main .dev-card')).toHaveCount(0);
+	// 	const computers = page.getByRole('table', { name: 'Computers, as a list' });
+	// 	await expect(computers.getByRole('columnheader', { name: 'Last seen' })).toHaveAttribute('aria-sort', 'descending');
+	// 	await expect(computers.getByRole('row').nth(1)).toContainText('DESKTOP-1H4Q4HV');
+	// 	for (const variant of VARIANTS) {
+	// 		await setVariant(page, variant);
+	// 		for (const width of [1440, 390]) {
+	// 			await page.setViewportSize({ width, height: 900 });
+	// 			await settle(page);
+	// 			const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+	// 			expect.soft(scrollWidth, `horizontal scroll, ${variant} @ ${width}`).toBeLessThanOrEqual(width);
+	// 			await page.screenshot({ path: testInfo.outputPath(`list-${variant}-${width}.png`), fullPage: true });
+	// 		}
+	// 	}
+	// });
+	// OLD CODE END
+
+	test('mirror mode opens the All devices table, with no tabs, and it fits the page down to 390 px', async ({ page }, testInfo) => {
 		await open(page);
-		// OLD CODE: await page.getByRole('group', { name: 'Layout' }).getByRole('button', { name: 'List' }).click(); (NET-201: the list is all there is)
-		await expect(page.getByRole('group', { name: 'Layout' })).toHaveCount(0);
-		const groups = await page.locator('main .type-group').count();
-		await expect(page.locator('main .type-group table')).toHaveCount(groups);
-		await expect(page.locator('main .dev-card')).toHaveCount(0);
-		const computers = page.getByRole('table', { name: 'Computers, as a list' });
-		await expect(computers.getByRole('columnheader', { name: 'Last seen' })).toHaveAttribute('aria-sort', 'descending');
-		await expect(computers.getByRole('row').nth(1)).toContainText('DESKTOP-1H4Q4HV');
+		await expect(page.locator('main .type-group')).toHaveCount(0);
 		for (const variant of VARIANTS) {
 			await setVariant(page, variant);
 			for (const width of [1440, 390]) {
@@ -105,7 +129,7 @@ test.describe('Devices By type layout (NET-180)', () => {
 				await settle(page);
 				const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
 				expect.soft(scrollWidth, `horizontal scroll, ${variant} @ ${width}`).toBeLessThanOrEqual(width);
-				await page.screenshot({ path: testInfo.outputPath(`list-${variant}-${width}.png`), fullPage: true });
+				await page.screenshot({ path: testInfo.outputPath(`all-devices-${variant}-${width}.png`), fullPage: true });
 			}
 		}
 	});
