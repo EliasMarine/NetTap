@@ -2,7 +2,7 @@
 
 **Linear:** NET-292
 **Branch:** `feature/marketing-site`
-**Status:** live at https://nettap.dev since 2026-11-16 00:41 UTC (first deploy from the branch). PR pending.
+**Status:** live at https://nettap.dev since 2026-11-16 00:41 UTC. PR #298 merged (`f960f43d`); the live release `20261116T005849Z-893f3458` has the same tree. Cloudflare-proxy readiness (ACME over https, real visitor IPs) followed in a chore PR.
 
 ## Problem
 
