@@ -24,7 +24,7 @@ ones the owner could see:
 |---|---|---|
 | P1 | `UpdateExecutor._history` lived in memory only | saved to `/opt/nettap/data/update-history.json` (nettap-appdata, `UPDATE_HISTORY_FILE`) with `write_file_atomic`; bad entries are dropped or rebuilt on load; an unfinished Malcolm update is recorded once, then cleared only once saved |
 | P2 | `getUpdateHistory()` typed batches as results | `UpdateBatch` + `getUpdateHistoryBatches()`; the table flattens batches with a stable key |
-| P3 | `/releases/latest` 404s for pre-releases; version constant out of step with the tags | reads `/releases?per_page=20`, offers pre-releases only to a pre-release; `NETTAP_VERSION = "0.4.0-alpha.2"`; `scripts/check_release_version.py` fails the release workflow when the tag and the constant differ |
+| P3 | `/releases/latest` 404s for pre-releases; version constant out of step with the tags | reads `/releases?per_page=20`, offers pre-releases only to a pre-release; `NETTAP_VERSION = "0.4.0-alpha.2"`; a `grep -qxF` step in the release workflow fails when the tag and the constant differ |
 | P4 | the Malcolm update empties the backup volume before copying into it, even when an earlier attempt left the only copy there | refuses to start while that volume exists, and says how to remove it once the data is back |
 | P5 | every non-Malcolm, non-nettap image was a failed check | `nettap-*` containers follow the NetTap release (the compose file pins nginx and grafana); other containers are "Not checked", not failed |
 | P6 | the page adopted whatever batch `/status` reported | follows its batch by `started_at`; another batch means "read this one's result from the history", or "Update not confirmed" when the history lacks it |
@@ -45,12 +45,12 @@ update (Chain 21 env covers it), the rules/GeoIP backup folders on the read-only
 
 - Daemon: `services/update_executor.py`, `services/malcolm_upgrade.py`, `services/update_checker.py`,
   `services/suricata_rules.py`, `services/os_updates.py`, `services/version_manager.py`, `api/updates.py`.
-- Release: `scripts/check_release_version.py`, `.github/workflows/release.yml`.
+- Release: `.github/workflows/release.yml` (one grep step).
 - Web: `src/lib/api/updates.ts`, `src/lib/server/daemon.ts`,
   `src/routes/api/system/updates/check/+server.ts`, `src/routes/system/updates/+page.svelte`,
   `e2e/visual/fixtures/system.ts`.
 - Tests (new): `test_update_history.py`, `test_nettap_release_check.py`,
-  `test_release_version_guard.py`, `test_update_batch_follows_rules.py`,
+  `test_update_batch_follows_rules.py`,
   `test_update_check_sharing.py`, `check/server.test.ts`; plus additions to the existing update tests.
 
 ## Test results

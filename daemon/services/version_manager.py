@@ -30,7 +30,7 @@ logger = logging.getLogger("nettap.services.version_manager")
 # Current NetTap daemon version
 # OLD CODE: NETTAP_VERSION = "0.4.0" (not the release this is: the update check compared the wrong version)
 # The release tag this daemon is built from, without its "v". Set it in the release PR before tagging:
-# the tag's build fails when they differ (scripts/check_release_version.py, release.yml).
+# the tag's build fails when they differ (release.yml's first step). Keep it on one line, as is.
 NETTAP_VERSION = "0.4.0-alpha.2"
 
 # Cache staleness threshold: 10 minutes
