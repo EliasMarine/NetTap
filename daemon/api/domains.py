@@ -58,7 +58,7 @@ from storage.snapshot_search import (
 logger = logging.getLogger("nettap.api.domains")
 
 _DEFAULT_RANGE = timedelta(hours=24)
-_MAX_FINDING = 255  # a host name (253) with a trailing dot, and a little room
+# OLD CODE: _MAX_FINDING = 255 (dead: canonical_name already refuses a name over 253 characters)
 _QUERY = "zeek.dns.query"
 _SNI = "zeek.ssl.server_name"
 _HTTP_HOST = "zeek.http.host"
@@ -464,7 +464,7 @@ def _finding(raw: str) -> dict:
     dga = evidence["dga"]
     return {
         "name": raw,
-        "excluded_counted": True,
+        # OLD CODE: "excluded_counted": True, (always true and never read)
         "dga": {**dga, "entropy": round(dga["entropy"], 3)} if dga else None,
         "tunnel": evidence["tunnel"],
     }
@@ -492,7 +492,8 @@ async def handle_domain(request: web.Request) -> web.Response:
     if name is None:
         return json_error("That is not a host name.", 400)
     raw = request.query.get("finding")
-    if raw is not None and (len(raw) > _MAX_FINDING or canonical_name(raw) != name):
+    # OLD CODE: if raw is not None and (len(raw) > _MAX_FINDING or canonical_name(raw) != name):
+    if raw is not None and canonical_name(raw) != name:
         return json_error("That finding is not this name.", 400)
     from_ts, to_ts = parse_time_range(request, _DEFAULT_RANGE)
     # OLD CODE: slots = chart_slots(from_ts, to_ts) (NET-249: the chart's bucket can be asked for)

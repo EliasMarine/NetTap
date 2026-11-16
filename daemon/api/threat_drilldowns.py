@@ -12,7 +12,6 @@ per request inside run_drilldown's budget and slots; never a partial reply.
 
 import logging
 import re
-import statistics
 from collections import Counter
 from datetime import timedelta
 from typing import Any
@@ -41,10 +40,16 @@ from services.excluded_ips import valid_excluded_ips
 from services.hostnames import canonical_name
 from services.threat_detection import (
     BEACON_SLOT_SECONDS,
+    BEACONING_JITTER_THRESHOLD,
     BEACONING_MIN_CONNECTIONS,
     NO_EVIDENCE,
+    NXDOMAIN_MIN_LOOKUPS,
+    NXDOMAIN_MIN_SHARE,
     _assess_beacon,
+    beacon_gaps,
+    beacon_too_few,
     dns_name_evidence,
+    nxdomain_spike,
 )
 from storage.snapshot_search import (
     NETWORK_INDEX,
@@ -117,14 +122,16 @@ def _top(aggs: dict, name: str, what: str) -> list[dict]:
     ]
 
 
-def _gap_stats(epochs: list[int]) -> tuple[float | None, float | None]:
-    """(mean gap in seconds, stdev / mean of the gaps): _assess_beacon's arithmetic, kept for
-    pairs it doesn't list. None below 3 slots (one gap has no spread)."""
-    deltas = [b - a for a, b in zip(epochs, epochs[1:])]
-    if len(deltas) < 2:
-        return None, None
-    mean = statistics.mean(deltas)
-    return round(mean / 1000, 1), round(statistics.stdev(deltas) / mean, 4)
+# OLD CODE START — threat_detection.beacon_gaps is the scan's own arithmetic, shared now
+# def _gap_stats(epochs: list[int]) -> tuple[float | None, float | None]:
+#     """(mean gap in seconds, stdev / mean of the gaps): _assess_beacon's arithmetic, kept for
+#     pairs it doesn't list. None below 3 slots (one gap has no spread)."""
+#     deltas = [b - a for a, b in zip(epochs, epochs[1:])]
+#     if len(deltas) < 2:
+#         return None, None
+#     mean = statistics.mean(deltas)
+#     return round(mean / 1000, 1), round(statistics.stdev(deltas) / mean, 4)
+# OLD CODE END
 
 
 def _timing(snap: SnapshotSearch, records: dict, key: dict, connections: int) -> dict:
@@ -132,8 +139,13 @@ def _timing(snap: SnapshotSearch, records: dict, key: dict, connections: int) ->
 
     status: capped (too many slots to read whole: nothing is claimed), too_few (under
     BEACONING_MIN_CONNECTIONS calls or occupied slots, _assess_beacon's first test), periodic
-    (_assess_beacon lists it) or irregular (enough calls, gaps too uneven).
+    (_assess_beacon lists it) or irregular (enough calls, gaps too uneven). `min_calls` and
+    `max_jitter` are the scan's thresholds, so the page's words never restate them.
     """
+    rule = {
+        "min_calls": BEACONING_MIN_CONNECTIONS,
+        "max_jitter": BEACONING_JITTER_THRESHOLD,
+    }
     found, complete = snap.groups(
         records,
         [
@@ -157,33 +169,29 @@ def _timing(snap: SnapshotSearch, records: dict, key: dict, connections: int) ->
             "slots": len(found),
             "mean_gap_seconds": None,
             "jitter": None,
-            "beacon": None,
+            "confidence": None,
             "gaps": [],
+            **rule,
         }
     epochs = sorted(int(s["key"]["t"]) for s in found)
     beacon = _assess_beacon(key, connections, [{"key": t} for t in epochs])
-    if (
-        connections < BEACONING_MIN_CONNECTIONS
-        or len(epochs) < BEACONING_MIN_CONNECTIONS
-    ):
+    # OLD CODE: if connections < BEACONING_MIN_CONNECTIONS or len(epochs) < BEACONING_MIN_CONNECTIONS: (beacon_too_few)
+    if beacon_too_few(connections, len(epochs)):
         status = "too_few"
     else:
         status = "periodic" if beacon else "irregular"
-    mean, jitter = _gap_stats(epochs)
+    # OLD CODE: mean, jitter = _gap_stats(epochs) (the scan's beacon_gaps, rounded as its findings are)
+    # one gap has no spread, so below 3 slots there's nothing to show
+    mean_ms, cv = beacon_gaps(epochs) if len(epochs) >= 3 else (None, None)
     gaps = Counter((b - a) // 1000 for a, b in zip(epochs, epochs[1:]))
     return {
         "status": status,
         "slots": len(epochs),
-        "mean_gap_seconds": mean,
-        "jitter": jitter,
-        "beacon": (
-            {
-                k: beacon[k]
-                for k in ("interval_seconds", "jitter_coefficient", "confidence")
-            }
-            if beacon
-            else None
-        ),
+        "mean_gap_seconds": None if mean_ms is None else round(mean_ms / 1000, 1),
+        "jitter": None if cv is None else round(cv, 4),
+        # OLD CODE: "beacon": {interval_seconds, jitter_coefficient, confidence} | None (they equal the two above when periodic)
+        "confidence": beacon["confidence"] if beacon else None,
+        **rule,
         "gaps": [
             {"seconds": s, "count": n}
             for s, n in sorted(gaps.items(), key=lambda g: (-g[1], g[0]))[:GAPS_SHOWN]
@@ -406,6 +414,7 @@ def failed_lookup_figures(
     if not complete:
         logger.info("Failed lookups for %s: the names list stopped at its cap", ip)
     names_per_kind = Counter(r["kind"] for r in rows)
+    n_lookups, n_failed = total_hits(reply, what), doc_count(aggs["failed"], what)
     lookups_per_kind: Counter = Counter()
     for r in rows:
         lookups_per_kind[r["kind"]] += r["lookups"]
@@ -413,8 +422,9 @@ def failed_lookup_figures(
         "ip": ip,
         "from": from_ts,
         "to": to_ts,
-        "lookups": total_hits(reply, what),
-        "failed": doc_count(aggs["failed"], what),
+        # OLD CODE: "lookups": total_hits(reply, what), "failed": doc_count(aggs["failed"], what), (read once, for meets_rule too)
+        "lookups": n_lookups,
+        "failed": n_failed,
         "timeline": [
             {
                 "t": b["key_as_string"],
@@ -440,6 +450,9 @@ def failed_lookup_figures(
             key=lambda k: (-k["lookups"], k["kind"]),
         ),
         "generated_names": names_per_kind["generated"],
+        # the NXDOMAIN check's own rule over this window, which can differ from the scan's
+        "meets_rule": nxdomain_spike(n_lookups, n_failed),
+        "rule": {"min_lookups": NXDOMAIN_MIN_LOOKUPS, "min_share": NXDOMAIN_MIN_SHARE},
     }
 
 

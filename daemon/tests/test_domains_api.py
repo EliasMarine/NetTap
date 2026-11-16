@@ -548,7 +548,8 @@ class TestFinding(DomainCase):
         )
         finding = body["finding"]
         self.assertEqual(finding["name"], DGA_NAME)
-        self.assertTrue(finding["excluded_counted"])
+        # OLD CODE: self.assertTrue(finding["excluded_counted"]) (always true and never read)
+        self.assertNotIn("excluded_counted", finding)
         self.assertEqual(finding["dga"]["label"], "kq3z8wxv1m7tbn5r6yhp")
         self.assertEqual(finding["dga"]["entropy"], 4.322)
         self.assertIsNone(finding["tunnel"])

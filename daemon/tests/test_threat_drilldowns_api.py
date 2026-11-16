@@ -156,11 +156,10 @@ class TestPeriodicPair(DrillCase):
                 "slots": 30,
                 "mean_gap_seconds": 60.0,
                 "jitter": 0.0,
-                "beacon": {
-                    "interval_seconds": 60.0,
-                    "jitter_coefficient": 0.0,
-                    "confidence": _beacon_confidence(0.0, 30, 60.0),
-                },
+                # OLD CODE: "beacon": {"interval_seconds": 60.0, "jitter_coefficient": 0.0, "confidence": …}, (the two above are the same figures)
+                "confidence": _beacon_confidence(0.0, 30, 60.0),
+                "min_calls": 10,
+                "max_jitter": 0.15,
                 "gaps": [{"seconds": 60, "count": 29}],
             },
         )
@@ -206,8 +205,10 @@ class TestPeriodicPair(DrillCase):
         ):
             timing = (await self.pair())["timing"]
         self.assertEqual(timing["status"], "capped")
-        self.assertIsNone(timing["beacon"])
+        # OLD CODE: self.assertIsNone(timing["beacon"])
+        self.assertIsNone(timing["confidence"])
         self.assertIsNone(timing["mean_gap_seconds"])
+        self.assertEqual((timing["min_calls"], timing["max_jitter"]), (10, 0.15))
         self.assertEqual(timing["gaps"], [])
 
 
@@ -227,7 +228,8 @@ class TestUnclearTiming(DrillCase):
         body = await self.pair()
         self.assertEqual(body["connections"], 9)
         self.assertEqual(body["timing"]["status"], "too_few")
-        self.assertIsNone(body["timing"]["beacon"])
+        # OLD CODE: self.assertIsNone(body["timing"]["beacon"])
+        self.assertIsNone(body["timing"]["confidence"])
         self.assertEqual(body["timing"]["mean_gap_seconds"], 60.0)
 
     async def test_many_calls_in_few_slots_are_too_few(self):
@@ -240,7 +242,8 @@ class TestUnclearTiming(DrillCase):
         body = await self.pair(f"device={DEVICE}&server={SERVER}&port=22&{WINDOW}")
         timing = body["timing"]
         self.assertEqual(timing["status"], "irregular")
-        self.assertIsNone(timing["beacon"])
+        # OLD CODE: self.assertIsNone(timing["beacon"])
+        self.assertIsNone(timing["confidence"])
         self.assertEqual(timing["mean_gap_seconds"], 169.1)
         self.assertGreater(timing["jitter"], 0.15)
 
@@ -324,6 +327,9 @@ class TestFailedLookups(DrillCase):
             ],
         )
         self.assertEqual(body["generated_names"], 1)
+        # 10 of 14 failed: more than 40%, but not of more than 50 lookups
+        self.assertFalse(body["meets_rule"])
+        self.assertEqual(body["rule"], {"min_lookups": 50, "min_share": 0.4})
         self.assertEqual(body["failed_names_read"], 4)
         self.assertTrue(body["failed_names_complete"])
         self.assertEqual(sum(p["n"] for p in body["timeline"]), 14)
@@ -354,6 +360,7 @@ class TestFailedNamesCoverage(DrillCase):
         self.assertEqual(body["failed_names_read"], 2)
         self.assertNotIn("zzz.example", [r["name"] for r in body["failed_names"]])
         self.assertEqual(body["failed"], 52)  # the totals never depend on the list
+        self.assertTrue(body["meets_rule"])  # 52 of 52
 
 
 class TestFailedNamesBeyondTheList(DrillCase):
@@ -371,3 +378,12 @@ class TestFailedNamesBeyondTheList(DrillCase):
         self.assertEqual(body["generated_names"], 4)
         self.assertIn({"kind": "local", "names": 101, "lookups": 202}, body["kinds"])
         self.assertIn({"kind": "generated", "names": 4, "lookups": 4}, body["kinds"])
+
+
+def test_the_nxdomain_rule_is_more_than_40_percent_of_more_than_50():
+    from services.threat_detection import nxdomain_spike
+
+    assert nxdomain_spike(51, 21)
+    assert not nxdomain_spike(50, 50)  # not more than 50 lookups
+    assert not nxdomain_spike(100, 40)  # 40% is not more than 40%
+    assert not nxdomain_spike(0, 0)

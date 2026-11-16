@@ -47,6 +47,9 @@ BEACON_POOL = ThreadPoolExecutor(
 
 BEACONING_JITTER_THRESHOLD = 0.15  # 15% coefficient of variation
 BEACONING_MIN_CONNECTIONS = 10
+# An NXDOMAIN spike: more than this share of more than this many lookups failed
+NXDOMAIN_MIN_LOOKUPS = 50
+NXDOMAIN_MIN_SHARE = 0.4
 COMMON_BEACON_INTERVALS = [30, 60, 120, 300, 600, 900, 1800, 3600]
 # Regularity is read from a 10 s histogram per pair. OpenSearch refuses a response with more
 # than search.max_buckets (65,535) buckets, so pairs are sent in batches that stay under this.
@@ -418,22 +421,49 @@ def _paged_slots(
     return [{"key": s["key"]["t"]} for s in slots], complete
 
 
-def _assess_beacon(key: dict, conn_count: int, ts_buckets: list[dict]) -> dict | None:
-    """The beacon finding for one pair, or None if its connections aren't periodic."""
-    if (
-        conn_count < BEACONING_MIN_CONNECTIONS
-        or len(ts_buckets) < BEACONING_MIN_CONNECTIONS
-    ):
-        return None
+def beacon_too_few(conn_count: int, slots: int) -> bool:
+    """Too few connections, or occupied 10 s slots, for the scan to judge a schedule."""
+    return conn_count < BEACONING_MIN_CONNECTIONS or slots < BEACONING_MIN_CONNECTIONS
 
-    epochs = [b["key"] for b in ts_buckets]
+
+def beacon_gaps(epochs: list[int]) -> tuple[float, float]:
+    """(mean gap in ms, stdev / mean of the gaps) between a pair's sorted slot starts (2+).
+
+    _assess_beacon decides on these, and the pair drill-down shows them for any pair.
+    """
     deltas = [epochs[i + 1] - epochs[i] for i in range(len(epochs) - 1)]
     mean_delta = statistics.mean(deltas)
-    if mean_delta <= 5000:  # < 5s intervals = not beaconing, just chatty
+    std_delta = statistics.stdev(deltas) if len(deltas) > 1 else 0
+    return mean_delta, (std_delta / mean_delta if mean_delta > 0 else 1.0)
+
+
+def _assess_beacon(key: dict, conn_count: int, ts_buckets: list[dict]) -> dict | None:
+    """The beacon finding for one pair, or None if its connections aren't periodic."""
+    # OLD CODE START — the first test and the gap arithmetic moved to beacon_too_few and
+    # beacon_gaps, so the pair drill-down shares them; the result is unchanged
+    # if (
+    #     conn_count < BEACONING_MIN_CONNECTIONS
+    #     or len(ts_buckets) < BEACONING_MIN_CONNECTIONS
+    # ):
+    #     return None
+    #
+    # epochs = [b["key"] for b in ts_buckets]
+    # deltas = [epochs[i + 1] - epochs[i] for i in range(len(epochs) - 1)]
+    # mean_delta = statistics.mean(deltas)
+    # if mean_delta <= 5000:  # < 5s intervals = not beaconing, just chatty
+    #     return None
+    #
+    # std_delta = statistics.stdev(deltas) if len(deltas) > 1 else 0
+    # cv = std_delta / mean_delta if mean_delta > 0 else 1.0
+    # if cv >= BEACONING_JITTER_THRESHOLD:
+    #     return None
+    # OLD CODE END
+    if beacon_too_few(conn_count, len(ts_buckets)):
         return None
 
-    std_delta = statistics.stdev(deltas) if len(deltas) > 1 else 0
-    cv = std_delta / mean_delta if mean_delta > 0 else 1.0
+    mean_delta, cv = beacon_gaps([b["key"] for b in ts_buckets])
+    if mean_delta <= 5000:  # < 5s intervals = not beaconing, just chatty
+        return None
     if cv >= BEACONING_JITTER_THRESHOLD:
         return None
 
@@ -924,6 +954,11 @@ def dns_name_evidence(domain: str) -> dict | None:
     return {"dga": dga, "tunnel": tunnel}
 
 
+def nxdomain_spike(lookups: int, failed: int) -> bool:
+    """The NXDOMAIN check's rule: more than NXDOMAIN_MIN_SHARE of more than NXDOMAIN_MIN_LOOKUPS failed."""
+    return lookups > NXDOMAIN_MIN_LOOKUPS and failed / lookups > NXDOMAIN_MIN_SHARE
+
+
 def analyze_dns_anomalies(
     client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
 ) -> dict:
@@ -1119,7 +1154,8 @@ def analyze_dns_anomalies(
         total = bucket["doc_count"]
         nxdomain = bucket.get("nxdomain_count", {}).get("doc_count", 0)
 
-        if total > 50 and nxdomain / total > 0.4:
+        # OLD CODE: if total > 50 and nxdomain / total > 0.4: (nxdomain_spike, shared with the drill-down)
+        if nxdomain_spike(total, nxdomain):
             findings["nxdomain_spikes"].append(
                 {
                     "source_ip": src_ip,
