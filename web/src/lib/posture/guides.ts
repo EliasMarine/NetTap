@@ -63,9 +63,11 @@ export const GUIDES: Record<PostureSlug, PostureGuide> = {
 		],
 	},
 	'network-segmentation': {
-		summary: 'Whether NetTap knows how each device normally behaves, and whether smart devices can reach your computers',
+		// OLD CODE: summary: 'Whether NetTap knows how each device normally behaves, and whether smart devices can reach your computers', (NET-308: the score is isolation only)
+		summary: 'Whether smart devices can reach your computers',
+		// OLD CODE: … NetTap also keeps a behaviour baseline for every device, so it can spot one acting unusually.' (NET-308: baselines are Monitoring coverage's)
 		what:
-			'Segmentation means splitting a network into separate parts, for example one for computers and phones, one for smart devices and one for guests, so a device in one part can’t freely reach the others. NetTap also keeps a behaviour baseline for every device, so it can spot one acting unusually.',
+			'Segmentation means splitting a network into separate parts, for example one for computers and phones, one for smart devices and one for guests, so a device in one part can’t freely reach the others.',
 		why:
 			'Smart plugs, cameras and TVs get fewer security updates than computers. If one is taken over and sits on the same network as your laptop or a work computer, it can reach them directly. A separate network for those devices limits what an attacker can get to.',
 		practices: [
@@ -104,14 +106,16 @@ export const GUIDES: Record<PostureSlug, PostureGuide> = {
 		],
 	},
 	'alert-response': {
-		summary: 'Whether the alerts NetTap raises get looked at and closed',
+		// OLD CODE: summary: 'Whether the alerts NetTap raises get looked at and closed', (NET-308)
+		summary: 'Whether each high-severity rule that fired has an investigation open for it',
 		what:
 			'NetTap’s intrusion detection (Suricata) raises an alert when traffic matches a known pattern of trouble: a known-bad address, malware traffic, a scan. An investigation is your record of looking into one: what you checked, what you found and what you did.',
 		why:
 			'An alert nobody reads protects nothing. Most alerts turn out to be harmless, but the rare real one only helps if someone checks it in time. Writing down what you checked also saves time when the same alert comes back.',
 		practices: [
 			'Look at high-severity alerts the same day, and the rest about once a week.',
-			'Open an investigation for anything you look into, note what you found, and close it.',
+			// OLD CODE: 'Open an investigation for anything you look into, note what you found, and close it.', (NET-308)
+			'Open an investigation from the alert itself (Open an investigation in its details), note what you found, and close it.',
 			'Once you’ve confirmed an alert is expected activity, mark it as a false positive so it stops crowding out the rest.',
 			'Keep the detection rules up to date in Settings.',
 		],

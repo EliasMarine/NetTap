@@ -6,7 +6,10 @@
 	// OLD CODE END
 	import { getDeviceCount } from '$api/devices';
 	import { getRiskScores } from '$api/risk';
-	import { getInvestigationStats } from '$api/investigations';
+	// OLD CODE: import { getInvestigationStats } from '$api/investigations'; (NET-308: alert follow-up)
+	import { getIsolation, getPostureDetail, type AlertResponseDetail } from '$api/posture';
+	import { rangeWindow } from '$lib/utils/drilldown';
+	import type { NetworkIsolation } from '$api/iot';
 	import type { ProtocolsResponse } from '$api/traffic';
 	import type { AlertCountResponse } from '$api/alerts';
 	// OLD CODE START — #96: see the getDevices import
@@ -14,7 +17,7 @@
 	// OLD CODE END
 	import type { DeviceCountResponse } from '$api/devices';
 	import type { RiskScoresResponse } from '$api/risk';
-	import type { InvestigationStats } from '$api/investigations';
+	// OLD CODE: import type { InvestigationStats } from '$api/investigations'; (NET-308)
 	import { onDestroy, onMount } from 'svelte';
 	import Collapsible from '$components/Collapsible.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -32,7 +35,7 @@
 	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
 	// OLD CODE: import { nothingFound } from '$api/system'; (moved with the scoring to $lib/posture/score.ts)
 	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
-	import { scoreCategories, type CategoryScore, type Input } from '$lib/posture/score';
+	import { EMPTY_DATA, scoreCategories, type CategoryScore, type Input } from '$lib/posture/score';
 
 	// OLD CODE START — moved to $lib/posture/score.ts (posture category pages) so both pages share the types
 	// // ---------------------------------------------------------------------------
@@ -100,7 +103,9 @@
 	// OLD CODE END
 	let deviceCount = $state<DeviceCountResponse>({ from: '', to: '', count: 0 });
 	let riskScores = $state<RiskScoresResponse>({ scores: [] });
-	let investigationStats = $state<InvestigationStats>({ total: 0, by_status: {}, by_severity: {} });
+	// OLD CODE: let investigationStats = $state<InvestigationStats>({ total: 0, by_status: {}, by_severity: {} }); (NET-308)
+	let isolation = $state<NetworkIsolation>(EMPTY_DATA.isolation);
+	let alertResponse = $state<AlertResponseDetail>(EMPTY_DATA.alertResponse);
 	// #96: requests that failed; the defaults above stand in for them only so the other scores compute
 	let failed = $state<Input[]>([]);
 	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
@@ -559,7 +564,8 @@
 	// ])));
 	// OLD CODE END
 	let categories = $derived<CategoryScore[]>(
-		scoreCategories({ protocols, alertCounts, deviceCount, riskScores, investigationStats, failed, health: healthCheck }),
+		// OLD CODE: scoreCategories({ protocols, alertCounts, deviceCount, riskScores, investigationStats, failed, health: healthCheck }), (NET-308)
+		scoreCategories({ protocols, alertCounts, deviceCount, riskScores, isolation, alertResponse, failed, health: healthCheck }),
 	);
 	/** A category's score by slug (the recommendations read it); 0 when it has none, which `low` never reaches. */
 	const scoreOf = (slug: CategoryScore['slug']): number => categories.find((c) => c.slug === slug)?.score ?? 0;
@@ -609,10 +615,18 @@
 				priority: dnsScore < 50 ? 'high' : 'medium',
 			});
 		}
+		// OLD CODE START — NET-308: the score is IoT isolation now, not baselines
+		// if (low('Network segmentation', networkScore)) {
+		// 	recs.push({
+		// 		text: 'Review un-baselined devices on the Devices page and mark them as known to improve segmentation visibility.',
+		// 		priority: 'medium',
+		// 	});
+		// }
+		// OLD CODE END
 		if (low('Network segmentation', networkScore)) {
 			recs.push({
-				text: 'Review un-baselined devices on the Devices page and mark them as known to improve segmentation visibility.',
-				priority: 'medium',
+				text: 'Move smart devices to a guest or IoT network and turn on client isolation, so they can’t reach your computers.',
+				priority: networkScore < 50 ? 'high' : 'medium',
 			});
 		}
 		if (low('Patch currency', patchScore)) {
@@ -621,9 +635,17 @@
 				priority: patchScore < 50 ? 'high' : 'medium',
 			});
 		}
+		// OLD CODE START — NET-308: the score is follow-up of high-severity rules now
+		// if (low('Alert response', alertScore)) {
+		// 	recs.push({
+		// 		text: 'Investigate and resolve open alerts. Create investigations for high-severity alerts to improve response tracking.',
+		// 		priority: alertScore < 50 ? 'high' : 'medium',
+		// 	});
+		// }
+		// OLD CODE END
 		if (low('Alert response', alertScore)) {
 			recs.push({
-				text: 'Investigate and resolve open alerts. Create investigations for high-severity alerts to improve response tracking.',
+				text: 'Open an investigation for each high-severity rule: open one of its alerts and choose Open an investigation.',
 				priority: alertScore < 50 ? 'high' : 'medium',
 			});
 		}
@@ -694,8 +716,23 @@
 		// #96: each input on its own, so one failure marks only the categories built on it
 		// OLD CODE: const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.allSettled([ (NET-228: and the health)
 		// OLD CODE: const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes, healthRes] = await Promise.allSettled([ …, getSystemHealth()]); (review L7)
-		const [[protocolsRes, alertsRes, devicesRes, riskRes, statsRes], checked] = await Promise.all([
-			Promise.allSettled([getProtocolDistribution(), getAlertCount(), getDeviceCount(), getRiskScores(), getInvestigationStats()]),
+		// OLD CODE START — NET-308: investigation stats, and each request its own default window
+		// const [[protocolsRes, alertsRes, devicesRes, riskRes, statsRes], checked] = await Promise.all([
+		// 	Promise.allSettled([getProtocolDistribution(), getAlertCount(), getDeviceCount(), getRiskScores(), getInvestigationStats()]),
+		// 	readHealth(),
+		// ]);
+		// OLD CODE END
+		// one window for all six, so the alerts and the rules that needed a response are the same 24 hours
+		const win = rangeWindow(24);
+		const [[protocolsRes, alertsRes, devicesRes, riskRes, isolationRes, responseRes], checked] = await Promise.all([
+			Promise.allSettled([
+				getProtocolDistribution(win),
+				getAlertCount(win),
+				getDeviceCount(win),
+				getRiskScores(win),
+				getIsolation(win),
+				getPostureDetail('alert-response', win),
+			]),
 			readHealth(),
 		]);
 		if (!guard.current(g)) return 'skipped';
@@ -705,13 +742,17 @@
 		if (alertsRes.status === 'fulfilled') alertCounts = alertsRes.value;
 		if (devicesRes.status === 'fulfilled') deviceCount = devicesRes.value;
 		if (riskRes.status === 'fulfilled') riskScores = riskRes.value;
-		if (statsRes.status === 'fulfilled') investigationStats = statsRes.value;
+		// OLD CODE: if (statsRes.status === 'fulfilled') investigationStats = statsRes.value; (NET-308)
+		if (isolationRes.status === 'fulfilled') isolation = isolationRes.value;
+		if (responseRes.status === 'fulfilled') alertResponse = responseRes.value;
 		const settled: Record<Input, PromiseSettledResult<unknown>> = {
 			protocols: protocolsRes,
 			alerts: alertsRes,
 			devices: devicesRes,
 			risk: riskRes,
-			investigations: statsRes,
+			// OLD CODE: investigations: statsRes, (NET-308)
+			isolation: isolationRes,
+			response: responseRes,
 		};
 		failed = (Object.keys(settled) as Input[]).filter((k) => settled[k].status === 'rejected');
 		loading = false;

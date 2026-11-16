@@ -27,6 +27,8 @@ export interface Investigation {
 	device_ips: string[];
 	notes: InvestigationNote[];
 	tags: string[];
+	/** NET-308: each linked alert's rule name as the daemon read it at link time (null: no name) */
+	alert_rules?: Record<string, string | null>;
 }
 
 export interface InvestigationStats {
@@ -107,7 +109,11 @@ export async function createInvestigation(data: {
 	// 	};
 	// }
 	// OLD CODE END
-	if (!res.ok) throw new Error(`Creating the investigation failed: HTTP ${res.status}`);
+	// OLD CODE: if (!res.ok) throw new Error(`Creating the investigation failed: HTTP ${res.status}`); (NET-308: the daemon's reason, e.g. an aged-out alert)
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(typeof body?.error === 'string' && body.error ? body.error : `Creating the investigation failed: HTTP ${res.status}`);
+	}
 
 	return res.json();
 }

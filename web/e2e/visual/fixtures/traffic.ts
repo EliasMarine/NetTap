@@ -14,7 +14,7 @@ import type {
 	TrafficCategory,
 	TrafficSummary,
 } from '../../../src/lib/api/traffic.ts';
-import type { DnsDetail, EncryptionDetail, PatchDetail } from '../../../src/lib/api/posture.ts';
+import type { AlertResponseDetail, DnsDetail, EncryptionDetail, PatchDetail } from '../../../src/lib/api/posture.ts';
 import type { FixtureRoute } from './types.ts';
 import { CONN_TEMPLATES, connections } from './net-connections.ts';
 import {
@@ -339,18 +339,18 @@ export const POSTURE_ENCRYPTION_EMPTY = {
 	excluded_ips: [],
 	eligible: 0,
 	encrypted: 0,
-	unencrypted: { total: 0, payload_both: 0, private_local: 0, services: [], services_other: 0, risky: RISKY_NONE },
+	unencrypted: { total: 0, private_local: 0, services: [], services_other: 0, risky: RISKY_NONE },
 	devices: { lan: 0, other: 0, rows: [] },
 } satisfies EncryptionDetail;
 
-/** Shaped like the G11 (2026-11-16): one device makes most unencrypted connections, on BitTorrent ports. */
+/** Shaped like the G11 (2026-11-16): one device makes most unencrypted connections, on BitTorrent ports.
+ * NET-308: every figure is the scored set, connections with data both ways. */
 export const POSTURE_ENCRYPTION = {
 	...POSTURE_ENCRYPTION_EMPTY,
 	eligible: 21300,
 	encrypted: 19800,
 	unencrypted: {
 		total: 1500,
-		payload_both: 260,
 		private_local: 180,
 		services: [
 			{ name: 'unknown', count: 1240 },
@@ -364,12 +364,35 @@ export const POSTURE_ENCRYPTION = {
 		lan: 1500,
 		other: 0,
 		rows: [
-			{ ip: '192.168.1.20', connections: 1100, payload_both: 40, private_local: 0, services: [{ name: 'unknown', count: 1100 }], ports: [{ port: 6881, count: 700 }, { port: 51413, count: 300 }] },
-			{ ip: '192.168.1.50', connections: 390, payload_both: 210, private_local: 170, services: [{ name: 'http', count: 250 }, { name: 'unknown', count: 140 }], ports: [{ port: 80, count: 250 }, { port: 554, count: 140 }] },
-			{ ip: '192.168.1.31', connections: 10, payload_both: 10, private_local: 10, services: [{ name: 'telnet', count: 10 }], ports: [{ port: 23, count: 10 }] },
+			{ ip: '192.168.1.20', connections: 1100, private_local: 0, services: [{ name: 'unknown', count: 1100 }], ports: [{ port: 6881, count: 700 }, { port: 51413, count: 300 }] },
+			{ ip: '192.168.1.50', connections: 390, private_local: 170, services: [{ name: 'http', count: 250 }, { name: 'unknown', count: 140 }], ports: [{ port: 80, count: 250 }, { port: 554, count: 140 }] },
+			{ ip: '192.168.1.31', connections: 10, private_local: 10, services: [{ name: 'telnet', count: 10 }], ports: [{ port: 23, count: 10 }] },
 		],
 	},
 } satisfies EncryptionDetail;
+
+export const POSTURE_ALERT_RESPONSE_EMPTY = {
+	category: 'alert-response',
+	...WINDOW,
+	needing: 0,
+	investigated: 0,
+	groups: [],
+	investigations: { open_during: 0, linked_alerts: 0, unresolved_links: 0, skipped: 0 },
+} satisfies AlertResponseDetail;
+
+/** NET-308: four high-severity rules, one with an investigation open in the window. */
+export const POSTURE_ALERT_RESPONSE = {
+	...POSTURE_ALERT_RESPONSE_EMPTY,
+	needing: 4,
+	investigated: 1,
+	groups: [
+		{ rule: 'ET DROP Dshield Block Listed Source group 1', count: 41, investigated: false },
+		{ rule: 'ET SCAN Possible Nmap User-Agent Observed', count: 7, investigated: false },
+		{ rule: 'ET EXPLOIT D-Link HNAP SOAPAction Command Injection', count: 1, investigated: false },
+		{ rule: 'ET MALWARE Mirai Variant User-Agent', count: 3, investigated: true },
+	],
+	investigations: { open_during: 1, linked_alerts: 1, unresolved_links: 0, skipped: 0 },
+} satisfies AlertResponseDetail;
 
 export const POSTURE_DNS_EMPTY = {
 	category: 'dns-security',
@@ -435,6 +458,7 @@ export const TRAFFIC_ROUTES: FixtureRoute[] = [
 	{ path: '/api/posture/encryption', empty: POSTURE_ENCRYPTION_EMPTY, populated: POSTURE_ENCRYPTION },
 	{ path: '/api/posture/dns-security', empty: POSTURE_DNS_EMPTY, populated: POSTURE_DNS },
 	{ path: '/api/posture/patch-currency', empty: POSTURE_PATCH_EMPTY, populated: POSTURE_PATCH },
+	{ path: '/api/posture/alert-response', empty: POSTURE_ALERT_RESPONSE_EMPTY, populated: POSTURE_ALERT_RESPONSE },
 	{
 		path: '/api/traffic/summary',
 		empty: emptySummary,
@@ -451,8 +475,9 @@ export const TRAFFIC_ROUTES: FixtureRoute[] = [
 			...WINDOW,
 			protocols: [],
 			services: [],
-			encryption: { eligible: 0, encrypted: 0 },
-			dns: { plain: 0, over_tls: 0 },
+			encryption: { eligible: 0, encrypted: 0, one_way: 0 },
+			dns: { plain: 0, over_tls: 0, local: { plain: 0, over_tls: 0 } },
+			patch: { legacy: 0, connections: 0 },
 			unidentified: { conversations: 0, one_way: 0, icmp: 0 },
 			excluded_ips: [],
 		} satisfies ProtocolsResponse,
@@ -460,8 +485,9 @@ export const TRAFFIC_ROUTES: FixtureRoute[] = [
 			...WINDOW,
 			protocols: TRANSPORTS,
 			services: SERVICES,
-			encryption: { eligible: 21300, encrypted: 19800 },
-			dns: { plain: 5400, over_tls: 60 },
+			encryption: { eligible: 21300, encrypted: 19800, one_way: 9200 },
+			dns: { plain: 2100, over_tls: 60, local: { plain: 3300, over_tls: 0 } },
+			patch: { legacy: 410, connections: 30500 },
 			// adds up to the unknown service (1,804); icmp matches the ICMP transport count
 			unidentified: { conversations: 644, one_way: 1040, icmp: 120 },
 			excluded_ips: [],

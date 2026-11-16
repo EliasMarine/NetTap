@@ -11,8 +11,9 @@ function reportData(slug: PostureSlug, o: { inputs?: Partial<PostureInputs>; ext
 	return { window: WIN, inputs, category: scoreCategories(inputs).find((c) => c.slug === slug)!, extras: o.extras ?? {}, failed: o.failed ?? [], names: o.names ?? new Map() };
 }
 const protocols = (over: Partial<PostureInputs['protocols']>): Partial<PostureInputs> => ({ protocols: { ...EMPTY_DATA.protocols, ...over } });
-const enc = (detail: EncryptionDetail, names?: Map<string, string>) =>
-	encryptionReport(reportData('encryption', { inputs: protocols({ encryption: { eligible: detail.eligible, encrypted: detail.encrypted } }), extras: { encryption: detail }, names }));
+// OLD CODE: … protocols({ encryption: { eligible: detail.eligible, encrypted: detail.encrypted } }) … (NET-308: and one_way)
+const enc = (detail: EncryptionDetail, names?: Map<string, string>, oneWay = 9200) =>
+	encryptionReport(reportData('encryption', { inputs: protocols({ encryption: { eligible: detail.eligible, encrypted: detail.encrypted, one_way: oneWay } }), extras: { encryption: detail }, names }));
 const params = (href: string) => new URL(href, 'http://x').searchParams;
 
 describe('hints', () => {
@@ -40,13 +41,20 @@ describe('hints', () => {
 });
 
 describe('encryptionReport', () => {
-	it('puts the score formula, payload breakdown and private/local-scope figure in the drivers (R1-7)', () => {
+	// OLD CODE: it('puts the score formula, payload breakdown and private/local-scope figure in the drivers (R1-7)', …) (NET-308: one-way connections are left out)
+	it('scores connections with data both ways, and says what it left out (NET-308)', () => {
 		const r = enc(POSTURE_ENCRYPTION);
-		expect(r.drivers.formula).toBe('19,800 encrypted ÷ 21,300 connections that can be encrypted = 93%');
-		expect(r.drivers.bars.map((b) => [b.key, b.value])).toEqual([['encrypted', 19800], ['both', 260], ['other', 1240]]);
+		expect(r.drivers.formula).toBe('19,800 encrypted ÷ 21,300 connections with data both ways = 93%');
+		expect(r.drivers.bars.map((b) => [b.label, b.value])).toEqual([['Encrypted', 19800], ['Unencrypted', 1500], ['Not scored (one way or none)', 9200]]);
+		expect(r.drivers.counts).toContain('Left out: 9,200 connections that carried data one way or none, mostly attempts that never got an answer.');
 		expect(r.drivers.counts.join(' ')).toContain('180 of the unencrypted connections went to private or local-scope addresses');
-		expect(r.drivers.limits.join(' ')).toMatch(/one-way attempt.*counts as unencrypted/);
-		expect(r.drivers.limits.join(' ')).toMatch(/one way only, none, or wasn't measured/);
+		expect(r.drivers.limits).toEqual(['A connection that sends data one way only (a log message, a one-way stream) is left out, even when it is unencrypted.']);
+		expect(r.kpis.map((k) => [k.label, k.value, k.sub])).toEqual([
+			['Score', '93', 'Good'],
+			['Encrypted', '19,800', 'of 21,300 connections with data both ways'],
+			['Left out', '9,200', 'carried data one way or none'],
+		]);
+		expect(r.findings.find((f) => f.key === 'device-192.168.1.20')!.detail).not.toContain('with data both ways');
 		expect(r.sources).toEqual([{ key: 'devices', label: 'Devices sending unencrypted traffic', state: 'measured' }]);
 	});
 
@@ -80,10 +88,11 @@ describe('encryptionReport', () => {
 		expect(enc(POSTURE_ENCRYPTION).notes).toEqual([]);
 	});
 
-	it('explains, at low priority, when most unencrypted connections carried data one way or none', () => {
-		const low = enc(POSTURE_ENCRYPTION).steps.find((s) => s.priority === 'low')!;
-		expect(low.text).toMatch(/^83% of the unencrypted connections carried data one way or none/);
-		expect(low.text).not.toContain('carry little');
+	// OLD CODE START — NET-308: one-way connections no longer lower the score, so there is no such step
+	// it('explains, at low priority, when most unencrypted connections carried data one way or none', () => { … });
+	// OLD CODE END
+	it('has no step blaming one-way connections for the score', () => {
+		expect(enc(POSTURE_ENCRYPTION).steps.some((s) => /one way or none/.test(s.text))).toBe(false);
 	});
 
 	it('reads nothing measured, unattributed and failed per source (R1-9)', () => {
@@ -93,34 +102,60 @@ describe('encryptionReport', () => {
 		const failed = encryptionReport(reportData('encryption', { failed: ['encryption'] }));
 		expect(failed.sources[0]).toMatchObject({ state: 'failed', note: "Couldn't load devices sending unencrypted traffic: the request failed." });
 		expect(failed.findings).toEqual([]);
-		expect(failed.kpis[2]).toMatchObject({ value: '—', sub: "Couldn't load" });
+		// OLD CODE: expect(failed.kpis[2]).toMatchObject({ value: '—', sub: "Couldn't load" }); (NET-308: Left out is a score input)
+		expect(failed.kpis[2]).toMatchObject({ key: 'left-out', value: '0' });
 	});
 
 	it('shows no stand-in zero for a KPI whose score input failed, beside the detail that loaded (review M2)', () => {
 		const r = encryptionReport(reportData('encryption', { inputs: { failed: ['protocols'] }, extras: { encryption: POSTURE_ENCRYPTION } }));
 		expect(r.kpis[1]).toMatchObject({ key: 'encrypted', value: '—', sub: "Couldn't load" });
-		expect(r.kpis[2]).toMatchObject({ value: '260' });
+		// OLD CODE: expect(r.kpis[2]).toMatchObject({ value: '260' }); (NET-308: Left out comes from the failed input)
+		expect(r.kpis[2]).toMatchObject({ key: 'left-out', value: '—', sub: "Couldn't load" });
+		expect(r.drivers.bars).toEqual([]);
 		expect(r.findings.length).toBeGreaterThan(0);
 	});
 });
 
 describe('dnsReport', () => {
-	const dns = (detail: DnsDetail) => dnsReport(reportData('dns-security', { inputs: protocols({ dns: { plain: detail.plain, over_tls: detail.over_tls } }), extras: { 'dns-security': detail } }));
+	// OLD CODE: … protocols({ dns: { plain: detail.plain, over_tls: detail.over_tls } }) … (NET-308: the score input splits off local)
+	const local = { plain: 3300, over_tls: 0 };
+	const dns = (detail: DnsDetail) =>
+		dnsReport(reportData('dns-security', { inputs: protocols({ dns: { plain: detail.plain - local.plain, over_tls: detail.over_tls, local } }), extras: { 'dns-security': detail } }));
 	const resolver = (over: Partial<DnsDetail['resolvers']['plain'][number]>) => ({ ...POSTURE_DNS.resolvers.plain[0], ...over });
 	const withResolvers = (plain: DnsDetail['resolvers']['plain'], over: Partial<DnsDetail> = {}): DnsDetail => ({ ...POSTURE_DNS, resolvers: { ...POSTURE_DNS.resolvers, plain }, ...over });
 
-	it('splits plain lookups by address scope with the exact filters (R2-3, R2-6)', () => {
+	// OLD CODE: it('splits plain lookups by address scope with the exact filters (R2-3, R2-6)', …) (NET-308: the bars are the score input's)
+	it('draws the four DNS bars from the score input, one plain bar for public and unknown (NET-308 R2-2)', () => {
 		const r = dns(POSTURE_DNS);
 		expect(r.drivers.bars.map((b) => [b.label, b.value])).toEqual([
-			['DNS-over-TLS', 60],
-			['Plain, to private or local-scope addresses', 4200],
-			['Plain, to public addresses', 1200],
-			['Plain, address unknown', 0],
+			['DNS-over-TLS to non-local or unknown addresses', 60],
+			['Plain to non-local or unknown addresses', 2100],
+			['Plain to your own resolvers, not scored', 3300],
+			['DNS-over-TLS to your own resolvers, not scored', 0],
 		]);
+		expect(r.drivers.bars.some((b) => /unknown$/i.test(b.label) && !/non-local/.test(b.label))).toBe(false);
+		expect(r.drivers.formula).toBe('60 DNS-over-TLS ÷ (2,100 plain + 60 DNS-over-TLS), both to non-local or unknown addresses = 3%');
+		expect(r.drivers.counts).toContain(
+			'Left out: 3,300 plain lookups and 0 DNS-over-TLS connections to your own resolvers (private or local-scope addresses); each one is judged by what it sends out.',
+		);
+		expect(r.drivers.limits.join(' ')).not.toMatch(/count as plain/);
+		expect(r.drivers.limits).toContain("A resolver whose lookups out don't pass NetTap (a router's internet side, say) can't be judged; its lookups are in neither figure.");
+		expect(r.drivers.limits).toContain('A private address isn’t proof the resolver is yours: a VPN’s resolver has one too.');
 		expect(r.drivers.resolvers?.map((x) => [x.ip, x.kind, x.scope])).toContainEqual(['198.51.100.153', 'DNS-over-TLS', 'Public']);
 		expect(r.kpis[2]).toMatchObject({ value: '1,200' });
 		// DoT is counted in connections, plain in lookups (review L8)
-		expect(r.kpis[1]).toMatchObject({ value: '60', sub: 'connections, beside 5,400 plain lookups' });
+		expect(r.kpis[1]).toMatchObject({ value: '60', sub: 'connections, beside 2,100 plain lookups' });
+	});
+
+	it('reads an older daemon\'s reply, with no local and no one_way, as zeros instead of throwing (NET-308 review M1)', () => {
+		const old = protocols({ dns: { plain: 2100, over_tls: 60 }, encryption: { eligible: 21300, encrypted: 19800 } });
+		const r = dnsReport(reportData('dns-security', { inputs: old, extras: { 'dns-security': POSTURE_DNS } }));
+		expect(r.drivers.bars.map((b) => b.value)).toEqual([60, 2100, 0, 0]);
+		expect(r.drivers.counts).toContain(
+			'Left out: 0 plain lookups and 0 DNS-over-TLS connections to your own resolvers (private or local-scope addresses); each one is judged by what it sends out.',
+		);
+		const e = encryptionReport(reportData('encryption', { inputs: old, extras: { encryption: POSTURE_ENCRYPTION } }));
+		expect(e.kpis.find((k) => k.key === 'left-out')).toMatchObject({ value: '0' });
 	});
 
 	it('judges a forwarding private-address resolver as a resolver, not a device, and leaves its lookups out of the device step (review M3)', () => {
@@ -177,14 +212,20 @@ describe('patchReport', () => {
 		{ name: 'telnet', count: 10 },
 		{ name: 'ssl', count: 740 },
 	];
-	const patch = (detail: PatchDetail = POSTURE_PATCH) => patchReport(reportData('patch-currency', { inputs: protocols({ services }), extras: { 'patch-currency': detail } }));
+	// NET-308: 255 connections carry an old-protocol label, out of 1,000 (some carry ssl too)
+	const patch = (detail: PatchDetail = POSTURE_PATCH) =>
+		patchReport(reportData('patch-currency', { inputs: protocols({ services, patch: { legacy: 255, connections: 1000 } }), extras: { 'patch-currency': detail } }));
 
-	it('scores from the service labels and shows the unique-connection breakdown beside it (R1-6)', () => {
+	// OLD CODE: it('scores from the service labels and shows the unique-connection breakdown beside it (R1-6)', …) (NET-308: it scores connections)
+	it('scores each connection once, from the score input', () => {
 		const r = patch({ ...POSTURE_PATCH, unique_connections: 255 });
-		expect(r.drivers.formula).toBe('100 − (260 old-protocol labels ÷ 1,000 labels × 100) = 74');
-		expect(r.kpis[0]).toMatchObject({ value: '74', unit: '%' });
-		expect(r.drivers.counts).toContain('Connections with an old-protocol label, each counted once: 255.');
-		expect(r.drivers.limits).toContain('A connection with two labels counts twice in the score.');
+		expect(r.drivers.formula).toBe('100 − (255 old-protocol connections ÷ 1,000 connections × 100) = 75');
+		expect(r.kpis[0]).toMatchObject({ value: '75', unit: '%' });
+		expect(r.kpis[1]).toMatchObject({ key: 'legacy', value: '255', sub: 'of 1,000 connections' });
+		expect(r.drivers.counts).toEqual(['Old protocols: plain HTTP, FTP, Telnet, POP3 and IMAP.']);
+		expect(r.drivers.limits).not.toContain('A connection with two labels counts twice in the score.');
+		// the per-label bars stay (a two-label connection shows under each label)
+		expect(r.drivers.bars.map((b) => [b.key, b.value])).toEqual([['http', 250], ['telnet', 10]]);
 	});
 
 	it('makes Telnet/FTP high, HTTP medium, and always ends with automatic updates', () => {

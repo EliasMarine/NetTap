@@ -513,6 +513,27 @@ CONN_ACCOUNTING: dict = {
     }
 }
 
+# NET-219/222: a conn record carried data both ways when both payload counters are above 0. A
+# missing counter is one way (on the G11 every such record had packets from one side only).
+# Shared by Home's Unidentified split, the Encryption score and IoT isolation (NET-308).
+PAYLOAD_FIELDS = ("zeek.conn.orig_bytes", "zeek.conn.resp_bytes")
+PAYLOAD_BOTH: dict = {
+    "bool": {"filter": [{"range": {f: {"gt": 0}}} for f in PAYLOAD_FIELDS]}
+}
+# NET-308 security review: IoT isolation's "reached its host". Data both ways, or a connection
+# Zeek saw established (a completed handshake: nmap -sT on an open port is RSTO with 0 bytes).
+# A refused SYN is REJ; S0, RSTOS0, SH, SHR and OTH prove nothing. Encryption keeps PAYLOAD_BOTH.
+ESTABLISHED_STATES = ["S1", "S2", "S3", "SF", "RSTO", "RSTR"]
+REACHED: dict = {
+    "bool": {
+        "should": [
+            PAYLOAD_BOTH,
+            {"terms": {"zeek.conn.conn_state": ESTABLISHED_STATES}},
+        ],
+        "minimum_should_match": 1,
+    }
+}
+
 
 # OLD CODE START — #79: MGMT_IP was trusted as is. .env.example ships MGMT_IP=192.168.1.100,
 # so that placeholder (often a real device's address) was excluded from every page while

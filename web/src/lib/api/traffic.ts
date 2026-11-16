@@ -69,10 +69,25 @@ export interface ProtocolsResponse {
 	to: string;
 	protocols: ProtocolEntry[];
 	services: ProtocolEntry[];
-	/** Connections that can carry encrypted traffic (local chatter and STUN left out), and how many did (#86) */
-	encryption?: { eligible: number; encrypted: number };
-	/** Plain DNS lookups (mDNS/LLMNR left out) and DNS-over-TLS connections (#86) */
-	dns?: { plain: number; over_tls: number };
+	// OLD CODE START — NET-308: every eligible connection, and every lookup whatever its resolver
+	// /** Connections that can carry encrypted traffic (local chatter and STUN left out), and how many did (#86) */
+	// encryption?: { eligible: number; encrypted: number };
+	// /** Plain DNS lookups (mDNS/LLMNR left out) and DNS-over-TLS connections (#86) */
+	// dns?: { plain: number; over_tls: number };
+	// OLD CODE END
+	/**
+	 * Connections that can carry encrypted traffic (local chatter and STUN left out) and carried data
+	 * both ways, and how many were encrypted; `one_way` is what that leaves out (#86, NET-308)
+	 */
+	// one_way and local are absent from a daemon from before NET-308 (the reply has no shape check)
+	encryption?: { eligible: number; encrypted: number; one_way?: number };
+	/**
+	 * Plain DNS lookups (mDNS/LLMNR left out) and DNS-over-TLS connections to non-local or unknown
+	 * addresses; `local` holds the ones to private or local-scope resolvers, not scored (#86, NET-308)
+	 */
+	dns?: { plain: number; over_tls: number; local?: { plain: number; over_tls: number } };
+	/** Connections with an old-protocol label, each once, and all connections (NET-308) */
+	patch?: { legacy: number; connections: number };
 	/** The `unknown` service split three ways; they add up to it (NET-219) */
 	unidentified?: { conversations: number; one_way: number; icmp: number };
 	/** The excluded sources (Settings) these counts left out, as /summary reports them (NET-249) */

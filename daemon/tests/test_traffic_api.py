@@ -56,9 +56,14 @@ def _protocols_reply(
             "by_service": {
                 "buckets": [{"key": k, "doc_count": n} for k, n in services]
             },
-            "encryption": {"doc_count": 0, "encrypted": {"doc_count": 0}},
-            "dns_plain": {"doc_count": 0},
-            "dns_over_tls": {"doc_count": 0},
+            "encryption": {
+                "doc_count": 0,
+                "both": {"doc_count": 0, "encrypted": {"doc_count": 0}},
+            },
+            "dns_plain": {"doc_count": 0, "private_local": {"doc_count": 0}},
+            "dns_over_tls": {"doc_count": 0, "private_local": {"doc_count": 0}},
+            "legacy": {"doc_count": 0},
+            "connections": {"doc_count": 0},
             "quic": {"doc_count": quic},
             "ssl_only": {"doc_count": ssl_only},
             "unlabelled": {
@@ -420,27 +425,167 @@ class TestProtocolsHandler(AioHTTPTestCase):
         could never rise above 0% (Zeek has no dns_over_tls service; DoT is ssl on 853)."""
         from services.iot_monitor import ENCRYPTED_CONN_FILTER, LOCAL_CHATTER_EXCLUSION
 
+        # OLD CODE START — NET-308: every eligible connection and every lookup was scored
+        # self.mock_client.search.return_value = _protocols_reply(
+        #     encryption={"doc_count": 200, "encrypted": {"doc_count": 120}},
+        #     dns_plain={"doc_count": 90},
+        #     dns_over_tls={"doc_count": 10},
+        # )
+        # ...
+        # self.assertEqual(data["encryption"], {"eligible": 200, "encrypted": 120})
+        # self.assertEqual(data["dns"], {"plain": 90, "over_tls": 10})
+        # ...
+        # self.assertEqual(
+        #     aggs["encryption"]["aggs"]["encrypted"]["filter"], ENCRYPTED_CONN_FILTER
+        # )
+        # self.assertEqual(
+        #     aggs["dns_over_tls"], {"filter": {"term": {"destination.port": 853}}}
+        # )
+        # OLD CODE END
+        from api.traffic import PRIVATE_LOCAL
+        from services.excluded_ips import PAYLOAD_BOTH
+
         self.mock_client.search.return_value = _protocols_reply(
-            encryption={"doc_count": 200, "encrypted": {"doc_count": 120}},
-            dns_plain={"doc_count": 90},
-            dns_over_tls={"doc_count": 10},
+            encryption={
+                "doc_count": 200,
+                "both": {"doc_count": 150, "encrypted": {"doc_count": 120}},
+            },
+            dns_plain={"doc_count": 90, "private_local": {"doc_count": 30}},
+            dns_over_tls={"doc_count": 10, "private_local": {"doc_count": 4}},
+            legacy={"doc_count": 7},
+            connections={"doc_count": 700},
         )
         resp = await self.client.request("GET", "/api/traffic/protocols")
         data = await resp.json()
-        self.assertEqual(data["encryption"], {"eligible": 200, "encrypted": 120})
-        self.assertEqual(data["dns"], {"plain": 90, "over_tls": 10})
+        # NET-308: only connections with data both ways are scored
+        self.assertEqual(
+            data["encryption"], {"eligible": 150, "encrypted": 120, "one_way": 50}
+        )
+        # lookups to private or local-scope resolvers are local on both sides
+        self.assertEqual(
+            data["dns"],
+            {"plain": 60, "over_tls": 6, "local": {"plain": 30, "over_tls": 4}},
+        )
+        self.assertEqual(data["patch"], {"legacy": 7, "connections": 700})
 
         aggs = self.mock_client.search.call_args.kwargs["body"]["aggs"]
         must_not = aggs["encryption"]["filter"]["bool"]["must_not"]
         for clause in LOCAL_CHATTER_EXCLUSION:
             self.assertIn(clause, must_not)
         self.assertIn({"terms": {"network.protocol": ["stun"]}}, must_not)
+        both = aggs["encryption"]["aggs"]["both"]
+        self.assertIs(both["filter"], PAYLOAD_BOTH)
+        self.assertEqual(both["aggs"]["encrypted"]["filter"], ENCRYPTED_CONN_FILTER)
         self.assertEqual(
-            aggs["encryption"]["aggs"]["encrypted"]["filter"], ENCRYPTED_CONN_FILTER
+            aggs["dns_over_tls"]["filter"], {"term": {"destination.port": 853}}
         )
+        for name in ("dns_plain", "dns_over_tls"):
+            self.assertIs(aggs[name]["aggs"]["private_local"]["filter"], PRIVATE_LOCAL)
         self.assertEqual(
-            aggs["dns_over_tls"], {"filter": {"term": {"destination.port": 853}}}
+            aggs["legacy"]["filter"],
+            {"terms": {"network.protocol": ["http", "ftp", "telnet", "pop3", "imap"]}},
         )
+        self.assertEqual(aggs["connections"], {"filter": {"match_all": {}}})
+
+    @unittest_run_loop
+    async def test_local_dot_never_lifts_a_plain_upstream(self):
+        """NET-308 R1-3: 100 DoT connections to a local resolver and 10 plain lookups out
+        score 0, not 91: the local DoT is left out on its side as the local plain is."""
+        self.mock_client.search.return_value = _protocols_reply(
+            dns_plain={"doc_count": 10, "private_local": {"doc_count": 0}},
+            dns_over_tls={"doc_count": 100, "private_local": {"doc_count": 100}},
+        )
+        data = await (await self.client.request("GET", "/api/traffic/protocols")).json()
+        self.assertEqual(data["dns"]["plain"], 10)
+        self.assertEqual(data["dns"]["over_tls"], 0)
+
+    @unittest_run_loop
+    async def test_local_dot_with_an_unseen_upstream_scores_nothing(self):
+        """A resolver whose lookups out don't pass NetTap adds nothing to either figure."""
+        self.mock_client.search.return_value = _protocols_reply(
+            dns_plain={"doc_count": 40, "private_local": {"doc_count": 40}},
+            dns_over_tls={"doc_count": 25, "private_local": {"doc_count": 25}},
+        )
+        data = await (await self.client.request("GET", "/api/traffic/protocols")).json()
+        self.assertEqual(
+            data["dns"],
+            {"plain": 0, "over_tls": 0, "local": {"plain": 40, "over_tls": 25}},
+        )
+
+
+class TestProtocolsScoreInputsOnDocuments(AioHTTPTestCase):
+    """NET-308 R2-2: the score inputs counted from documents, the filters evaluated."""
+
+    async def get_application(self):
+        from types import SimpleNamespace
+
+        from tests.fake_drill_opensearch import DrillOpenSearch, conn, make_app
+
+        def dns_conn(dst, port=53, **fields):
+            return conn(
+                "192.168.1.20",
+                dst,
+                network__protocol="dns",
+                destination__port=port,
+                **fields,
+            )
+
+        no_address = dns_conn("8.8.8.8")
+        del no_address["destination.ip"]
+        self.os = DrillOpenSearch(
+            [
+                dns_conn("8.8.8.8"),  # public
+                dns_conn("100.64.1.1"),  # unknown scope still counts as plain
+                no_address,  # unknown too
+                dns_conn("192.168.1.2"),  # your own resolver: local
+                conn("192.168.1.20", "1.1.1.1", destination__port=853),
+                conn("192.168.1.20", "192.168.1.6", destination__port=853),
+                # a two-label legacy connection counts once
+                conn(
+                    "192.168.1.20", "93.184.216.34", network__protocol=["http", "ssl"]
+                ),
+                # encryption: data both ways is scored, one way and none are left out
+                conn(
+                    "192.168.1.20",
+                    "93.184.216.34",
+                    destination__port=443,
+                    zeek__conn__orig_bytes=500,
+                    zeek__conn__resp_bytes=900,
+                ),
+                conn(
+                    "192.168.1.20",
+                    "93.184.216.34",
+                    destination__port=6881,
+                    zeek__conn__orig_bytes=68,
+                    zeek__conn__resp_bytes=0,
+                ),
+            ]
+        )
+
+        def register(app, client):
+            storage = SimpleNamespace(_client=client)
+            app["storage"] = storage
+            register_traffic_routes(app, storage)
+
+        return make_app(self.os, register)
+
+    async def test_the_dns_split_and_the_patch_count(self):
+        from tests.fake_drill_opensearch import AUTH, WINDOW
+
+        resp = await self.client.get(f"/api/traffic/protocols?{WINDOW}", headers=AUTH)
+        self.assertEqual(resp.status, 200, await resp.text())
+        data = await resp.json()
+        self.assertEqual(
+            data["dns"],
+            {"plain": 3, "over_tls": 1, "local": {"plain": 1, "over_tls": 1}},
+        )
+        self.assertEqual(data["patch"], {"legacy": 1, "connections": 9})
+        enc = data["encryption"]
+        self.assertEqual(enc["encrypted"], 1)  # the 443 connection, both ways
+        self.assertEqual(enc["eligible"], 1)
+        # one way or none: the 6881 attempt, the two DoT and the legacy connection (the four
+        # port 53 lookups are local-service chatter, outside the eligible set)
+        self.assertEqual(enc["one_way"], 4)
 
 
 class TestProtocolsUnidentified(AioHTTPTestCase):
@@ -463,6 +608,17 @@ class TestProtocolsUnidentified(AioHTTPTestCase):
 
     def _aggs(self):
         return self.mock_client.search.call_args.kwargs["body"]["aggs"]
+
+    @unittest_run_loop
+    async def test_one_way_is_the_shared_payload_rule(self):
+        """NET-308: Home's one-way count and the Encryption score read one PAYLOAD_BOTH."""
+        from services.excluded_ips import PAYLOAD_BOTH
+
+        await self._get(_protocols_reply())
+        must_not = self._aggs()["unlabelled"]["aggs"]["one_way"]["filter"]["bool"][
+            "must_not"
+        ]
+        self.assertIs(must_not[1], PAYLOAD_BOTH)
 
     @unittest_run_loop
     async def test_the_unknown_count_is_split_and_the_remainder_is_conversations(self):

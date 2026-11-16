@@ -24,11 +24,22 @@ const REPLIES: Record<string, Reply> = {
 	'/api/network/lan': LAN_POLICY,
 	'/api/system/health': { pipeline: { state: 'fresh', newest_record_at: null, age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' } },
 	'/api/devices/registry': { devices: [{ ips: ['192.168.1.20'], hostname: null, custom_name: 'Laptop', last_seen: '2026-11-15T00:00:00Z', first_seen: '2026-01-01T00:00:00Z' }], total: 1 },
-	'/api/traffic/protocols': { from: '', to: '', protocols: [], services: [{ name: 'http', count: 250 }, { name: 'ssl', count: 750 }], encryption: { eligible: 21300, encrypted: 19800 }, dns: { plain: 5400, over_tls: 60 } },
+	// OLD CODE: … encryption: { eligible: 21300, encrypted: 19800 }, dns: { plain: 5400, over_tls: 60 } }, (NET-308)
+	'/api/traffic/protocols': {
+		from: '', to: '', protocols: [], services: [{ name: 'http', count: 250 }, { name: 'ssl', count: 750 }],
+		encryption: { eligible: 21300, encrypted: 19800, one_way: 9200 },
+		dns: { plain: 5400, over_tls: 60, local: { plain: 0, over_tls: 0 } },
+		patch: { legacy: 250, connections: 1000 },
+	},
 	'/api/posture/encryption': POSTURE_ENCRYPTION,
 	'/api/posture/dns-security': POSTURE_DNS,
 	'/api/alerts/count': { from: '', to: '', counts: { total: 757, high: 295, medium: 219, low: 243 } },
-	'/api/investigations/stats': { total: 0, by_status: {}, by_severity: {} },
+	// OLD CODE: '/api/investigations/stats': { total: 0, by_status: {}, by_severity: {} }, (NET-308)
+	'/api/posture/alert-response': {
+		category: 'alert-response', from: '', to: '', needing: 2, investigated: 0,
+		groups: [{ rule: 'IPFire DBL Phishing DNS', count: 266, investigated: false }, { rule: 'ET SCAN Nmap', count: 3, investigated: false }],
+		investigations: { open_during: 0, linked_alerts: 0, unresolved_links: 0, skipped: 0 },
+	},
 	'/api/devices/count': { from: '', to: '', count: 3 },
 	'/api/risk/scores': { devices: [{ ip: '192.168.1.20', score: 10, level: 'low', factors: [] }] },
 	'/api/alerts/top-signatures': { from: '', to: '', complete: true, examined: 2, signatures: [{ signature: 'ET INFO Spotify P2P Client', count: 235, severity: 3 }, { signature: null, count: 4, severity: 2 }] },
@@ -79,7 +90,8 @@ describe('Security posture category page', () => {
 		const { container } = render(Page);
 		await loadedScore('93');
 		expect(within(screen.getByText('Security posture').closest('.eyebrow') as HTMLElement).getByRole('link')).toHaveAttribute('href', '/compliance');
-		expect(screen.getByText('19,800 encrypted ÷ 21,300 connections that can be encrypted = 93%')).toBeInTheDocument();
+		// OLD CODE: '19,800 encrypted ÷ 21,300 connections that can be encrypted = 93%' (NET-308)
+		expect(screen.getByText('19,800 encrypted ÷ 21,300 connections with data both ways = 93%')).toBeInTheDocument();
 		// both requests carried the same window
 		const [p, d] = [call('/api/traffic/protocols'), call('/api/posture/encryption')];
 		expect(d.searchParams.get('from')).toBe(p.searchParams.get('from'));
@@ -113,7 +125,8 @@ describe('Security posture category page', () => {
 		const findings = card('Findings');
 		expect(within(findings).getByText("Couldn't load the findings: the request failed.")).toBeInTheDocument();
 		expect(within(findings).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
-		expect(kpi('Payload both ways')).toHaveTextContent('—');
+		// OLD CODE: expect(kpi('Payload both ways')).toHaveTextContent('—'); (NET-308: Left out is a score input, so it still shows)
+		expect(kpi('Left out')).toHaveTextContent('9,200');
 		// review L5: no "Nothing to change" when the steps' request failed
 		const steps = card('How to improve');
 		expect(within(steps).getByText("Couldn't load the recommendations: the request failed.")).toBeInTheDocument();
@@ -132,7 +145,7 @@ describe('Security posture category page', () => {
 		render(Page);
 		await loadedScore('93');
 		const before = screen.getAllByRole('link', { name: 'Open in Log Explorer' }).map((a) => a.getAttribute('href'));
-		stubDaemon({ '/api/traffic/protocols': { ...(REPLIES['/api/traffic/protocols'] as object), encryption: { eligible: 100, encrypted: 1 } }, '/api/posture/encryption': 'fail' });
+		stubDaemon({ '/api/traffic/protocols': { ...(REPLIES['/api/traffic/protocols'] as object), encryption: { eligible: 100, encrypted: 1, one_way: 0 } }, '/api/posture/encryption': 'fail' });
 		expect(await refreshPage()).toBe('partial');
 		expect(screen.getByText(/Couldn't refresh this category; showing the last figures loaded/)).toBeInTheDocument();
 		expect(kpi('Score')).toHaveTextContent('93');
@@ -161,7 +174,8 @@ describe('Security posture category page', () => {
 		finishEncryption(ok(POSTURE_ENCRYPTION));
 		await new Promise((r) => setTimeout(r, 0));
 		expect(screen.getByRole('heading', { level: 1, name: 'DNS security' })).toBeInTheDocument();
-		expect(screen.getByText('60 DNS-over-TLS ÷ (5,400 plain + 60 DNS-over-TLS) = 1%')).toBeInTheDocument();
+		// OLD CODE: '60 DNS-over-TLS ÷ (5,400 plain + 60 DNS-over-TLS) = 1%' (NET-308)
+		expect(screen.getByText('60 DNS-over-TLS ÷ (5,400 plain + 60 DNS-over-TLS), both to non-local or unknown addresses = 1%')).toBeInTheDocument();
 		expect(screen.queryByText(/encrypted ÷/)).toBeNull();
 	});
 
@@ -175,25 +189,72 @@ describe('Security posture category page', () => {
 		expect(rule.getAttribute('href')).toMatch(/^\/alerts\/rule\/ET%20INFO%20Spotify%20P2P%20Client\?/);
 		expect(query(rule.getAttribute('href'))).toEqual({ from: sent.searchParams.get('from'), to: sent.searchParams.get('to'), range: '24h' });
 		expect(within(card('Findings')).getByRole('link', { name: 'Alerts with no rule name' }).getAttribute('href')).toMatch(/^\/alerts\?no_rule_name=true&/);
-		expect(kpi('Investigations (all time)')).toHaveTextContent('0 of 0');
+		// OLD CODE: expect(kpi('Investigations (all time)')).toHaveTextContent('0 of 0'); (NET-308)
+		expect(kpi('Rules that needed a response')).toHaveTextContent('0 of 2');
+		// the follow-up request carries the same window as the alert count
+		const response = call('/api/posture/alert-response');
+		expect([response.searchParams.get('from'), response.searchParams.get('to')]).toEqual([sent.searchParams.get('from'), sent.searchParams.get('to')]);
+		// an uninvestigated high rule opens the Alerts list for that rule, where the button is
+		expect(within(card('Findings')).getByRole('link', { name: 'IPFire DBL Phishing DNS' }).getAttribute('href')).toMatch(/^\/alerts\?signature=IPFire\+DBL\+Phishing\+DNS&/);
+		expect(calls.some((u) => u.pathname === '/api/investigations/stats')).toBe(false);
 	});
 
-	it('shows each source on its own: isolation not measured beside the baseline findings', async () => {
+	// OLD CODE START — NET-308: segmentation scored baselines (devices and risk); it reads IoT isolation now
+	// it('shows each source on its own: isolation not measured beside the baseline findings', async () => {
+	// 	goTo('network-segmentation');
+	// 	stubDaemon();
+	// 	render(Page);
+	// 	await loadedScore('80');
+	// 	const findings = card('Findings');
+	// 	expect(within(findings).getByText(/2 device\(s\) without a baseline/)).toBeInTheDocument();
+	// 	expect(within(findings).getByText(/No smart \(IoT\) devices detected yet/)).toBeInTheDocument();
+	// });
+	//
+	// it('renders two steps with the same text (review L7: keyed by position)', async () => {
+	// 	goTo('network-segmentation');
+	// 	const pair = { iot_device: { mac: '02:00:5e:10:00:50', name: 'Camera', ip: '192.168.1.50' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'high', connection_count: 4, ports: [445], description: 'Camera reached a computer.' };
+	// 	stubDaemon({ '/api/iot/network-isolation': { segmentation_score: 40, segmentation_grade: 'F', recommendation: '', pairs: [pair, { ...pair, ports: [139] }] } });
+	// 	render(Page);
+	// 	await loadedScore('80');
+	// 	expect(within(card('How to improve')).getAllByText('Move Camera to a guest or IoT network: it reached Laptop.')).toHaveLength(2);
+	// });
+	// OLD CODE END
+	const PAIR = { iot_device: { mac: '02:00:5e:10:00:50', name: 'Camera', ip: '192.168.1.50' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'high', connection_count: 4, ports: [445], reached: true, reached_ports: [445], description: 'Camera can reach 192.168.1.20 via SMB' };
+
+	it('scores Network segmentation from IoT isolation only, with no smart devices Not measured', async () => {
 		goTo('network-segmentation');
 		stubDaemon();
 		render(Page);
-		await loadedScore('80');
-		const findings = card('Findings');
-		expect(within(findings).getByText(/2 device\(s\) without a baseline/)).toBeInTheDocument();
-		expect(within(findings).getByText(/No smart \(IoT\) devices detected yet/)).toBeInTheDocument();
+		await loadedScore('Not measured');
+		expect(within(card('Findings')).getByText(/No smart \(IoT\) devices detected yet/)).toBeInTheDocument();
+		expect(call('/api/iot/network-isolation')).toBeDefined();
+		// baselines are Monitoring coverage's: not requested here
+		expect(calls.some((u) => u.pathname === '/api/risk/scores' || u.pathname === '/api/devices/count')).toBe(false);
+	});
+
+	it('reads a malformed isolation reply as Couldn\'t compute, never 100 (R1-6)', async () => {
+		goTo('network-segmentation');
+		stubDaemon({ '/api/iot/network-isolation': { segmentation_score: 101, segmentation_grade: 'A', pairs: [], recommendation: '' } });
+		render(Page);
+		await vi.waitFor(() => expect(within(card('What drives this score')).getByText("Couldn't load smart-device isolation: the request failed.")).toBeInTheDocument());
+		expect(kpi('Score')).toHaveTextContent('—');
+	});
+
+	it('keeps the last isolation snapshot when a refresh gets a malformed reply (R1-6)', async () => {
+		goTo('network-segmentation');
+		stubDaemon({ '/api/iot/network-isolation': { segmentation_score: 85, segmentation_grade: 'B', recommendation: '', pairs: [PAIR] } });
+		render(Page);
+		await loadedScore('85');
+		stubDaemon({ '/api/iot/network-isolation': { segmentation_score: 100, segmentation_grade: 'A', recommendation: '', pairs: [{ ...PAIR, reached: 'yes' }] } });
+		expect(await refreshPage()).toBe('failed');
+		expect(kpi('Score')).toHaveTextContent('85');
 	});
 
 	it('renders two steps with the same text (review L7: keyed by position)', async () => {
 		goTo('network-segmentation');
-		const pair = { iot_device: { mac: '02:00:5e:10:00:50', name: 'Camera', ip: '192.168.1.50' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'high', connection_count: 4, ports: [445], description: 'Camera reached a computer.' };
-		stubDaemon({ '/api/iot/network-isolation': { segmentation_score: 40, segmentation_grade: 'F', recommendation: '', pairs: [pair, { ...pair, ports: [139] }] } });
+		stubDaemon({ '/api/iot/network-isolation': { segmentation_score: 70, segmentation_grade: 'C', recommendation: '', pairs: [PAIR, { ...PAIR, ports: [139], reached_ports: [139] }] } });
 		render(Page);
-		await loadedScore('80');
+		await loadedScore('70');
 		expect(within(card('How to improve')).getAllByText('Move Camera to a guest or IoT network: it reached Laptop.')).toHaveLength(2);
 	});
 

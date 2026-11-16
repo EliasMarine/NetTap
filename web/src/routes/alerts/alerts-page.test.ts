@@ -25,6 +25,8 @@ import {
 	THREAT_SCORE_BRIDGE,
 } from '$api/alerts';
 import { getSystemHealth, type SystemHealth } from '$api/system';
+import { createInvestigation, type Investigation } from '$api/investigations';
+import { openedInvestigations } from './alert-view';
 import { _configure as resetAlertSnapshots, alertSnapshots, loadAlertSnapshot } from '$lib/stores/alertSnapshot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import { goto } from '$app/navigation';
@@ -85,6 +87,12 @@ vi.mock('$api/alerts', async (importOriginal) => ({
 	acknowledgeAlert: vi.fn(),
 	suppressAlert: vi.fn(),
 	markFalsePositive: vi.fn(),
+}));
+
+// NET-308: the drawer's Open an investigation
+vi.mock('$api/investigations', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/investigations')>()),
+	createInvestigation: vi.fn(),
 }));
 
 // NET-228: the page reads the pipeline's state for its zero messages
@@ -203,6 +211,7 @@ function failAll() {
 
 beforeEach(() => {
 	resetAlertSnapshots({});
+	openedInvestigations.set(new Set());
 	vi.clearAllMocks();
 	vi.stubGlobal('fetch', vi.fn(lanReply));
 	vi.mocked(getSystemHealth).mockResolvedValue(healthWith());
@@ -703,6 +712,78 @@ describe('Alerts — drawer', () => {
 		await flush();
 		expect(markFalsePositive).toHaveBeenCalledWith(2900001);
 		expect(within(drawer).getByRole('alert')).toHaveTextContent('Not applied: Mark false positive failed: 500');
+	});
+
+	it('opens an investigation that links the alert, titled by its rule, and says so (NET-308)', async () => {
+		const drawer = await openFromRow();
+		vi.mocked(createInvestigation).mockRejectedValueOnce(new Error('Creating the investigation failed: HTTP 502'));
+		await fireEvent.click(within(drawer).getByRole('button', { name: 'Open an investigation' }));
+		await flush();
+		expect(within(drawer).getByRole('alert')).toHaveTextContent('Not applied: Creating the investigation failed: HTTP 502');
+
+		vi.mocked(createInvestigation).mockResolvedValueOnce({ id: 'i1' } as Investigation);
+		await fireEvent.click(within(drawer).getByRole('button', { name: 'Open an investigation' }));
+		await flush();
+		expect(createInvestigation).toHaveBeenLastCalledWith({ title: 'ET MALWARE CnC Checkin', severity: 'high', alert_ids: ['e1'] });
+		expect(within(drawer).getByRole('status')).toHaveTextContent('Investigation opened.');
+		expect(within(drawer).getByRole('link', { name: 'Open Investigations' })).toHaveAttribute('href', '/investigations');
+		expect(within(drawer).queryByRole('button', { name: 'Open an investigation' })).not.toBeInTheDocument();
+		expect(within(drawer).queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	it('offers no second investigation while the first is being created on a remounted drawer, and offers it again if it fails', async () => {
+		succeedAll([enriched, alert('e2', { category: 'Misc activity', signature: 'ET INFO Other' })]);
+		render(Page);
+		await flush();
+		const drawer = () => screen.getByRole('complementary', { name: 'Alert details' });
+		const create = deferred<Investigation>();
+		vi.mocked(createInvestigation).mockReturnValueOnce(create.promise);
+		await fireEvent.click(screen.getByRole('button', { name: /A device contacted a server/ }));
+		await fireEvent.click(within(drawer()).getByRole('button', { name: 'Open an investigation' }));
+		// its own request: Opening…, disabled
+		expect(within(drawer()).getByRole('button', { name: 'Opening…' })).toBeDisabled();
+		// away and back while it runs: no button to open a second
+		await fireEvent.click(screen.getByRole('button', { name: /Misc activity/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /A device contacted a server/ }));
+		expect(within(drawer()).queryByRole('button', { name: 'Open an investigation' })).not.toBeInTheDocument();
+		// it fails: the button is back
+		create.reject(new Error('Creating the investigation failed: HTTP 502'));
+		await flush();
+		expect(within(drawer()).getByRole('button', { name: 'Open an investigation' })).toBeInTheDocument();
+		expect(createInvestigation).toHaveBeenCalledTimes(1);
+	});
+
+	it('shows the error and the button again when the create fails in its own drawer', async () => {
+		const drawer = await openFromRow();
+		const create = deferred<Investigation>();
+		vi.mocked(createInvestigation).mockReturnValueOnce(create.promise);
+		await fireEvent.click(within(drawer).getByRole('button', { name: 'Open an investigation' }));
+		create.reject(new Error("An alert to link wasn't found"));
+		await flush();
+		expect(within(drawer).getByRole('alert')).toHaveTextContent("Not applied: An alert to link wasn't found");
+		expect(within(drawer).getByRole('button', { name: 'Open an investigation' })).toBeEnabled();
+		expect(within(drawer).queryByRole('status')).not.toBeInTheDocument();
+	});
+
+	it('keeps an opened investigation when the drawer moves to another alert and back, even if the create finishes in between (review M3)', async () => {
+		succeedAll([enriched, alert('e2', { category: 'Misc activity', signature: 'ET INFO Other' })]);
+		render(Page);
+		await flush();
+		const drawer = () => screen.getByRole('complementary', { name: 'Alert details' });
+		const create = deferred<Investigation>();
+		vi.mocked(createInvestigation).mockReturnValueOnce(create.promise);
+		await fireEvent.click(screen.getByRole('button', { name: /A device contacted a server/ }));
+		await fireEvent.click(within(drawer()).getByRole('button', { name: 'Open an investigation' }));
+		// to B while A's create is still running, then it finishes
+		await fireEvent.click(screen.getByRole('button', { name: /Misc activity/ }));
+		create.resolve({ id: 'i1' } as Investigation);
+		await flush();
+		expect(within(drawer()).getByRole('button', { name: 'Open an investigation' })).toBeInTheDocument();
+		// back to A: done, and no button to open a second
+		await fireEvent.click(screen.getByRole('button', { name: /A device contacted a server/ }));
+		expect(within(drawer()).getByRole('status')).toHaveTextContent('Investigation opened.');
+		expect(within(drawer()).queryByRole('button', { name: 'Open an investigation' })).not.toBeInTheDocument();
+		expect(createInvestigation).toHaveBeenCalledTimes(1);
 	});
 
 	it('loads Related events when opened, and retries after a failure', async () => {

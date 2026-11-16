@@ -410,10 +410,13 @@ def _isolation_search(pairs: list[tuple[str, dict[int, int], int]]):
     def pair_bucket(
         key: Any, dest: str, ports: dict[int, int], pings: int, spec: dict
     ) -> dict:
+        total = sum(ports.values()) + pings
         return {
             "key": key,
-            "doc_count": sum(ports.values()) + pings,
+            "doc_count": total,
             "not_icmp": _not_icmp(ports, spec),
+            # NET-308: every connection here was established, so data went both ways
+            "reached": {"doc_count": total, "not_icmp": _not_icmp(ports, spec)},
             "source_ip": {"buckets": [{"key": "192.168.1.40", "doc_count": 1}]},
         }
 

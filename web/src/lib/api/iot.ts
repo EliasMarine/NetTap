@@ -202,6 +202,10 @@ export interface IsolationPair {
 	risk: string;
 	connection_count: number;
 	ports: number[];
+	/** NET-308: data went both ways, so the device reached the host; only these cost points */
+	reached: boolean;
+	/** The ports of the connections that reached it */
+	reached_ports: number[];
 	description: string;
 }
 

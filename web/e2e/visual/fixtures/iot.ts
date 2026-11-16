@@ -177,6 +177,8 @@ const isolation = (): NetworkIsolation => ({
 			risk: 'high',
 			connection_count: 46,
 			ports: [8080],
+			reached: true,
+			reached_ports: [8080],
 			description: `${camera.hostname} can reach 192.168.1.30 via port 8080`,
 		},
 		{
@@ -185,6 +187,8 @@ const isolation = (): NetworkIsolation => ({
 			risk: 'medium',
 			connection_count: 12,
 			ports: [7000],
+			reached: true,
+			reached_ports: [7000],
 			description: `${PROFILES[1].device.hostname} can reach 192.168.1.20 via port 7000`,
 		},
 	],

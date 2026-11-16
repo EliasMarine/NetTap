@@ -5,7 +5,7 @@ counts are checked against what OpenSearch would answer, not against canned repl
 
 - queries: bool (filter/must/should/must_not, minimum_should_match), term (with
   case_insensitive), terms (CIDRs match IPs), range on @timestamp, exists, prefix,
-  wildcard (with case_insensitive), match_all, match_none;
+  wildcard (with case_insensitive), ids (a document's "_id"), match_all, match_none;
 - aggregations: filter, missing, sum/min/max/value_count/cardinality (exact), terms (with
   size, missing, include/exclude as a list or a regex, sum_other_doc_count,
   sub-aggregations and an order by one of them),
@@ -152,6 +152,8 @@ def matches(doc: dict, query: dict) -> bool:
         )
     if kind == "exists":
         return bool(values(doc, body["field"]))
+    if kind == "ids":  # NET-308: the investigation link's rule lookup
+        return doc.get("_id") in body["values"]
     if kind == "prefix":
         ((field, start),) = body.items()
         return any(str(v).startswith(start) for v in values(doc, field))

@@ -18,8 +18,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
+from types import SimpleNamespace
+
 from api.investigations import register_investigation_routes
 from services.investigation_store import InvestigationStore
+from tests.fake_drill_opensearch import DrillOpenSearch, alert
 
 
 class TestListInvestigations(AioHTTPTestCase):
@@ -293,6 +296,9 @@ class TestAlertLinkingEndpoints(AioHTTPTestCase):
 
     async def get_application(self):
         app = web.Application()
+        # NET-308: a link reads the alert's rule (test_investigation_alert_links.py)
+        found = alert("192.168.1.20", "93.184.216.34", rule="ET X", _id="alert-123")
+        app["storage"] = SimpleNamespace(_client=DrillOpenSearch([found]))
         register_investigation_routes(app, self.store)
         return app
 
@@ -321,7 +327,8 @@ class TestAlertLinkingEndpoints(AioHTTPTestCase):
     @unittest_run_loop
     async def test_unlink_alert(self):
         """DELETE /api/investigations/{id}/alerts/{alert_id} unlinks an alert."""
-        self.store.link_alert(self.inv.id, "alert-456")
+        # OLD CODE: self.store.link_alert(self.inv.id, "alert-456") (NET-308: with its rule)
+        self.store.link_alert(self.inv.id, "alert-456", "ET X")
         resp = await self.client.request(
             "DELETE",
             f"/api/investigations/{self.inv.id}/alerts/alert-456",

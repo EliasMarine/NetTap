@@ -19,8 +19,6 @@ from opensearchpy import OpenSearchException
 
 from api.posture import (
     DEVICE_ROWS,
-    DNS_PLAIN,
-    ELIGIBLE,
     PRIVATE_LOCAL,
     PUBLIC,
     UNKNOWN,
@@ -28,8 +26,8 @@ from api.posture import (
     register_posture_routes,
     scope,
 )
-from api.traffic import register_traffic_routes
-from services.excluded_ips import build_excluded_ips_filter
+from api.traffic import DNS_PLAIN, register_traffic_routes
+from services.excluded_ips import PAYLOAD_BOTH, build_excluded_ips_filter
 from services.iot_monitor import (
     ENCRYPTED_PORTS,
     ENCRYPTED_PROTOCOLS,
@@ -113,9 +111,15 @@ class TestRoute(PostureTestCase):
         self.assertEqual(await resp.json(), {"error": "Unknown posture category"})
         self.mock_client.search.assert_not_called()
 
+    # OLD CODE START — NET-308: alert-response has its own route now (TestAlertResponse)
+    # @unittest_run_loop
+    # async def test_the_categories_without_traffic_detail_are_404(self):
+    #     resp = await self.client.request("GET", "/api/posture/alert-response")
+    #     self.assertEqual(resp.status, 404)
+    # OLD CODE END
     @unittest_run_loop
     async def test_the_categories_without_traffic_detail_are_404(self):
-        resp = await self.client.request("GET", "/api/posture/alert-response")
+        resp = await self.client.request("GET", "/api/posture/network-segmentation")
         self.assertEqual(resp.status, 404)
 
     @unittest_run_loop
@@ -143,7 +147,9 @@ class TestRoute(PostureTestCase):
         )
 
     @unittest_run_loop
-    async def test_base_query_and_filters_equal_the_protocols_endpoint(self):
+    # OLD CODE: async def test_base_query_and_filters_equal_the_protocols_endpoint(self):
+    # (NET-308: the filters are one definition each in api/traffic.py, so only the query is checked)
+    async def test_base_query_equals_the_protocols_endpoint(self):
         """The totals here must equal the score's inputs, so the query that feeds them must match."""
         self.mock_client.search.return_value = _reply(eligible={"doc_count": 0})
         await self.client.request(
@@ -156,9 +162,15 @@ class TestRoute(PostureTestCase):
             **_reply(
                 by_proto={"buckets": []},
                 by_service={"buckets": []},
-                encryption={"doc_count": 0, "encrypted": {"doc_count": 0}},
-                dns_plain={"doc_count": 0},
-                dns_over_tls={"doc_count": 0},
+                # OLD CODE: encryption={"doc_count": 0, "encrypted": {"doc_count": 0}}, (NET-308)
+                encryption={
+                    "doc_count": 0,
+                    "both": {"doc_count": 0, "encrypted": {"doc_count": 0}},
+                },
+                dns_plain={"doc_count": 0, "private_local": {"doc_count": 0}},
+                dns_over_tls={"doc_count": 0, "private_local": {"doc_count": 0}},
+                legacy={"doc_count": 0},
+                connections={"doc_count": 0},
                 quic={"doc_count": 0},
                 ssl_only={"doc_count": 0},
                 unlabelled={
@@ -174,46 +186,52 @@ class TestRoute(PostureTestCase):
         )
         protocols = self.body()
         self.assertEqual(posture["query"], protocols["query"])
-        self.assertEqual(ELIGIBLE, protocols["aggs"]["encryption"]["filter"])
-        self.assertEqual(DNS_PLAIN, protocols["aggs"]["dns_plain"]["filter"])
-        self.assertEqual(
-            {"term": {"destination.port": 853}},
-            protocols["aggs"]["dns_over_tls"]["filter"],
-        )
+        # OLD CODE START — NET-308: held posture's copies of the filters equal to protocols' own
+        # self.assertEqual(ELIGIBLE, protocols["aggs"]["encryption"]["filter"])
+        # self.assertEqual(DNS_PLAIN, protocols["aggs"]["dns_plain"]["filter"])
+        # self.assertEqual(
+        #     {"term": {"destination.port": 853}},
+        #     protocols["aggs"]["dns_over_tls"]["filter"],
+        # )
+        # OLD CODE END
 
 
 class TestEncryption(PostureTestCase):
     def search_reply(self):
+        # NET-308: every figure is the scored set, connections with data both ways
         return _reply(
             eligible={
-                "doc_count": 1000,
-                "encrypted": {"doc_count": 150},
-                "unencrypted": {
-                    "doc_count": 850,
-                    "payload_both": {"doc_count": 45},
-                    "private_local": {"doc_count": 30},
-                    "risky": {
-                        "buckets": {
-                            "telnet": {"doc_count": 2},
-                            "ftp": {"doc_count": 0},
-                            "http": {"doc_count": 27},
-                        }
-                    },
-                    "services": _buckets(("unknown", 800), ("http", 27), other=23),
-                    "devices": {
-                        "doc_count": 840,
-                        "rows": _buckets(
-                            ("192.168.1.205", 797),
-                            other=43,
-                            **{
-                                "192.168.1.205": {
-                                    "payload_both": {"doc_count": 17},
-                                    "private_local": {"doc_count": 0},
-                                    "services": _buckets(("unknown", 790), ("http", 7)),
-                                    "ports": _buckets((6881, 210), (51413, 40)),
-                                }
-                            },
-                        ),
+                "doc_count": 1400,
+                "both": {
+                    "doc_count": 1000,
+                    "encrypted": {"doc_count": 150},
+                    "unencrypted": {
+                        "doc_count": 850,
+                        "private_local": {"doc_count": 30},
+                        "risky": {
+                            "buckets": {
+                                "telnet": {"doc_count": 2},
+                                "ftp": {"doc_count": 0},
+                                "http": {"doc_count": 27},
+                            }
+                        },
+                        "services": _buckets(("unknown", 800), ("http", 27), other=23),
+                        "devices": {
+                            "doc_count": 840,
+                            "rows": _buckets(
+                                ("192.168.1.205", 797),
+                                other=43,
+                                **{
+                                    "192.168.1.205": {
+                                        "private_local": {"doc_count": 0},
+                                        "services": _buckets(
+                                            ("unknown", 790), ("http", 7)
+                                        ),
+                                        "ports": _buckets((6881, 210), (51413, 40)),
+                                    }
+                                },
+                            ),
+                        },
                     },
                 },
             }
@@ -229,9 +247,9 @@ class TestEncryption(PostureTestCase):
         self.assertEqual(data["excluded_ips"], ["192.168.1.199"])
         self.assertEqual((data["eligible"], data["encrypted"]), (1000, 150))
         un = data["unencrypted"]
-        self.assertEqual(
-            (un["total"], un["payload_both"], un["private_local"]), (850, 45, 30)
-        )
+        # OLD CODE: (un["total"], un["payload_both"], un["private_local"]), (850, 45, 30) (NET-308)
+        self.assertNotIn("payload_both", un)
+        self.assertEqual((un["total"], un["private_local"]), (850, 30))
         self.assertEqual(
             un["services"],
             [{"name": "unknown", "count": 800}, {"name": "http", "count": 27}],
@@ -248,7 +266,6 @@ class TestEncryption(PostureTestCase):
                 {
                     "ip": "192.168.1.205",
                     "connections": 797,
-                    "payload_both": 17,
                     "private_local": 0,
                     "services": [
                         {"name": "unknown", "count": 790},
@@ -274,7 +291,10 @@ class TestEncryption(PostureTestCase):
             build_excluded_ips_filter(["192.168.1.199"]),
         )
         self.assertNotEqual(body["query"]["bool"]["must_not"], [])
-        un = body["aggs"]["eligible"]["aggs"]["unencrypted"]
+        # OLD CODE: un = body["aggs"]["eligible"]["aggs"]["unencrypted"] (NET-308: under both)
+        both = body["aggs"]["eligible"]["aggs"]["both"]
+        self.assertIs(both["filter"], PAYLOAD_BOTH)
+        un = both["aggs"]["unencrypted"]
         self.assertEqual(un["aggs"]["devices"]["filter"], LAN_FILTER)
         self.assertEqual(
             un["aggs"]["devices"]["aggs"]["rows"]["terms"]["size"], DEVICE_ROWS
@@ -315,6 +335,10 @@ class TestLogsQuery(unittest.TestCase):
         ]:
             self.assertIn(f'"{value}"', q)
         self.assertEqual(q.count(" AND NOT "), 6)
+        # NET-308: the link lists the scored records, those with data both ways
+        self.assertTrue(
+            q.endswith(" AND zeek.conn.orig_bytes:>0 AND zeek.conn.resp_bytes:>0")
+        )
 
     def test_http_has_no_port_clause(self):
         self.assertTrue(
@@ -374,7 +398,12 @@ class TestDns(PostureTestCase):
                     **{"8.8.8.8": {"org": _buckets(("AS15169 Google LLC", 120))}},
                 ),
             },
-            over_tls={"doc_count": 200, "resolvers": _buckets(("9.9.9.9", 200))},
+            # OLD CODE: over_tls={"doc_count": 200, "resolvers": _buckets(("9.9.9.9", 200))}, (NET-308)
+            over_tls={
+                "doc_count": 200,
+                "private_local": {"doc_count": 30},
+                "resolvers": _buckets(("9.9.9.9", 200)),
+            },
         )
 
     @unittest_run_loop
@@ -407,6 +436,8 @@ class TestDns(PostureTestCase):
         self.assertEqual(
             data["plain_scope"], {"private_local": 300, "unknown": 5, "public": 195}
         )
+        # NET-308 review: the DoT the score leaves out, so 500 - 300 and 200 - 30 are its figures
+        self.assertEqual(data["over_tls_scope"], {"private_local": 30})
         by_ip = {r["ip"]: r for r in data["resolvers"]["plain"]}
         self.assertEqual(by_ip["192.168.1.174"]["scope"], "private_local")
         self.assertEqual(
@@ -475,6 +506,8 @@ class TestDns(PostureTestCase):
         await self.client.request("GET", "/api/posture/dns-security")
         plain = self.body()["aggs"]["plain"]["aggs"]
         self.assertEqual(plain["private_local"]["filter"], PRIVATE_LOCAL)
+        over_tls = self.body()["aggs"]["over_tls"]["aggs"]
+        self.assertEqual(over_tls["private_local"]["filter"], PRIVATE_LOCAL)
         self.assertEqual(plain["unknown"]["filter"], UNKNOWN)
         self.assertEqual(
             plain["public"]["filter"], {"bool": {"must_not": [PRIVATE_LOCAL, UNKNOWN]}}

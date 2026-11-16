@@ -1159,6 +1159,12 @@ def _every_key(
     return buckets, complete
 
 
+# Each rule row's severities, which _primary_severity reads (top-signatures, posture alert response)
+SEVERITY_AGG: dict = {
+    "severity": {"terms": {"field": "suricata.alert.severity", "size": 3}}
+}
+
+
 def _primary_severity(bucket: dict) -> int:
     """The severity most of a row's alerts carry; 3 (low) when none or unreadable."""
     sev_buckets = (bucket.get("severity") or {}).get("buckets") or []
@@ -1249,7 +1255,7 @@ def handle_alerts_top_signatures(request: web.Request) -> web.Response:
     #     }
     # )
     # OLD CODE END
-    severity = {"severity": {"terms": {"field": "suricata.alert.severity", "size": 3}}}
+    # OLD CODE: severity = {"severity": {"terms": {...}}} (NET-308: SEVERITY_AGG, which posture reads)
     try:
         # missing_bucket: an unnamed alert is its own row (null), apart from "" and "Unknown"
         buckets, complete = _every_key(
@@ -1257,7 +1263,7 @@ def handle_alerts_top_signatures(request: web.Request) -> web.Response:
             from_ts,
             to_ts,
             {"field": "rule.name", "missing_bucket": True},
-            severity,
+            SEVERITY_AGG,
             "alert top signatures",
         )
     except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
