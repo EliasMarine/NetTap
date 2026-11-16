@@ -45,10 +45,16 @@ class FakeDocker:
         self.fail = fail
         self.tags = {s: tag for s in RUNNING}
         self.free_kb = free_kb
+        self.volumes: list[str] = []  # extra volumes `docker volume ls` lists
+        self.hook = None  # called with each command before it's answered
 
     async def run(self, cmd: list[str], timeout: float) -> tuple[str, int]:
         self.calls.append(cmd)
+        if self.hook is not None:
+            self.hook(cmd)
         text = " ".join(cmd)
+        if cmd[:3] == ["docker", "volume", "ls"]:
+            return ("".join(f"{v}\n" for v in self.volumes), 0)
         for step, needle in (
             ("pull", " pull "),
             ("build", " build "),
@@ -325,7 +331,7 @@ class TestRollback:
         assert "no new Zeek records" in result["error"].split("failed too")[1]
         assert "docker_opensearch-data-before-update" in result["error"]
         assert not any("volume rm" in t for t in docker.text())  # the backup is kept
-        assert up.take_unfinished()["step"] == "rollback_failed"
+        assert up.peek_unfinished()["step"] == "rollback_failed"
 
     def test_pcap_that_stops_rolls_back(self, tmp_path):
         docker = FakeDocker()
@@ -354,8 +360,22 @@ class TestRollback:
             "failed too" in result["error"]
             and "docker_opensearch-data-before-update" in result["error"]
         )
-        assert up.take_unfinished()["step"] == "rollback_failed"
-        assert up.take_unfinished() is None  # read once
+        assert up.peek_unfinished()["step"] == "rollback_failed"
+        up.clear_unfinished()
+        assert up.peek_unfinished() is None
+
+    def test_peek_keeps_the_record_until_cleared(self, tmp_path):
+        # the executor saves the record in its history before it clears it
+        up = _upgrade(FakeDocker(fail="healthy"), tmp_path=tmp_path)
+        _apply(up)
+        assert up.peek_unfinished()["step"] == "rollback_failed"
+        assert up.peek_unfinished()["step"] == "rollback_failed"
+        up.clear_unfinished()
+        assert up.peek_unfinished() is None
+
+    def test_a_record_that_isnt_an_object_is_ignored(self, tmp_path):
+        (tmp_path / "state.json").write_text("[1, 2]")
+        assert _upgrade(FakeDocker(), tmp_path=tmp_path).peek_unfinished() is None
 
 
 class TestHelpers:
@@ -476,3 +496,194 @@ class TestTheTestedReleaseIsTheOneNetTapInstalls:
             if "MALCOLM_IMAGE_TAG" in str(s.get("image", "")) + str(s.get("build", ""))
         }
         assert on_tag == set(mu.MALCOLM_SERVICES)
+
+
+BACKUP = "docker_opensearch-data-before-update"
+
+
+class TestALeftoverBackupIsNeverOverwritten:
+    """The copy step empties <data>-before-update first; after a failed rollback that volume is
+    the only copy of the old data."""
+
+    def test_a_leftover_backup_volume_stops_the_update_before_anything(self, tmp_path):
+        docker = FakeDocker()
+        docker.volumes = [BACKUP]
+        result = _apply(_upgrade(docker, tmp_path=tmp_path))
+        assert result["success"] is False
+        assert f"sudo docker volume rm {BACKUP}" in result["error"]
+        assert "Keep it until OpenSearch is running" in result["error"]
+        assert "Nothing was changed" in result["error"]
+        text = docker.text()
+        assert not any(
+            n in t for t in text for n in (" pull ", "docker stop", "cp -a", " up -d ")
+        )
+
+    def test_the_refusal_fits_a_copy_a_finished_update_couldnt_remove(self, tmp_path):
+        docker = FakeDocker()
+        docker.volumes = [BACKUP]
+        error = _apply(_upgrade(docker, tmp_path=tmp_path))["error"]
+        assert "that an earlier update left behind" in error
+        assert "attempt" not in error.split("Keep it")[0]
+
+    def test_a_copy_that_failed_part_way_is_removed_after_the_rollback(self, tmp_path):
+        """Review: the half-filled volume was kept, and the guard then refused every later update."""
+        docker = FakeDocker(fail="copy")
+        result = _apply(_upgrade(docker, tmp_path=tmp_path))
+        assert result["rolled_back"] is True
+        assert "NetTap restarted Malcolm 26.02.0" in result["error"]
+        assert docker.text()[-1] == f"docker volume rm {BACKUP}"
+        # so the next update isn't refused (the fake keeps no volumes)
+        assert _apply(_upgrade(FakeDocker(), tmp_path=tmp_path))["success"] is True
+
+    def test_a_similar_name_is_not_a_leftover(self, tmp_path):
+        docker = FakeDocker()
+        docker.volumes = [f"{BACKUP}-old"]
+        assert _apply(_upgrade(docker, tmp_path=tmp_path))["success"] is True
+
+    def test_a_failed_rollback_never_suggests_removing_the_copy(self, tmp_path):
+        from services.update_executor import _unfinished_entry
+
+        up = _upgrade(FakeDocker(fail="healthy"), tmp_path=tmp_path)
+        result = _apply(up)
+        assert "volume rm" not in result["error"]
+        entry = _unfinished_entry(up.peek_unfinished())
+        assert "volume rm" not in entry["results"][0]["error"]
+
+
+def _hold(path):
+    """Take the rules lock the way the shim's process does; returns the fd that holds it."""
+    import fcntl
+
+    fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return fd
+
+
+def _held_elsewhere(path) -> bool:
+    import fcntl
+
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return False
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(fd)
+
+
+@pytest.fixture
+def rules_dir(tmp_path, monkeypatch):
+    from services import rules_lock
+
+    path = tmp_path / "rules-state"
+    path.mkdir()
+    monkeypatch.setattr(rules_lock, "RULES_STATE_DIR", str(path))
+    return path / "rules.lock"
+
+
+class TestSuricataIsNeverRestartedUnderARuleUpdate:
+    """The update recreates suricata-live; the shim's rule update holds Suricata's rules lock."""
+
+    def test_a_running_rule_update_stops_it_before_anything(
+        self, tmp_path, rules_dir, monkeypatch
+    ):
+        monkeypatch.setattr(mu, "RULES_FREE_WAIT_S", 0)
+        fd = _hold(
+            rules_dir
+        )  # a shim that outlived the daemon: a fresh MalcolmUpgrade asks the lock
+        try:
+            docker = FakeDocker()
+            result = _apply(_upgrade(docker, tmp_path=tmp_path))
+        finally:
+            os.close(fd)
+        assert result["success"] is False
+        assert "A Suricata rule update is running" in result["error"]
+        assert "Nothing was changed" in result["error"]
+        assert not any(
+            n in t
+            for t in docker.text()
+            for n in (" pull ", "docker stop", "cp -a", " up -d ")
+        )
+
+    def test_suricata_waits_for_a_rule_update_that_started_during_the_download(
+        self, tmp_path, rules_dir
+    ):
+        docker = FakeDocker()
+        held = {}
+
+        def hook(cmd):
+            if " pull " in " ".join(cmd) and not held:
+                held["fd"] = _hold(rules_dir)
+
+                def release():
+                    docker.calls.append(["RELEASED"])
+                    os.close(held["fd"])
+
+                asyncio.get_running_loop().call_later(1.2, release)
+
+        docker.hook = hook
+        result = _apply(_upgrade(docker, tmp_path=tmp_path))
+
+        assert result["success"] is True, result
+        text = docker.text()
+        suricata_up = next(
+            i for i, t in enumerate(text) if " up -d " in t and "suricata-live" in t
+        )
+        assert text.index("RELEASED") < suricata_up
+        # OpenSearch doesn't wait for it
+        assert next(
+            i for i, t in enumerate(text) if t.endswith("--no-build opensearch")
+        ) < text.index("RELEASED")
+
+    def test_a_rollback_recreates_suricata_even_when_a_rule_update_keeps_the_lock(
+        self, tmp_path, rules_dir, monkeypatch, caplog
+    ):
+        """Review: a rollback that gave up here left OpenSearch restored and the rest stopped."""
+        monkeypatch.setattr(mu, "RULES_FOLLOW_WAIT_S", 0)
+        docker = FakeDocker()
+        held = []
+
+        def hook(
+            cmd,
+        ):  # a rule update takes the lock during the download and never lets go
+            if " pull " in " ".join(cmd) and not held:
+                held.append(_hold(rules_dir))
+
+        docker.hook = hook
+        try:
+            result = _apply(_upgrade(docker, tmp_path=tmp_path))
+        finally:
+            for fd in held:
+                os.close(fd)
+
+        # the update itself still refuses to restart Suricata under it, and rolls back
+        assert result["success"] is False and result["rolled_back"] is True
+        assert "kept its lock" in result["error"]
+        assert "rolled back to Malcolm 26.02.0" in result["error"], result["error"]
+        # the rollback recreated everything, Suricata included, on the old release
+        ups = [t for t in docker.text() if " up -d " in t and "suricata-live" in t]
+        assert len(ups) == 1 and "MALCOLM_IMAGE_TAG=26.02.0" in ups[0]
+        assert set(docker.tags.values()) == {"26.02.0"}
+        assert "rolling back Suricata anyway" in caplog.text
+
+    def test_the_lock_is_held_for_the_recreate_and_free_for_the_health_waits(
+        self, tmp_path, rules_dir
+    ):
+        rules_dir.touch()
+        for fail in ("", "healthy"):  # the upgrade, then also a rollback's recreate
+            docker = FakeDocker(fail=fail)
+            seen = {"suricata_up": [], "health": []}
+
+            def hook(cmd, seen=seen):
+                text = " ".join(cmd)
+                if " up -d " in text and "suricata-live" in cmd:
+                    seen["suricata_up"].append(_held_elsewhere(rules_dir))
+                elif "State.Health" in text or "_cluster/health" in text:
+                    seen["health"].append(_held_elsewhere(rules_dir))
+
+            docker.hook = hook
+            _apply(_upgrade(docker, tmp_path=tmp_path))
+            expected_ups = 1 if not fail else 2
+            assert seen["suricata_up"] == [True] * expected_ups, (fail, seen)
+            assert seen["health"] and not any(seen["health"]), (fail, seen)

@@ -797,8 +797,10 @@ class FakeRuleManager:
         date = self.dates[min(self.updates, len(self.dates) - 1)]
         return {"available": date is not None, "last_updated": date}
 
-    async def update_rules(self):
+    # OLD CODE: async def update_rules(self): (the executor now asks it to follow the update to its end)
+    async def update_rules(self, follow=False):
         self.updates += 1
+        self.follow = follow
         return self.result
 
 
@@ -852,9 +854,12 @@ class FakeMalcolm:
         self.targets = []
         self.gate = None
 
-    def take_unfinished(self):
-        found, self.unfinished = self.unfinished, None
-        return found
+    # the executor reads the record, saves it, and only then clears it
+    def peek_unfinished(self):
+        return self.unfinished
+
+    def clear_unfinished(self):
+        self.unfinished = None
 
     async def apply(self, target, on_step=None):
         self.targets.append(target)

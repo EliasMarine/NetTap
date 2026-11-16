@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from services import rules_lock
+from services.rules_lock import RULES_FOLLOW_WAIT_S
 from services.tshark_service import bounded_exec
 
 logger = logging.getLogger("nettap.services.suricata_rules")
@@ -347,7 +348,8 @@ class SuricataRuleManager:
     # Rule updates
     # ------------------------------------------------------------------
 
-    async def update_rules(self) -> dict[str, Any]:
+    # OLD CODE: async def update_rules(self) -> dict[str, Any]: (always gave up after RULES_UPDATE_WAIT_S)
+    async def update_rules(self, follow: bool = False) -> dict[str, Any]:
         """Update the rules the way the nightly update does (NET-191 slice 2).
 
         Runs the shim in the Suricata container, which takes the rules lock, runs Malcolm's
@@ -357,6 +359,9 @@ class SuricataRuleManager:
 
         Returns 'success', 'output' (redacted by the shim), 'reload_output' (the record's reason or
         state), 'status' (the record) and, when the wait ran out first, 'running'.
+
+        follow=True waits for the shim to exit, up to RULES_FOLLOW_WAIT_S (the Updates page's background
+        batch, which has no proxy limit); the Rules page's request gives up after RULES_UPDATE_WAIT_S.
         """
         async with self._op_lock:
             try:
@@ -383,15 +388,36 @@ class SuricataRuleManager:
             # (kept on self: asyncio holds only a weak reference to a task)
             drain = self._update_drain = asyncio.ensure_future(proc.communicate())
             try:
-                stdout, _ = await asyncio.wait_for(
-                    asyncio.shield(drain), RULES_UPDATE_WAIT_S
-                )
+                # OLD CODE START — every caller gave up after RULES_UPDATE_WAIT_S
+                # stdout, _ = await asyncio.wait_for(
+                #     asyncio.shield(drain), RULES_UPDATE_WAIT_S
+                # )
+                # OLD CODE END
+                # OLD CODE START — review: a followed update had no limit, so a wedged docker exec
+                # kept the Updates page's batch running forever
+                # stdout, _ = await (
+                #     drain
+                #     if follow
+                #     else asyncio.wait_for(asyncio.shield(drain), RULES_UPDATE_WAIT_S)
+                # )
+                # OLD CODE END
+                wait_s = RULES_FOLLOW_WAIT_S if follow else RULES_UPDATE_WAIT_S
+                stdout, _ = await asyncio.wait_for(asyncio.shield(drain), wait_s)
             except asyncio.TimeoutError:
-                logger.info("Rule update still running after %d s", RULES_UPDATE_WAIT_S)
+                # past the follow limit something may be stuck (a wedged docker exec); the Rules
+                # page's 270 s is routine
+                logger.log(
+                    logging.WARNING if follow else logging.INFO,
+                    "Rule update still running after %d s",
+                    wait_s,
+                )
                 return {
                     "success": False,
                     "running": True,
-                    "output": "The update is still running. Its result shows under "
+                    "output": f"It was still running after {wait_s // 60} minutes, so something may "
+                    "be stuck. Its result shows under Rules Suricata runs if it finishes."
+                    if follow
+                    else "The update is still running. Its result shows under "
                     "Rules Suricata runs when it finishes.",
                     "reload_output": "",
                     "status": update_record(),

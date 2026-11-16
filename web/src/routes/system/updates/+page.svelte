@@ -6,6 +6,7 @@
 		applyUpdates,
 		getUpdateStatus,
 		getUpdateHistory,
+		getUpdateHistoryBatches,
 		rollbackComponent,
 	} from '$api/updates.js';
 	import type {
@@ -13,6 +14,8 @@
 		AvailableUpdate,
 		UpdateStatus,
 		UpdateResult,
+		UpdateHistoryRow,
+		UpdateBatch,
 	} from '$api/updates.js';
 	import { onDestroy, onMount } from 'svelte';
 	import Collapsible from '$lib/components/Collapsible.svelte';
@@ -35,7 +38,8 @@
 	let availableUpdates = $state<AvailableUpdate[]>([]);
 	let lastCheck = $state('');
 	let updateStatus = $state<UpdateStatus | null>(null);
-	let updateHistory = $state<UpdateResult[]>([]);
+	// OLD CODE: let updateHistory = $state<UpdateResult[]>([]); (each row now carries a unique key)
+	let updateHistory = $state<UpdateHistoryRow[]>([]);
 	let loading = $state(true);
 	let checking = $state(false);
 	let applying = $state(false);
@@ -44,6 +48,10 @@
 	let updatesFailed = $state(false);
 	let historyFailed = $state(false);
 	let actionError = $state('');
+	// what a finished action did, when it worked (a rollback)
+	let actionNote = $state('');
+	// the daemon's results are older than its 6 h limit, or it hasn't checked since it started
+	let availableStale = false;
 	// sources the daemon couldn't reach while checking ("component-versions" = all of them)
 	let failedChecks = $state<string[]>([]);
 	// components the daemon's last check covered (null: an older daemon that doesn't say)
@@ -122,7 +130,8 @@
 		{ key: 'action', label: 'Action', sortValue: (e) => { const u = updatesMap.get(e.key); return u ? (u.applies_with ? 1 : 2) : 0; }, cell: actionCell, class: 'vtcol-action' },
 	];
 
-	const historyColumns: Column<UpdateResult>[] = [
+	// OLD CODE: const historyColumns: Column<UpdateResult>[] = [
+	const historyColumns: Column<UpdateHistoryRow>[] = [
 		{ key: 'success', label: 'Result', sortValue: (r) => (r.success ? 1 : 0), cell: historyResultCell },
 		{ key: 'component', label: 'Component' },
 		{ key: 'version', label: 'Version', sortValue: (r) => r.new_version, cell: historyVersionCell },
@@ -339,6 +348,7 @@
 		if (updatesRes.status === 'fulfilled') {
 			availableUpdates = updatesRes.value.updates;
 			lastCheck = updatesRes.value.last_check;
+			availableStale = updatesRes.value.stale === true;
 			failedChecks = updatesRes.value.failed_checks ?? [];
 			checkedComponents = updatesRes.value.checked ?? null;
 		}
@@ -363,10 +373,14 @@
 		try {
 			const res = await checkForUpdates();
 			availableUpdates = res.updates;
-			lastCheck = new Date().toISOString();
+			// OLD CODE: lastCheck = new Date().toISOString(); (the browser's clock, not the check's)
+			lastCheck = res.last_check || new Date().toISOString();
 			updatesFailed = false;
 			failedChecks = res.failed_checks ?? [];
 			checkedComponents = res.checked ?? null;
+			availableStale = false;
+			// the check may have rescanned the versions: show the same view the check used
+			void refresh.run();
 		} catch {
 			// OLD CODE START — #96: a failed check was silent
 			// // Keep existing state
@@ -434,28 +448,33 @@
 				return;
 			}
 
-			// #96: the client answers a failed request with an empty 'error' status, which
-			// read as an "Update Complete" with no results
-			if (status.state === 'error' && status.results.length === 0) {
-				updateInProgress = false;
-				actionError = "Couldn't start the update: the request failed.";
-				return;
-			}
+			// OLD CODE START — the client threw away the daemon's reason and answered an empty 'error'
+			// status; it now throws with the reason (caught below)
+			// // #96: the client answers a failed request with an empty 'error' status, which
+			// // read as an "Update Complete" with no results
+			// if (status.state === 'error' && status.results.length === 0) {
+			// 	updateInProgress = false;
+			// 	actionError = "Couldn't start the update: the request failed.";
+			// 	return;
+			// }
+			// OLD CODE END
 			updateStatus = status;
 
 			// Poll for completion if in_progress
 			if (status.state === 'in_progress') {
-				await pollUpdateStatus();
+				// OLD CODE: await pollUpdateStatus(); (it now follows this batch only)
+				await pollUpdateStatus(status.started_at);
 			} else {
 				updateInProgress = false;
 				updateCompleted = true;
 			}
-		} catch {
+		} catch (err) {
 			updateInProgress = false;
 			// OLD CODE START — #96: a failed request read as a finished update
 			// updateCompleted = true;
 			// OLD CODE END
-			actionError = "Couldn't start the update: the request failed.";
+			// OLD CODE: actionError = "Couldn't start the update: the request failed."; (the daemon's reason was lost)
+			actionError = `Couldn't start the update: ${reason(err)}`;
 		} finally {
 			applying = false;
 		}
@@ -493,7 +512,18 @@
 	// 	actionError = "Couldn't confirm the update finished: its status didn't report completion within 2 minutes.";
 	// }
 	// OLD CODE END
-	async function pollUpdateStatus() {
+	/** An error's own text, or a plain fallback. */
+	function reason(err: unknown): string {
+		return err instanceof Error && err.message ? err.message : 'the request failed.';
+	}
+
+	/**
+	 * Poll the batch that started at startedAt until it finishes. A status from another batch (a
+	 * newer one another tab started, an older one after a restart, or none) is never shown as this
+	 * one: the history says how this one ended.
+	 */
+	// OLD CODE: async function pollUpdateStatus() { (adopted whatever batch the daemon reported)
+	async function pollUpdateStatus(startedAt: string | null) {
 		const run = ++pollRun;
 		let failures = 0;
 
@@ -514,6 +544,10 @@
 			}
 			if (run !== pollRun) return;
 			failures = 0;
+			if (startedAt && status.started_at !== startedAt) {
+				await settleFromHistory(startedAt, run);
+				return;
+			}
 			updateStatus = status;
 			if (status.state === 'in_progress') continue;
 
@@ -534,6 +568,36 @@
 		actionError = "Couldn't confirm the update finished: it was still running after 3 hours. Reload the page to see where it got to.";
 	}
 
+	/** The followed batch is no longer the daemon's current one: show how the history says it ended. */
+	async function settleFromHistory(startedAt: string, run: number) {
+		let batch: UpdateBatch | undefined;
+		try {
+			batch = (await getUpdateHistoryBatches()).find((b) => b.started_at === startedAt);
+		} catch {
+			batch = undefined;
+		}
+		if (run !== pollRun) return;
+		updateInProgress = false;
+		updateCompleted = true;
+		if (batch) {
+			updateStatus = {
+				state: 'completed',
+				components: batch.components,
+				current_component: null,
+				current_step: null,
+				progress_percent: 100,
+				started_at: batch.started_at,
+				completed_at: batch.completed_at,
+				results: batch.results,
+			};
+		} else {
+			// updateStatus stays the last running one, so the title reads "Update not confirmed"
+			actionError =
+				"Couldn't confirm the update finished: NetTap lost track of it, for example after a restart. The update history below shows what it recorded.";
+		}
+		await refresh.run();
+	}
+
 	/** Show an update the daemon is running (started here, in another tab, or before a reload) and poll it. */
 	async function followUpdate(status: UpdateStatus) {
 		showUpdatePanel = true;
@@ -541,7 +605,8 @@
 		updateInProgress = true;
 		updateStatus = status;
 		selectedComponents = new Set(status.components);
-		await pollUpdateStatus();
+		// OLD CODE: await pollUpdateStatus();
+		await pollUpdateStatus(status.started_at);
 	}
 
 	async function resumeRunningUpdate() {
@@ -557,12 +622,15 @@
 
 	async function handleRollback(component: string) {
 		actionError = '';
+		actionNote = '';
 		try {
 			// OLD CODE START — #96: a failed rollback ({ result: 'error' }) was ignored
 			// await rollbackComponent(component);
 			// OLD CODE END
 			const res = await rollbackComponent(component);
-			if (res.result === 'error') actionError = `Couldn't roll back ${component}: the request failed.`;
+			// OLD CODE: if (res.result === 'error') actionError = `Couldn't roll back ${component}: the request failed.`; (the daemon sends {success, message})
+			if (res.success) actionNote = res.message || `Rolled back ${component}.`;
+			else actionError = `Couldn't roll back ${component}: ${res.message}`;
 			await refresh.run();
 		} catch {
 			// OLD CODE START — #96: a network error was swallowed
@@ -586,7 +654,10 @@
 	// });
 	// OLD CODE END
 	onMount(() => {
-		void refresh.run();
+		// OLD CODE: void refresh.run(); (nothing checked on its own, so after a restart every row read "Not checked")
+		void refresh.run().then(() => {
+			if (availableStale && !updatesFailed) void handleCheckForUpdates();
+		});
 		resumeRunningUpdate();
 		return () => {
 			pollRun++;
@@ -700,6 +771,10 @@
 	<div class="notice is-error" role="alert"><Icon name="warn" />{actionError}</div>
 {/if}
 
+{#if actionNote}
+	<div class="notice is-ok" role="status"><Icon name="check" />{actionNote}</div>
+{/if}
+
 <div class="grid">
 	<!-- Update banner -->
 	{#if updatesAvailableCount > 0 && !showUpdatePanel}
@@ -725,6 +800,7 @@
 	{/if}
 
 	<!-- Update panel -->
+	<!-- OLD CODE: the in-progress sub always said "A Malcolm update takes 10 to 40 minutes", also for a rules-only update -->
 	{#if showUpdatePanel}
 		<Card
 			class="c-12"
@@ -732,7 +808,9 @@
 			sub={updateCompleted
 				? 'What happened to each component'
 				: updateInProgress
-					? 'A Malcolm update takes 10 to 40 minutes · you can leave this page and come back'
+					? updateStatus?.components.includes('malcolm')
+						? 'A Malcolm update takes 10 to 40 minutes · you can leave this page and come back'
+						: 'You can leave this page and come back'
 					: 'Pick the components to update · NetTap backs up first and rolls back if an update fails'}
 		>
 			<!-- OLD CODE START — read "Update Complete" also when polling stopped first
@@ -753,7 +831,8 @@
 					{/if}
 				</div>
 				<ul class="rows">
-					{#each updateStatus.results as result (result.component)}
+					<!-- OLD CODE: {#each updateStatus.results as result (result.component)} (a batch shown from the history can repeat a component) -->
+					{#each updateStatus.results as result, i (i)}
 						<li class="row">
 							<span class={['row-ic', result.success ? 'is-ok' : 'is-bad']}>
 								<Icon name={result.success ? 'check' : 'close'} label={result.success ? 'Succeeded' : 'Failed'} />
@@ -926,11 +1005,12 @@
 			{#if historyFailed}
 				<div class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('the update history', true)}</div>
 			{/if}
+			<!-- OLD CODE: rowKey={(r) => `${r.component}-${r.started_at}-${r.completed_at}`} (two results for one component in a batch collided) -->
 			<DataTable
 				columns={historyColumns}
 				rows={updateHistory}
 				ariaLabel="Update history"
-				rowKey={(r) => `${r.component}-${r.started_at}-${r.completed_at}`}
+				rowKey={(r) => r.key}
 				initialSort={{ key: 'completed_at', dir: 'desc' }}
 			/>
 		</Card>

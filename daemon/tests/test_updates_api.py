@@ -38,7 +38,9 @@ def _make_mock_update_checker():
     uc = UpdateChecker.__new__(UpdateChecker)
     uc._available_updates = []
     uc._last_check = None
-    uc._checking = False
+    # OLD CODE: uc._checking = False (the flag is gone)
+    uc._check_task = None
+    uc._last_result = None
     uc._github_repo = "EliasMarine/NetTap"
     uc._cache_ttl = 6 * 3600
     uc._version_manager = None
@@ -249,8 +251,9 @@ class TestComponentRowsThePageCanAskFor(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/system/versions/nettap-web")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
+        # OLD CODE: ("docker", "latest") (a nettap/*:latest image now reads "built locally")
         self.assertEqual(
-            (data["category"], data["current_version"]), ("docker", "latest")
+            (data["category"], data["current_version"]), ("docker", "built locally")
         )
 
 
@@ -692,6 +695,18 @@ class TestApplyChecksNamesBeforeQueuing(_RealExecutorCase):
         )
         self.assertEqual(resp.status, 202)
         self.ue.start_update.assert_awaited_once()
+
+    @unittest_run_loop
+    async def test_a_repeated_name_is_queued_once(self):
+        """Two results with one component broke the Updates page's keyed lists."""
+        self.ue.start_update = AsyncMock(return_value=({"state": "in_progress"}, 202))
+        resp = await self.client.request(
+            "POST",
+            "/api/system/updates/apply",
+            json={"components": ["zeek", "suricata-rules", "zeek"]},
+        )
+        self.assertEqual(resp.status, 202)
+        self.ue.start_update.assert_awaited_once_with(["zeek", "suricata-rules"])
 
     @unittest_run_loop
     async def test_unknown_names_are_refused(self):

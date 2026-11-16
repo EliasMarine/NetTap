@@ -107,7 +107,8 @@ class TestUpdateCheckerInitialization(unittest.TestCase):
         self.assertEqual(uc._cache_ttl, 6 * 3600)
         self.assertEqual(uc._available_updates, [])
         self.assertIsNone(uc._last_check)
-        self.assertFalse(uc._checking)
+        # OLD CODE: self.assertFalse(uc._checking) (the flag is gone: a shared check task replaced it)
+        self.assertIsNone(uc._check_task)
 
     def test_custom_parameters(self):
         """Custom parameters should be stored correctly."""
@@ -193,11 +194,17 @@ class TestCheckUpdates(unittest.TestCase):
         dt = datetime.fromisoformat(uc._last_check)
         self.assertIsInstance(dt, datetime)
 
-    def test_checking_flag_reset_after_check(self):
-        """_checking flag should be False after check completes."""
+    # OLD CODE START — the _checking flag is gone (a shared check task replaced it)
+    # def test_checking_flag_reset_after_check(self):
+    #     """_checking flag should be False after check completes."""
+    #     uc = self._make_checker_with_mocks()
+    #     asyncio.run(uc.check_updates())
+    #     self.assertFalse(uc._checking)
+    # OLD CODE END
+    def test_check_task_done_after_check(self):
         uc = self._make_checker_with_mocks()
         asyncio.run(uc.check_updates())
-        self.assertFalse(uc._checking)
+        self.assertTrue(uc._check_task.done())
 
 
 class TestGetAvailable(unittest.TestCase):
@@ -217,12 +224,24 @@ class TestGetAvailable(unittest.TestCase):
             size_mb=0.0,
             requires_restart=True,
         )
-        uc._available_updates = [update]
+        # OLD CODE START — get_available serves the last finished check, not the working fields
+        # uc._available_updates = [update]
+        # uc._last_check = datetime.now(timezone.utc).isoformat()
+        # OLD CODE END
         uc._last_check = datetime.now(timezone.utc).isoformat()
+        uc._last_result = {
+            "updates": [update.to_dict()],
+            "last_check": uc._last_check,
+            "count": 1,
+            "has_updates": True,
+            "failed_checks": [],
+            "checked": [],
+        }
 
         result = asyncio.run(uc.get_available())
         self.assertEqual(result["count"], 1)
         self.assertTrue(result["has_updates"])
+        self.assertFalse(result["stale"])
 
     def test_get_available_empty_on_fresh_init(self):
         """get_available() should return empty on fresh instance."""
@@ -587,7 +606,9 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
             ),
             (TESTED_MALCOLM_TAG, "minor", None),
         )
-        self.assertIn("backed up first", malcolm["changelog"])
+        # OLD CODE: self.assertIn("backed up first", malcolm["changelog"]) (the text now says what pauses)
+        self.assertIn("backs up OpenSearch's data", malcolm["changelog"])
+        self.assertIn("capture keeps recording", malcolm["changelog"])
         self.assertEqual(
             by_component["nettap-opensearch"]["applies_with"], MALCOLM_ROW_APPLIES_WITH
         )
@@ -642,15 +663,32 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
         )
         self.assertEqual(by_component["zeek"]["update_type"], "unknown")
 
-    def test_nettap_images_skipped_others_cant_be_checked(self):
+    # OLD CODE START — nettap-grafana (pinned in NetTap's compose file) read as a failed check
+    # def test_nettap_images_skipped_others_cant_be_checked(self):
+    #     result, _ = self._run(
+    #         {"tag_name": "v26.02.0"},
+    #         [
+    #             ("nettap-web", "nettap/web:latest"),
+    #             ("nettap-grafana", "grafana/grafana:10.4.2"),
+    #         ],
+    #     )
+    #     self.assertEqual(result["failed_checks"], ["nettap-grafana"])
+    # OLD CODE END
+    def test_pinned_and_foreign_images_are_never_failed_checks(self):
+        """[G11] "Couldn't check nettap-nginx for updates" showed on every load."""
         result, _ = self._run(
             {"tag_name": "v26.02.0"},
             [
                 ("nettap-web", "nettap/web:latest"),
                 ("nettap-grafana", "grafana/grafana:10.4.2"),
+                ("nettap-nginx", "nginx:1.30-alpine"),
+                ("portainer", "portainer/portainer-ce:2.21"),  # not NetTap's
             ],
         )
-        self.assertEqual(result["failed_checks"], ["nettap-grafana"])
+        self.assertEqual(result["failed_checks"], [])
+        self.assertIn("nettap-nginx", result["checked"])
+        self.assertIn("nettap-grafana", result["checked"])
+        self.assertNotIn("portainer", result["checked"])  # reads "Not checked"
 
     def test_unparseable_tag_cant_be_checked(self):
         result, _ = self._run(
@@ -684,11 +722,24 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
                 ("nettap-nginx", "nginx:stable-alpine"),
             ],
         )
+        # OLD CODE START — nettap-nginx wasn't checked (and was a failed check)
+        # self.assertEqual(
+        #     result["checked"],
+        #     ["geoip-db", "logstash", "nettap-daemon", "nettap-web", "suricata-rules"],
+        # )
+        # self.assertNotIn("nettap-nginx", result["checked"])
+        # OLD CODE END
         self.assertEqual(
             result["checked"],
-            ["geoip-db", "logstash", "nettap-daemon", "nettap-web", "suricata-rules"],
+            [
+                "geoip-db",
+                "logstash",
+                "nettap-daemon",
+                "nettap-nginx",
+                "nettap-web",
+                "suricata-rules",
+            ],
         )
-        self.assertNotIn("nettap-nginx", result["checked"])
 
 
 class TestNetTapImagesFollowTheRelease(unittest.TestCase):
@@ -701,7 +752,8 @@ class TestNetTapImagesFollowTheRelease(unittest.TestCase):
         async def fetch(url):
             if isinstance(release, Exception):
                 raise release
-            return release if "EliasMarine" in url else {}
+            # OLD CODE: return release if "EliasMarine" in url else {} (the check reads the releases list now)
+            return [release] if "EliasMarine" in url and release else {}
 
         async def none():
             return None
@@ -741,7 +793,8 @@ class TestNetTapUpdatesStayApplicable(unittest.TestCase):
         from services.update_checker import NETTAP_APPLIES_WITH
 
         async def fetch(url):
-            return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"}
+            # OLD CODE: return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"} (releases list now)
+            return [{"tag_name": "v99.0.0", "html_url": "https://github.com/x"}]
 
         uc = UpdateChecker()
         uc._fetch_json = fetch
@@ -965,11 +1018,34 @@ class TestGeoIPDatabaseInLogstash(unittest.TestCase):
         self.assertEqual(failed, [])
         self.assertIsNone(argv)
 
+    # OLD CODE START — applicable with or without geoipupdate (the daemon image has none, so it failed)
+    # def test_stale_local_database_stays_applicable(self):
+    #     update, _, argv = self._check(mtime=self.G11_DB_MTIME, local_db=True)
+    #     self.assertEqual(update.component, "geoip-db")
+    #     self.assertIsNone(update.applies_with)
+    #     self.assertIsNone(argv)
+    # OLD CODE END
     def test_stale_local_database_stays_applicable(self):
-        update, _, argv = self._check(mtime=self.G11_DB_MTIME, local_db=True)
+        from unittest.mock import patch
+
+        with patch(
+            "services.update_checker.shutil.which", return_value="/usr/bin/geoipupdate"
+        ):
+            update, _, argv = self._check(mtime=self.G11_DB_MTIME, local_db=True)
         self.assertEqual(update.component, "geoip-db")
         self.assertIsNone(update.applies_with)
         self.assertIsNone(argv)
+        self.assertEqual(
+            update.release_date, ""
+        )  # no release date is known (was the check time)
+
+    def test_stale_local_database_without_geoipupdate_says_how_to_update_it(self):
+        from unittest.mock import patch
+
+        with patch("services.update_checker.shutil.which", return_value=None):
+            update, _, _ = self._check(mtime=self.G11_DB_MTIME, local_db=True)
+        self.assertIn("geoipupdate isn't installed", update.applies_with)
+        self.assertIn("GeoLite2-City.mmdb", update.applies_with)
 
 
 class TestEveryApplicableRowIsAcceptedByTheApplyApi(unittest.TestCase):
@@ -1005,7 +1081,8 @@ class TestEveryApplicableRowIsAcceptedByTheApplyApi(unittest.TestCase):
         async def fetch(url):
             if "idaholab/Malcolm" in url:
                 return {"tag_name": f"v{TESTED_MALCOLM_TAG}"}
-            return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"}
+            # OLD CODE: return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"} (releases list now)
+            return [{"tag_name": "v99.0.0", "html_url": "https://github.com/x"}]
 
         month_old = datetime.now(timezone.utc).timestamp() - 30 * 86400
         with tempfile.TemporaryDirectory() as tmp:
@@ -1017,6 +1094,11 @@ class TestEveryApplicableRowIsAcceptedByTheApplyApi(unittest.TestCase):
             uc.set_version_manager(VM())
             # a stale rules file and a stale GeoIP file: both exist, both a month old
             with (
+                # a box whose daemon has geoipupdate: the local GeoIP row is applicable there
+                patch(
+                    "services.update_checker.shutil.which",
+                    return_value="/usr/bin/geoipupdate",
+                ),
                 patch("os.path.exists", return_value=True),
                 patch("os.path.getmtime", return_value=month_old),
                 patch(

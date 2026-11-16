@@ -122,16 +122,23 @@ class TestNettapVersionConstant(unittest.TestCase):
         """NETTAP_VERSION should be a string."""
         self.assertIsInstance(NETTAP_VERSION, str)
 
-    def test_version_format(self):
-        """NETTAP_VERSION should follow semver format."""
-        parts = NETTAP_VERSION.split(".")
-        self.assertEqual(len(parts), 3)
-        for part in parts:
-            self.assertTrue(part.isdigit())
+    # OLD CODE START — X.Y.Z only, and pinned to "0.4.0": the release is v0.4.0-alpha.2
+    # def test_version_format(self):
+    #     """NETTAP_VERSION should follow semver format."""
+    #     parts = NETTAP_VERSION.split(".")
+    #     self.assertEqual(len(parts), 3)
+    #     for part in parts:
+    #         self.assertTrue(part.isdigit())
+    #
+    # def test_version_is_0_4_0(self):
+    #     """NETTAP_VERSION should be 0.4.0 for Phase 4."""
+    #     self.assertEqual(NETTAP_VERSION, "0.4.0")
+    # OLD CODE END
+    def test_version_is_a_release_tag_the_update_check_can_order(self):
+        from services.update_checker import _release_key
 
-    def test_version_is_0_4_0(self):
-        """NETTAP_VERSION should be 0.4.0 for Phase 4."""
-        self.assertEqual(NETTAP_VERSION, "0.4.0")
+        self.assertIsNotNone(_release_key(NETTAP_VERSION))
+        self.assertFalse(NETTAP_VERSION.startswith("v"))  # the tag without its "v"
 
 
 class TestScanVersions(unittest.TestCase):
@@ -540,6 +547,13 @@ class TestEveryRowIsItsOwn(unittest.TestCase):
         self.assertEqual(len(rows), 7)  # six containers and the malcolm row
         self.assertIn("nettap-dashboards-helper", rows)
         self.assertNotIn("suricata", rows)  # free for the package row
+
+    def test_nettap_images_say_they_are_built_locally(self):
+        """[G11] nettap-web read "latest", as if it were the newest; it's built on the box."""
+        rows = self._rows(self.LISTING)
+        self.assertEqual(rows["nettap-web"].current_version, "built locally")
+        self.assertEqual(rows["nettap-web"].details["image"], "nettap/web:latest")
+        self.assertEqual(rows["nettap-zeek-live"].current_version, "26.02.0")
 
     def test_the_malcolm_row_is_the_release_they_share(self):
         malcolm = self._rows(self.LISTING)["malcolm"]
