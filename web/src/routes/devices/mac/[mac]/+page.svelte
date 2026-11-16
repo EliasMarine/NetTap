@@ -32,7 +32,8 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import { domainHref } from '$lib/stores/lan';
-	import { alertsHrefForSignature, chartTime as timeLabel, DRILL_RANGES, fmt, rangeWindow, startRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, chartTime as timeLabel, DRILL_RANGES, fmt, rangeWindow, startRange, type DrillRangeValue } from '$lib/utils/drilldown'; (the rule page)
+	import { chartTime as timeLabel, DRILL_RANGES, fmt, rangeWindow, ruleHref, startRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	// OLD CODE: import DeviceCustomise from './DeviceCustomise.svelte'; (NET-201: the IP device page uses it too)
@@ -273,7 +274,8 @@
 {#snippet dnsCountCell(q: DnsQuery)}{fmt(q.count)}{/snippet}
 {#snippet sevCell(a: TrafficAlert)}<SeverityPill level={alertLevel(a.severity)} />{/snippet}
 <!-- OLD CODE: {#snippet sigCell(a: TrafficAlert)}<span class="sig trunc" title={a.signature}>{a.signature}</span>{/snippet} (slice 2a: not a link) -->
-{#snippet sigCell(a: TrafficAlert)}<a class="sig trunc" href={alertsHrefForSignature(a.signature)} title={a.signature}>{a.signature}</a>{/snippet}
+<!-- OLD CODE: {#snippet sigCell(a: TrafficAlert)}<a class="sig trunc" href={alertsHrefForSignature(a.signature)} …{/snippet} (the rule page explains the rule and lists its devices) -->
+{#snippet sigCell(a: TrafficAlert)}<a class="sig trunc" href={ruleHref(a.signature)} title={a.signature}>{a.signature}</a>{/snippet}
 {#snippet timeCell(a: TrafficAlert)}<span class="mono">{formatTime(a.timestamp)}</span>{/snippet}
 
 <svelte:head>

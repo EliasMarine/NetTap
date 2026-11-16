@@ -566,15 +566,30 @@ describe('Alerts — card states', () => {
 		expectNoNestedInteractive(container);
 	});
 
-	it('a top signature filters the list, and selecting it again clears the filter', async () => {
+	// OLD CODE START — a top signature's name opens its rule page and its count the list; the row is no button
+	// it('a top signature filters the list, and selecting it again clears the filter', async () => {
+	// 	succeedAll();
+	// 	render(Page);
+	// 	await flush();
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by ET SCAN Port sweep' }));
+	// 	expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ signature: 'ET SCAN Port sweep', page: 1 }));
+	// 	await flush();
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Clear the filter for ET SCAN Port sweep' }));
+	// 	expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ signature: undefined }));
+	// });
+	// OLD CODE END
+	it("a top signature's name opens its rule page, and its count the list, over the card's window", async () => {
 		succeedAll();
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by ET SCAN Port sweep' }));
-		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ signature: 'ET SCAN Port sweep', page: 1 }));
-		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Clear the filter for ET SCAN Port sweep' }));
-		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ signature: undefined }));
+		const counted = vi.mocked(getAlertTopSignatures).mock.calls[0][0]!;
+		const name = screen.getByRole('link', { name: 'ET SCAN Port sweep' });
+		const page = new URL(name.getAttribute('href')!, 'http://localhost');
+		expect(page.pathname).toBe('/alerts/rule/ET%20SCAN%20Port%20sweep');
+		expect(Object.fromEntries(page.searchParams)).toEqual({ from: counted.from, to: counted.to, range: '24h' });
+		const count = within(name.closest('tr')!).getByRole('link', { name: '12' });
+		expect(Object.fromEntries(new URL(count.getAttribute('href')!, 'http://localhost').searchParams)).toEqual({ signature: 'ET SCAN Port sweep', from: counted.from, to: counted.to, range: '24h', count: '12' });
+		expect(screen.queryByRole('button', { name: /Filter alerts by/ })).not.toBeInTheDocument();
 	});
 });
 
@@ -631,7 +646,8 @@ describe('Alerts — drawer', () => {
 		expect(within(drawer).getByText('2900001')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /A device contacted a server/ })).toHaveAttribute('aria-current', 'true');
 		// NET-160 slice 2a: the signature opens the alerts list for it (no count here, so no window)
-		expect(within(drawer).getByRole('link', { name: 'ET MALWARE CnC Checkin' })).toHaveAttribute('href', '/alerts?signature=ET+MALWARE+CnC+Checkin');
+		// OLD CODE: …toHaveAttribute('href', '/alerts?signature=ET+MALWARE+CnC+Checkin'); (the rule page now)
+		expect(within(drawer).getByRole('link', { name: 'ET MALWARE CnC Checkin' })).toHaveAttribute('href', '/alerts/rule/ET%20MALWARE%20CnC%20Checkin');
 	});
 
 	it('says there is no advice instead of inventing one, and titles by category without a description', async () => {
@@ -907,18 +923,20 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		expect(listCalls().at(-1)).toMatchObject({ severity: 1, signature: 'ET SCAN Nmap', ip: undefined });
 	});
 
-	it('a top-signature toggle writes signature to the URL, and the list follows it', async () => {
-		succeedAll();
-		render(Page);
-		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by ET SCAN Port sweep' }));
-		await flush();
-		expect(nav.url.searchParams.get('signature')).toBe('ET SCAN Port sweep');
-		expect(listCalls().at(-1)).toMatchObject({ signature: 'ET SCAN Port sweep', page: 1 });
-		await fireEvent.click(screen.getByRole('button', { name: 'Clear the filter for ET SCAN Port sweep' }));
-		await flush();
-		expect(nav.url.searchParams.has('signature')).toBe(false);
-	});
+	// OLD CODE START — a top signature is links now, not a toggle (its count opens the list with signature= in the URL)
+	// it('a top-signature toggle writes signature to the URL, and the list follows it', async () => {
+	// 	succeedAll();
+	// 	render(Page);
+	// 	await flush();
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by ET SCAN Port sweep' }));
+	// 	await flush();
+	// 	expect(nav.url.searchParams.get('signature')).toBe('ET SCAN Port sweep');
+	// 	expect(listCalls().at(-1)).toMatchObject({ signature: 'ET SCAN Port sweep', page: 1 });
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Clear the filter for ET SCAN Port sweep' }));
+	// 	await flush();
+	// 	expect(nav.url.searchParams.has('signature')).toBe(false);
+	// });
+	// OLD CODE END
 
 	it('a range pill writes range and drops a Custom window', async () => {
 		at(`?from=${FROM}&to=${TO}&range=24h`);
@@ -1065,7 +1083,9 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		const first = listCalls()[0];
 		const href = screen.getByRole('link', { name: 'ET SCAN Nmap' }).getAttribute('href')!;
 		const q = new URL(href, 'http://localhost').searchParams;
-		expect([q.get('signature'), q.get('from'), q.get('to'), q.get('range')]).toEqual(['ET SCAN Nmap', first.from, first.to, '24h']);
+		// OLD CODE: expect([q.get('signature'), q.get('from'), q.get('to'), q.get('range')]).toEqual(['ET SCAN Nmap', first.from, first.to, '24h']); (the rule page now)
+		expect(new URL(href, 'http://localhost').pathname).toBe('/alerts/rule/ET%20SCAN%20Nmap');
+		expect([q.get('from'), q.get('to'), q.get('range')]).toEqual([first.from, first.to, '24h']);
 		expectNoNestedInteractive(container);
 	});
 
@@ -1163,7 +1183,8 @@ describe('Alerts — source, destination, rule-name links and 6h (NET-160 slice 
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
 		const href = screen.getByRole('link', { name: 'A shown name' }).getAttribute('href')!;
-		expect(new URL(href, 'http://localhost').searchParams.get('signature')).toBe('ET SCAN Raw rule');
+		// OLD CODE: expect(new URL(href, 'http://localhost').searchParams.get('signature')).toBe('ET SCAN Raw rule'); (the rule page, by rule.name)
+		expect(new URL(href, 'http://localhost').pathname).toBe('/alerts/rule/ET%20SCAN%20Raw%20rule');
 		expect(screen.queryByRole('link', { name: 'No rule here' })).not.toBeInTheDocument();
 		expect(within(screen.getByRole('table', { name: /Alerts, newest first/ })).getByText('No rule here')).toBeInTheDocument();
 		expectNoNestedInteractive(container);
@@ -1178,7 +1199,8 @@ describe('Alerts — source, destination, rule-name links and 6h (NET-160 slice 
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: /Shown category/ }));
 		let drawer = screen.getByRole('complementary', { name: 'Alert details' });
-		expect(within(drawer).getByRole('link', { name: 'A shown name' })).toHaveAttribute('href', '/alerts?signature=ET+SCAN+Raw+rule');
+		// OLD CODE: …toHaveAttribute('href', '/alerts?signature=ET+SCAN+Raw+rule'); (the rule page, by rule.name)
+		expect(within(drawer).getByRole('link', { name: 'A shown name' })).toHaveAttribute('href', '/alerts/rule/ET%20SCAN%20Raw%20rule');
 		await fireEvent.click(screen.getByRole('button', { name: /Bare category/ }));
 		drawer = screen.getByRole('complementary', { name: 'Alert details' });
 		expect(within(drawer).getByText('No rule here')).toBeInTheDocument();
@@ -1270,21 +1292,32 @@ describe('Alerts — Suricata category (NET-160 slice 2b-2)', () => {
 		expect(listCalls().at(-1)).toMatchObject({ no_rule_name: undefined, severity: 1, from: FROM, to: TO });
 	});
 
-	it("a Top signatures row opens exactly its count: that signature over the card's window, every other filter cleared", async () => {
+	// OLD CODE START — the row was a toggle; its count is a link to the same exact list now
+	// it("a Top signatures row opens exactly its count: that signature over the card's window, every other filter cleared", async () => {
+	// 	at(`?suricata_category=${encodeURIComponent(CAT)}&src=192.168.1.42`);
+	// 	succeedAll();
+	// 	render(Page);
+	// 	await flush();
+	// 	const counted = vi.mocked(getAlertTopSignatures).mock.calls[0][0]!;
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by ET SCAN Port sweep' }));
+	// 	await flush();
+	// 	expect(Object.fromEntries(nav.url.searchParams)).toEqual({ signature: 'ET SCAN Port sweep', from: counted.from, to: counted.to, range: '24h' });
+	// 	expect(listCalls().at(-1)).toMatchObject({ signature: 'ET SCAN Port sweep', suricata_category: undefined, src: undefined, from: counted.from, to: counted.to, page: 1 });
+	// 	// selecting it again still clears only the signature
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Clear the filter for ET SCAN Port sweep' }));
+	// 	await flush();
+	// 	expect(nav.url.searchParams.has('signature')).toBe(false);
+	// 	expect([nav.url.searchParams.get('from'), nav.url.searchParams.get('to')]).toEqual([counted.from, counted.to]);
+	// });
+	// OLD CODE END
+	it("a Top signatures count opens exactly it: that signature over the card's window, every other filter cleared", async () => {
 		at(`?suricata_category=${encodeURIComponent(CAT)}&src=192.168.1.42`);
 		succeedAll();
 		render(Page);
 		await flush();
 		const counted = vi.mocked(getAlertTopSignatures).mock.calls[0][0]!;
-		await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by ET SCAN Port sweep' }));
-		await flush();
-		expect(Object.fromEntries(nav.url.searchParams)).toEqual({ signature: 'ET SCAN Port sweep', from: counted.from, to: counted.to, range: '24h' });
-		expect(listCalls().at(-1)).toMatchObject({ signature: 'ET SCAN Port sweep', suricata_category: undefined, src: undefined, from: counted.from, to: counted.to, page: 1 });
-		// selecting it again still clears only the signature
-		await fireEvent.click(screen.getByRole('button', { name: 'Clear the filter for ET SCAN Port sweep' }));
-		await flush();
-		expect(nav.url.searchParams.has('signature')).toBe(false);
-		expect([nav.url.searchParams.get('from'), nav.url.searchParams.get('to')]).toEqual([counted.from, counted.to]);
+		const count = within(screen.getByRole('link', { name: 'ET SCAN Port sweep' }).closest('tr')!).getByRole('link', { name: '12' });
+		expect(Object.fromEntries(new URL(count.getAttribute('href')!, 'http://localhost').searchParams)).toEqual({ signature: 'ET SCAN Port sweep', from: counted.from, to: counted.to, range: '24h', count: '12' });
 	});
 
 	it("links a row's category to its page over the list's window only when rule.category holds it", async () => {
@@ -1379,10 +1412,16 @@ describe('Alerts — exact top lists (NET-160)', () => {
 		await fireEvent.click(plain[1].closest('tr')!);
 		await flush();
 		expect(nav.url.href).toBe(before);
-		await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by Unknown' }));
-		await flush();
-		expect(nav.url.searchParams.get('signature')).toBe('Unknown');
-		expect(listCallsOf().at(-1)).toMatchObject({ signature: 'Unknown', page: 1 });
+		// OLD CODE START — a literal "Unknown" filtered the list; it is a rule name, so it opens its page and its count the list
+		// await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by Unknown' }));
+		// await flush();
+		// expect(nav.url.searchParams.get('signature')).toBe('Unknown');
+		// expect(listCallsOf().at(-1)).toMatchObject({ signature: 'Unknown', page: 1 });
+		// OLD CODE END
+		for (const cell of plain) expect(within(cell.closest('tr')!).queryAllByRole('link')).toHaveLength(0);
+		const unknown = within(sigTable()).getByRole('link', { name: 'Unknown' });
+		expect(new URL(unknown.getAttribute('href')!, 'http://localhost').pathname).toBe('/alerts/rule/Unknown');
+		expect(new URL(within(unknown.closest('tr')!).getByRole('link', { name: '1' }).getAttribute('href')!, 'http://localhost').searchParams.get('signature')).toBe('Unknown');
 		expectNoNestedInteractive(container);
 	});
 
@@ -1544,8 +1583,9 @@ describe('Alerts — activity (NET-191)', () => {
 
 		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
 		const table = screen.getByRole('table', { name: /Alerts, newest first/ });
+		// OLD CODE: …toEqual({ signature: 'ET INFO STUN Binding Request', activity: 'true', … }) (the rule page, on the activity list)
+		expect(new URL(within(table).getByRole('link', { name: 'ET INFO STUN Binding Request' }).getAttribute('href')!, 'http://localhost').pathname).toBe('/alerts/rule/ET%20INFO%20STUN%20Binding%20Request');
 		expect(params(within(table).getByRole('link', { name: 'ET INFO STUN Binding Request' }).getAttribute('href'))).toEqual({
-			signature: 'ET INFO STUN Binding Request',
 			activity: 'true',
 			from: FROM,
 			to: TO,

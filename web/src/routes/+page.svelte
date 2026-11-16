@@ -35,7 +35,7 @@
 	// OLD CODE: import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts'; (NET-228: the trend reads the timeline)
 	import { getAlertTimeline, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
 	// OLD CODE: import { chartTime, connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: the chart drills into a moment)
-	import { chartTime, connLogsHref, DRILL_RANGES, fmt, momentHref, NO_EXACT_ALERT_LIST, notInBars as notInBarsText, serviceBars, serviceLabel, smartAlertHref, startRange, windowQuery, withCount, type BandwidthChart, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	import { chartTime, connLogsHref, DRILL_RANGES, fmt, momentHref, NO_EXACT_ALERT_LIST, notInBars as notInBarsText, serviceBars, serviceLabel, ruleHref, smartAlertHref, startRange, windowQuery, withCount, type BandwidthChart, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	// OLD CODE: import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts'; (NET-228)
 	import type { AlertTimelineBucket, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { compareHalves, trendWindow, withCoverage, type SlotValue, type TrendWindow } from '$lib/utils/window-trend';
@@ -1000,11 +1000,20 @@ OLD CODE END -->
 						{@const exact = smartWindow ? smartAlertHref(sa.key, smartWindow, undefined, sa.activity) : null}
 						<!-- OLD CODE: <a class="top-cat" href="/threats"> (slice 2b-1: the ×N opens the alerts it counts) -->
 						<!-- OLD CODE: href={exact ?? undefined} (section D: the ×N link carries its figure) -->
+						<!-- OLD CODE START — the whole tile opened the list; the rule now opens its own page and the ×N the list
 						<svelte:element this={exact ? 'a' : 'div'} class="top-cat" href={exact ? withCount(exact, sa.count) : undefined} title={exact ? undefined : NO_EXACT_ALERT_LIST}>
 							<span class="group-name"><SeverityPill level={smartLevel(sa.severity)} /><span>{sa.category_label}</span></span>
 							<b class="num">&times;{formatNumber(sa.count)}</b>
 							<p class="sig">{sa.signature}</p>
 						</svelte:element>
+						OLD CODE END -->
+						<div class="top-cat">
+							<span class="group-name"><SeverityPill level={smartLevel(sa.severity)} /><span>{sa.category_label}</span></span>
+							{#if exact}<a class="num" href={withCount(exact, sa.count)} title="These alerts in the list">&times;{formatNumber(sa.count)}</a>
+							{:else}<b class="num" title={NO_EXACT_ALERT_LIST}>&times;{formatNumber(sa.count)}</b>{/if}
+							{#if sa.key?.rule_name && smartWindow}<a class="sig" href={ruleHref(sa.key.rule_name, smartWindow, { activity: sa.activity })} title="What this rule means and which devices it involved">{sa.signature}</a>
+							{:else}<p class="sig">{sa.signature}</p>{/if}
+						</div>
 					{/each}
 				</div>
 				<a href="/threats" class="link">View threat intelligence</a>
@@ -1046,7 +1055,10 @@ OLD CODE END -->
 	.groups { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); margin-top: var(--sp-4); }
 	.groups .top-cats { align-self: stretch; margin-top: 0; }
 	/* OLD CODE: a.top-cat { … } (slice 2b-1: a row with no exact list is a div, laid out the same) */
+	/* OLD CODE: a.top-cat:hover { background: var(--row-hover); } (the tile is no link now; its rule and ×N are) */
 	.top-cat { text-decoration: none; color: inherit; border-radius: var(--r-md); padding: var(--sp-1) var(--sp-2); margin: 0 calc(var(--sp-2) * -1); }
-	a.top-cat:hover { background: var(--row-hover); }
+	.top-cat a.num { font-weight: 700; color: var(--text-1); }
+	/* As system.css's .top-cat p, as a link */
+	.top-cat a.sig { grid-column: 1 / -1; font-size: var(--text-xs); color: var(--text-2); overflow-wrap: anywhere; }
 	.group-name { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
 </style>

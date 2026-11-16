@@ -67,6 +67,7 @@
 		partialListNote,
 		pickedTotal,
 		pickWindow,
+		ruleHref,
 		startRange,
 		suricataCategoryHref,
 		windowQuery,
@@ -1099,16 +1100,18 @@
 	 * A top signature opens exactly its row's count: that signature alone, over the window the
 	 * counts came from, every other filter cleared. Selecting it again clears only the signature.
 	 */
-	async function filterBySignature(sig: string) {
-		if (signatureFilter === sig) {
-			await setListParams({ signature: null });
-		} else {
-			const { from, to, range } = signaturesWindow;
-			const q = new URLSearchParams({ signature: sig, from, to, range });
-			await goto(`/alerts?${q.toString()}`, { keepFocus: true, noScroll: true });
-		}
-		scrollToList();
-	}
+	// OLD CODE START — a top signature's name opens the rule page, its count the list (links, not a row action)
+	// async function filterBySignature(sig: string) {
+	// 	if (signatureFilter === sig) {
+	// 		await setListParams({ signature: null });
+	// 	} else {
+	// 		const { from, to, range } = signaturesWindow;
+	// 		const q = new URLSearchParams({ signature: sig, from, to, range });
+	// 		await goto(`/alerts?${q.toString()}`, { keepFocus: true, noScroll: true });
+	// 	}
+	// 	scrollToList();
+	// }
+	// OLD CODE END
 
 	function clearSignatureFilter() {
 		void setListParams({ signature: null });
@@ -1406,7 +1409,8 @@ OLD CODE END -->
 <!-- OLD CODE: {#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow)} … (NET-191: a row of the activity list opened the counted list, which leaves it out) -->
 {#snippet signatureCell(a: Alert)}
 	<!-- OLD CODE: …{:else}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/if} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
-	{#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow, { activity: activityFilter })} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else if a.alert?.signature}<span class="mono" title={a.alert.signature}>{a.alert.signature}</span>{:else}<span class="dim">No rule name</span>{/if}
+	<!-- OLD CODE: {#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow, { activity: activityFilter })} … (the rule page explains the rule and lists its devices; the list is one click from it) -->
+	{#if a.rule?.name}<a class="mono" href={ruleHref(a.rule.name, shownWindow, { activity: activityFilter })} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else if a.alert?.signature}<span class="mono" title={a.alert.signature}>{a.alert.signature}</span>{:else}<span class="dim">No rule name</span>{/if}
 {/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -1428,9 +1432,14 @@ OLD CODE END -->
 	</span>
 {/snippet}
 <!-- OLD CODE: {#snippet sigNameCell(s: AlertSignature)}<span class="mono">{s.signature}</span>{/snippet} (a null or empty rule name reads as such) -->
+<!-- OLD CODE START — the row filtered the list; the name now opens the rule page and the count the list
 {#snippet sigNameCell(s: AlertSignature)}{#if s.signature}<span class="mono">{s.signature}</span>{:else}<span class="dim">No rule name</span>{/if}{/snippet}
-{#snippet sigSeverityCell(s: AlertSignature)}<SeverityPill level={alertLevel(s.severity)} />{/snippet}
 {#snippet sigCountCell(s: AlertSignature)}{fmt(s.count)}{/snippet}
+OLD CODE END -->
+<!-- A null or empty rule name opens neither: the list drops signature="" and the rule page needs a name -->
+{#snippet sigNameCell(s: AlertSignature)}{#if s.signature}<a class="mono" href={ruleHref(s.signature, signaturesWindow)} title="What this rule means and which devices it involved">{s.signature}</a>{:else}<span class="dim">No rule name</span>{/if}{/snippet}
+{#snippet sigSeverityCell(s: AlertSignature)}<SeverityPill level={alertLevel(s.severity)} />{/snippet}
+{#snippet sigCountCell(s: AlertSignature)}{#if s.signature}<a href={withCount(alertsHrefForSignature(s.signature, signaturesWindow), s.count)} title="These alerts in the list, over the same window">{fmt(s.count)}</a>{:else}{fmt(s.count)}{/if}{/snippet}
 
 <svelte:head>
 	<title>Alerts | NetTap</title>
@@ -1725,7 +1734,8 @@ OLD CODE END -->
 	</Card>
 
 	<!-- OLD CODE: sub={failed.signatures ? 'Check failed' : `${topSignatures.length} rules · alerts per rule · select one to filter the list`} (NET-160: a partial list says so) -->
-	<Card class="c-8" title="Top signatures" sub={failed.signatures ? 'Check failed' : `${topPartial.signatures ?? `${topSignatures.length} rules`} · alerts per rule · select one to filter the list`}>
+	<!-- OLD CODE: …· alerts per rule · select one to filter the list`}> (a rule opens its own page) -->
+	<Card class="c-8" title="Top signatures" sub={failed.signatures ? 'Check failed' : `${topPartial.signatures ?? `${topSignatures.length} rules`} · alerts per rule · select a rule to see what it means`}>
 		{#snippet actions()}
 			<SearchField id="alerts-signature-search" label="Search signatures" placeholder="Search signatures…" size="toolbar" bind:value={signatureSearch} />
 		{/snippet}
@@ -1737,15 +1747,13 @@ OLD CODE END -->
 			<CardState state="empty" title="No signatures found" message={signatureSearch ? 'No rule matches that search.' : 'Rules appear here once Suricata reports alerts in this window.'} />
 		{:else}
 			<!-- OLD CODE: rowKey={(s) => s.signature} onrowactivate={(s) => filterBySignature(s.signature)} (a null or empty rule name is a plain row with its own key) -->
+			<!-- OLD CODE: onrowactivate={(s) => s.signature && filterBySignature(s.signature)} rowActivatable={(s) => !!s.signature} rowLabel={(s) => (signatureFilter === s.signature ? `Clear the filter for ${s.signature}` : `Filter alerts by ${s.signature}`)} (the name and the count are links now, so a row is no button) -->
 			<DataTable
 				columns={signatureColumns}
 				rows={filteredSignatures}
 				ariaLabel="Top signatures"
 				rowKey={sigRowKey}
 				initialSort={{ key: 'count', dir: 'desc' }}
-				onrowactivate={(s) => s.signature && filterBySignature(s.signature)}
-				rowActivatable={(s) => !!s.signature}
-				rowLabel={(s) => (signatureFilter === s.signature ? `Clear the filter for ${s.signature}` : `Filter alerts by ${s.signature}`)}
 				selectedKey={signatureFilter || undefined}
 			/>
 		{/if}

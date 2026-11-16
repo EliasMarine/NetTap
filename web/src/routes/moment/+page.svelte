@@ -27,7 +27,7 @@
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import {
 		alertsHrefForSignature, bucketFor, chartTime, connLogsHref, customRange, DRILL_RANGES, fmt, formatWhen, linkedCount,
-		momentHref, notInBars, RECORDS_CHANGE, serviceBars, serviceLabel, serviceLogsHref, windowQuery, windowWords, withCount, type BandwidthChart, type DrillWindow,
+		momentHref, notInBars, RECORDS_CHANGE, ruleHref, serviceBars, serviceLabel, serviceLogsHref, windowQuery, windowWords, withCount, type BandwidthChart, type DrillWindow,
 	} from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { recorded, upDownLocal } from '$lib/utils/up-down';
@@ -408,7 +408,8 @@
 				<ul class="rows">
 					{#each alerts.alerts as a (a._id)}
 						<li>
-							<a class="row" href={alertsHrefForSignature(a.rule?.name || null, exact)}>
+							<!-- OLD CODE: <a class="row" href={alertsHrefForSignature(a.rule?.name || null, exact)}> (a named rule opens its page; no rule name keeps the list) -->
+							<a class="row" href={a.rule?.name ? ruleHref(a.rule.name, exact) : alertsHrefForSignature(null, exact)}>
 								<SeverityPill level={suricataLevel(a.alert?.severity)} />
 								<span class="what">{a.alert?.signature ?? a.rule?.name ?? 'Alert with no rule name'}</span>
 								<span class="when">{formatWhen(a.timestamp)}</span>
