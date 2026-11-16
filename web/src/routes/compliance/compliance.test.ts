@@ -313,11 +313,20 @@ describe('Security Posture page when an input fails', () => {
 		unmount();
 
 		stubDaemon({ '/api/posture/alert-response': 'http' });
-		render(CompliancePage);
+		const second = render(CompliancePage);
 		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
 		const card = categoryCard('Alert response');
 		expect(within(card).getAllByText("Couldn't load alert follow-up: the request failed.").length).toBeGreaterThan(0);
 		expect(within(card).queryByText('0%')).not.toBeInTheDocument();
+		second.unmount();
+
+		// review M2: 5 investigated of 2 needing scored 250%, "Good"; the reply is refused instead
+		stubDaemon({}, { ...DAEMON_REPLIES, '/api/posture/alert-response': RESPONSE(2, 5) });
+		render(CompliancePage);
+		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		const refused = categoryCard('Alert response');
+		await vi.waitFor(() => expect(within(refused).getAllByText(/^Couldn't load alert follow-up/).length).toBeGreaterThan(0));
+		expect(within(refused).queryByText('250%')).not.toBeInTheDocument();
 	});
 });
 

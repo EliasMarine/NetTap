@@ -169,7 +169,7 @@ export const START_WITH_SHARE = 50;
 export function encryptionReport(data: ReportData): Report {
 	const { inputs, category, names } = data;
 	// OLD CODE: const enc = inputs.protocols.encryption ?? { eligible: 0, encrypted: 0 }; (NET-308)
-	const enc = inputs.protocols.encryption ?? { eligible: 0, encrypted: 0, one_way: 0 };
+	const enc = { eligible: 0, encrypted: 0, one_way: 0, ...inputs.protocols.encryption };
 	const detail = data.extras.encryption;
 	const failed = data.failed.includes('encryption');
 	const u = detail?.unencrypted;
@@ -285,7 +285,8 @@ const orgWords = (ip: string, org: string | null) => (org ? `${ip} (${org})` : i
 export function dnsReport(data: ReportData): Report {
 	const { inputs, category, names } = data;
 	// OLD CODE: const dns = inputs.protocols.dns ?? { plain: 0, over_tls: 0 }; (NET-308)
-	const dns = inputs.protocols.dns ?? { plain: 0, over_tls: 0, local: { plain: 0, over_tls: 0 } };
+	const dns = inputs.protocols.dns ?? { plain: 0, over_tls: 0 };
+	const local = dns.local ?? { plain: 0, over_tls: 0 };
 	const detail: DnsDetail | undefined = data.extras['dns-security'];
 	const failed = data.failed.includes('dns-security');
 	const scope = detail?.plain_scope;
@@ -355,7 +356,7 @@ export function dnsReport(data: ReportData): Report {
 			counts: [
 				"Plain: lookups NetTap identified as DNS, leaving out local discovery (mDNS on 5353, LLMNR on 5355).",
 				'DNS-over-TLS: connections to port 853.',
-				`Left out: ${fmt(dns.local.plain)} plain lookups and ${fmt(dns.local.over_tls)} DNS-over-TLS connections to your own resolvers (private or local-scope addresses); each one is judged by what it sends out.`,
+				`Left out: ${fmt(local.plain)} plain lookups and ${fmt(local.over_tls)} DNS-over-TLS connections to your own resolvers (private or local-scope addresses); each one is judged by what it sends out.`,
 			],
 			// OLD CODE: 'Lookups to your own resolver (router, Pi-hole) count as plain, even when it forwards them encrypted.', (NET-308: they are left out)
 			limits: [
@@ -380,8 +381,8 @@ export function dnsReport(data: ReportData): Report {
 				: [
 						{ key: 'dot', label: 'DNS-over-TLS to non-local or unknown addresses', value: dns.over_tls, display: fmt(dns.over_tls), colour: 1 },
 						{ key: 'plain', label: 'Plain to non-local or unknown addresses', value: dns.plain, display: fmt(dns.plain), colour: 3 },
-						{ key: 'local-plain', label: 'Plain to your own resolvers, not scored', value: dns.local.plain, display: fmt(dns.local.plain), colour: 2 },
-						{ key: 'local-dot', label: 'DNS-over-TLS to your own resolvers, not scored', value: dns.local.over_tls, display: fmt(dns.local.over_tls), colour: 4 },
+						{ key: 'local-plain', label: 'Plain to your own resolvers, not scored', value: local.plain, display: fmt(local.plain), colour: 2 },
+						{ key: 'local-dot', label: 'DNS-over-TLS to your own resolvers, not scored', value: local.over_tls, display: fmt(local.over_tls), colour: 4 },
 					],
 			resolvers,
 		},

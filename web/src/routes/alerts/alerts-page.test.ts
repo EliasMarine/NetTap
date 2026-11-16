@@ -26,6 +26,7 @@ import {
 } from '$api/alerts';
 import { getSystemHealth, type SystemHealth } from '$api/system';
 import { createInvestigation, type Investigation } from '$api/investigations';
+import { openedInvestigations } from './alert-view';
 import { _configure as resetAlertSnapshots, alertSnapshots, loadAlertSnapshot } from '$lib/stores/alertSnapshot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import { goto } from '$app/navigation';
@@ -210,6 +211,7 @@ function failAll() {
 
 beforeEach(() => {
 	resetAlertSnapshots({});
+	openedInvestigations.set(new Set());
 	vi.clearAllMocks();
 	vi.stubGlobal('fetch', vi.fn(lanReply));
 	vi.mocked(getSystemHealth).mockResolvedValue(healthWith());
@@ -727,6 +729,27 @@ describe('Alerts — drawer', () => {
 		expect(within(drawer).getByRole('link', { name: 'Open Investigations' })).toHaveAttribute('href', '/investigations');
 		expect(within(drawer).queryByRole('button', { name: 'Open an investigation' })).not.toBeInTheDocument();
 		expect(within(drawer).queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	it('keeps an opened investigation when the drawer moves to another alert and back, even if the create finishes in between (review M3)', async () => {
+		succeedAll([enriched, alert('e2', { category: 'Misc activity', signature: 'ET INFO Other' })]);
+		render(Page);
+		await flush();
+		const drawer = () => screen.getByRole('complementary', { name: 'Alert details' });
+		const create = deferred<Investigation>();
+		vi.mocked(createInvestigation).mockReturnValueOnce(create.promise);
+		await fireEvent.click(screen.getByRole('button', { name: /A device contacted a server/ }));
+		await fireEvent.click(within(drawer()).getByRole('button', { name: 'Open an investigation' }));
+		// to B while A's create is still running, then it finishes
+		await fireEvent.click(screen.getByRole('button', { name: /Misc activity/ }));
+		create.resolve({ id: 'i1' } as Investigation);
+		await flush();
+		expect(within(drawer()).getByRole('button', { name: 'Open an investigation' })).toBeInTheDocument();
+		// back to A: done, and no button to open a second
+		await fireEvent.click(screen.getByRole('button', { name: /A device contacted a server/ }));
+		expect(within(drawer()).getByRole('status')).toHaveTextContent('Investigation opened.');
+		expect(within(drawer()).queryByRole('button', { name: 'Open an investigation' })).not.toBeInTheDocument();
+		expect(createInvestigation).toHaveBeenCalledTimes(1);
 	});
 
 	it('loads Related events when opened, and retries after a failure', async () => {

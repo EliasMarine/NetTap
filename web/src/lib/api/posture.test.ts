@@ -70,6 +70,9 @@ describe('the alert-response reply', () => {
 		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, groups: [{ rule: null, count: 1, investigated: 'no' }] })).toBe(false);
 		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, groups: [{ rule: null, count: 1, investigated: false }] })).toBe(true);
 		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, investigations: { open_during: 1 } })).toBe(false);
+		// review M2: more investigated than needing would score 250%, "Good", with a negative bar
+		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, needing: 4, investigated: 4 })).toBe(true);
+		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, needing: 2, investigated: 5 })).toBe(false);
 		// the traffic details still need excluded_ips
 		const { excluded_ips: _, ...noExcluded } = POSTURE_ENCRYPTION;
 		expect(isPostureDetail('encryption', noExcluded)).toBe(false);
@@ -98,6 +101,7 @@ describe('getIsolation', () => {
 		expect(fetchMock).toHaveBeenCalledWith('/api/iot/network-isolation?from=2026-11-15T06%3A00%3A00.000Z&to=2026-11-16T06%3A00%3A00.000Z');
 		for (const score of [null, 0, 100]) expect(isIsolation({ ...GOOD, segmentation_score: score })).toBe(true);
 		expect(isIsolation({ ...GOOD, segmentation_score: null, segmentation_grade: null, pairs: [] })).toBe(true);
+		expect(isIsolation({ ...GOOD, pairs: [{ ...PAIR, internal_target: { ip: '192.168.1.20', hostname: 'nas' } }] })).toBe(true);
 	});
 
 	it('throws on a malformed reply', async () => {
@@ -118,6 +122,8 @@ describe('getIsolation', () => {
 			{ ...GOOD, pairs: [{ ...PAIR, risk: 'severe' }] },
 			{ ...GOOD, pairs: [{ ...PAIR, reached_ports: ['80'] }] },
 			{ ...GOOD, pairs: [{ ...PAIR, iot_device: { mac: 'x', ip: 'y' } }] },
+			{ ...GOOD, pairs: [{ ...PAIR, internal_target: { ip: '192.168.1.20', hostname: 7 } }] },
+			{ ...GOOD, pairs: [{ ...PAIR, internal_target: { ip: '192.168.1.20' } }] },
 		];
 		for (const body of bad) {
 			stubFetch(200, body);

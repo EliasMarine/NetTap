@@ -169,7 +169,7 @@ export function scoreCategories(inputs: PostureInputs): CategoryScore[] {
 	// NET-308: both to non-local (or unknown) addresses; lookups to your own resolvers are left out
 	const plainDns = protocols.dns?.plain ?? 0;
 	const dnsOverTls = protocols.dns?.over_tls ?? 0;
-	const localDns = (protocols.dns?.local.plain ?? 0) + (protocols.dns?.local.over_tls ?? 0);
+	const localDns = (protocols.dns?.local?.plain ?? 0) + (protocols.dns?.local?.over_tls ?? 0);
 	const dnsScore = plainDns + dnsOverTls === 0 ? 100 : Math.round((dnsOverTls / (plainDns + dnsOverTls)) * 100);
 
 	// Both are every device, by the same rules: the daemon scores each device /api/devices/count
@@ -443,7 +443,8 @@ export function scoreCategories(inputs: PostureInputs): CategoryScore[] {
 				// needs: alertCounts.counts.total > 0 ? ['alerts', 'investigations'] : ['alerts'],
 				// empty: alertCounts.counts.total === 0,
 				// OLD CODE END
-				needs: ['alerts', 'response'],
+				// OLD CODE: needs: ['alerts', 'response'], (NET-308 review: the score reads the follow-up reply only)
+				needs: ['response'],
 				empty: needing === 0,
 				weight: WEIGHTS.alerts,
 			},

@@ -45,7 +45,8 @@ describe('segmentationReport', () => {
 		const [camera, plug] = [r.findings.find((f) => f.key.includes('192.168.1.50'))!, r.findings.find((f) => f.key.includes('192.168.1.60'))!];
 		expect(camera).toMatchObject({ severity: 'high', title: 'Camera reached another device on your network', count: 40, devices: [{ ip: '192.168.1.50' }, { ip: '192.168.1.20', name: 'Laptop' }] });
 		expect(camera.detail).toBe('Camera can reach 192.168.1.20 via HTTP Ports: 80.');
-		expect(plug).toMatchObject({ severity: 'critical', title: 'Reachability not confirmed' });
+		// review L4: not confirmed to get through, so low whatever its ports' risk (critical here)
+		expect(plug).toMatchObject({ severity: 'low', title: 'Reachability not confirmed' });
 		expect(plug.fix).toMatch(/couldn’t tell whether it got through/);
 		expect(r.steps[0]).toEqual({ priority: 'high', text: 'Move Camera to a guest or IoT network: it reached Laptop.' });
 		expect(r.steps.filter((x) => x.priority === 'high')).toHaveLength(1); // the unconfirmed plug is no high step

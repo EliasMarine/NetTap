@@ -89,9 +89,18 @@ describe('scoreCategories', () => {
 		const alerts = { from: '', to: '', counts: { total: 853, high: 315, medium: 219, low: 319 } };
 		const g11 = bySlug(inputs({ alertCounts: alerts, alertResponse: response(13, 0) }))['alert-response'];
 		expect(g11.score).toBe(0);
-		expect(g11.needs).toEqual(['alerts', 'response']);
+		// OLD CODE: expect(g11.needs).toEqual(['alerts', 'response']); (NET-308 review: it reads the follow-up only)
+		expect(g11.needs).toEqual(['response']);
+		// a failed alert count leaves the score standing
+		expect(bySlug(inputs({ alertResponse: response(13, 4), failed: ['alerts'] }))['alert-response'].score).toBe(31);
 		expect(g11.findings[0]).toBe('13 high-severity rule(s) needed a response; 0 have an investigation open in the last 24 hours');
 		expect(bySlug(inputs({ alertCounts: alerts, alertResponse: response(13, 4) }))['alert-response'].score).toBe(31);
+	});
+
+	it('reads a reply from a daemon before NET-308 (no one_way, no local) without throwing (review M1)', () => {
+		const old = { ...EMPTY_DATA.protocols, encryption: { eligible: 200, encrypted: 120 }, dns: { plain: 90, over_tls: 10 } };
+		const c = bySlug(inputs({ protocols: old }));
+		expect([c.encryption.score, c['dns-security'].score]).toEqual([60, 10]);
 	});
 
 	it('reads Alert response Not measured when nothing needed a response, whatever the alert count', () => {

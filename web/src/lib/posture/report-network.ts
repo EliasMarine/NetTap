@@ -137,7 +137,8 @@ export function segmentationReport(data: ReportData): Report {
 		const ports = p.reached ? p.reached_ports : p.ports;
 		return {
 			key: `pair-${i}-${p.iot_device.ip}-${p.internal_target.ip}`,
-			severity: RISK_LEVEL[p.risk.toLowerCase()] ?? 'medium',
+			// not confirmed to get through: low, whatever its ports' risk (it costs no points)
+			severity: p.reached ? (RISK_LEVEL[p.risk.toLowerCase()] ?? 'medium') : 'low',
 			title: p.reached ? `${who(p)} reached another device on your network` : 'Reachability not confirmed',
 			detail: `${p.description}${ports.length ? ` Ports: ${listWords(ports.map(String))}.` : ''}`,
 			devices: [device(p.iot_device.ip, names), device(p.internal_target.ip, names)],

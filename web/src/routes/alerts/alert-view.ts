@@ -2,6 +2,7 @@
  * View helpers shared by /alerts and /alerts/[category]: severity level, the plain title,
  * and the "By category" grouping of the alerts a page has loaded (AlertRow README).
  */
+import { writable } from 'svelte/store';
 import type { Alert } from '$api/alerts';
 import { suricataLevel, type SeverityLevel } from '$lib/utils/severity';
 import { severityRank } from '$lib/utils/table-sort.svelte';
@@ -31,6 +32,10 @@ export function alertExplanation(alert: Alert): string | undefined {
 export function alertAdvice(alert: Alert): string {
 	return text(alert.recommendation) ?? 'No specific advice for this alert yet.';
 }
+
+/** NET-308: the alerts an investigation was opened from in this session. The drawer remounts per
+ * alert, so its own state would offer the button again and open a duplicate. */
+export const openedInvestigations = writable<ReadonlySet<string>>(new Set());
 
 /** The investigation the drawer's "Open an investigation" creates (NET-308): it links this alert,
  * so the daemon records its rule and Alert response counts it. Titled by the rule name, or by the

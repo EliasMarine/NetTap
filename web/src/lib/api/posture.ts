@@ -208,7 +208,9 @@ const CHECKS: Record<DetailSlug, Record<string, Check>> = {
 // OLD CODE END
 /** True when `v` is a complete reply for `slug`. */
 export function isPostureDetail<S extends DetailSlug>(slug: S, v: unknown): v is PostureDetails[S] {
-	return obj(v, { category: (c) => c === slug, from: isString, to: isString, ...CHECKS[slug] });
+	if (!obj(v, { category: (c) => c === slug, from: isString, to: isString, ...CHECKS[slug] })) return false;
+	// more rules investigated than needed one would score over 100
+	return slug !== 'alert-response' || (v as AlertResponseDetail).investigated <= (v as AlertResponseDetail).needing;
 }
 
 /** The detail behind one category's score, over exactly `win`. */
@@ -227,7 +229,7 @@ const ports: Check = (v) => list(v, (p) => isNumber(p));
 const pair: Check = (v) =>
 	obj(v, {
 		iot_device: (d) => obj(d, { mac: isString, name: isString, ip: isString }),
-		internal_target: (t) => obj(t, { ip: isString }),
+		internal_target: (t) => obj(t, { ip: isString, hostname: (h) => h === null || isString(h) }),
 		risk: (r) => (ISOLATION_RISKS as readonly unknown[]).includes(r),
 		connection_count: count,
 		ports,

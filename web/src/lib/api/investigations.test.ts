@@ -138,6 +138,14 @@ describe('investigations API client', () => {
 			mockFetchFailure(500);
 			await expect(createInvestigation({ title: 'Test Investigation' })).rejects.toThrow('HTTP 500');
 		});
+
+		// NET-308 review L6: the drawer shows why, e.g. an alert whose data has aged out
+		it("throws the daemon's own reason when the reply has one", async () => {
+			mockFetchSuccess({ error: "An alert to link wasn't found" }, 400);
+			await expect(createInvestigation({ title: 'x', alert_ids: ['gone'] })).rejects.toThrow("An alert to link wasn't found");
+			mockFetchSuccess({ error: 7 }, 502);
+			await expect(createInvestigation({ title: 'x' })).rejects.toThrow('Creating the investigation failed: HTTP 502');
+		});
 	});
 
 	// -- getInvestigation -----------------------------------------------------

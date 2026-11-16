@@ -18,7 +18,7 @@
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	// OLD CODE: import { alertAdvice, alertExplanation, alertLevel, alertTitle, logExplorerHref } from './alert-view'; (slice 2b-2)
 	// OLD CODE: import { alertAdvice, alertExplanation, alertLevel, alertTitle, linkedSuricataCategory, logExplorerHref } from './alert-view'; (NET-308)
-	import { alertAdvice, alertExplanation, alertLevel, alertTitle, investigationFor, linkedSuricataCategory, logExplorerHref } from './alert-view';
+	import { alertAdvice, alertExplanation, alertLevel, alertTitle, investigationFor, linkedSuricataCategory, logExplorerHref, openedInvestigations } from './alert-view';
 	import { createInvestigation } from '$api/investigations';
 	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (slice 2b-2)
 	// OLD CODE: import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown'; (the rule name opens the rule page)
@@ -40,8 +40,8 @@
 
 	let error = $state('');
 	let busy = $state(false);
-	/** NET-308: an investigation this drawer opened, linking the alert */
-	let opened = $state(false);
+	/** NET-308: an investigation was opened from this alert (kept by the page, not this drawer) */
+	const opened = $derived($openedInvestigations.has(alert._id));
 	let panel = $state<HTMLElement>();
 
 	// Under 1100 px the column sits below the list (position: static), out of sight: bring it in
@@ -67,8 +67,9 @@
 
 	const openInvestigation = () =>
 		act(async () => {
+			const id = alert._id; // recorded even if the drawer has moved to another alert by then
 			await createInvestigation(investigationFor(alert));
-			opened = true;
+			openedInvestigations.update((ids) => new Set([...ids, id]));
 		});
 
 	function formatTimestamp(ts: string | undefined): string {

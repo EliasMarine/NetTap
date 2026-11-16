@@ -147,6 +147,17 @@ describe('dnsReport', () => {
 		expect(r.kpis[1]).toMatchObject({ value: '60', sub: 'connections, beside 2,100 plain lookups' });
 	});
 
+	it('reads an older daemon\'s reply, with no local and no one_way, as zeros instead of throwing (NET-308 review M1)', () => {
+		const old = protocols({ dns: { plain: 2100, over_tls: 60 }, encryption: { eligible: 21300, encrypted: 19800 } });
+		const r = dnsReport(reportData('dns-security', { inputs: old, extras: { 'dns-security': POSTURE_DNS } }));
+		expect(r.drivers.bars.map((b) => b.value)).toEqual([60, 2100, 0, 0]);
+		expect(r.drivers.counts).toContain(
+			'Left out: 0 plain lookups and 0 DNS-over-TLS connections to your own resolvers (private or local-scope addresses); each one is judged by what it sends out.',
+		);
+		const e = encryptionReport(reportData('encryption', { inputs: old, extras: { encryption: POSTURE_ENCRYPTION } }));
+		expect(e.kpis.find((k) => k.key === 'left-out')).toMatchObject({ value: '0' });
+	});
+
 	it('judges a forwarding private-address resolver as a resolver, not a device, and leaves its lookups out of the device step (review M3)', () => {
 		const piHole = resolver({ ip: '192.168.1.2', upstream: { plain_public: 300, dot: 0 } });
 		const d = withResolvers([piHole], {
