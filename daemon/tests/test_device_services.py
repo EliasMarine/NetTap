@@ -159,6 +159,8 @@ class TestKnownSinceRegistryDown(ListCase):
         rows = await self.rows()
         self.assertEqual(set(rows), {LAPTOP, NAS, TV})
         self.assertEqual({d["known_since"] for d in rows.values()}, {None})
+        # one read feeds both names and known_since, so a failure is not asked twice
+        self.registry.get_devices.assert_called_once()
 
 
 class TestRegistryNames(TestCase):
@@ -302,7 +304,21 @@ class TestDeviceServices(TestCase):
         text_count = _reply(_side({LAPTOP: ({"ssl": 5}, 0)}), _side({}))
         ssl = text_count["aggregations"]["started"]["by_ip"]["buckets"][0]["services"]
         ssl["buckets"][0]["doc_count"] = "5"
-        for reply in (no_by_ip, no_services, no_side, no_count, text_count):
+        # review: a dict where the list belongs would iterate to nothing and read as "none"
+        dict_by_ip = _reply({"sum_other_doc_count": 0, "buckets": {}}, _side({}))
+        dict_services = _reply(_side({LAPTOP: ({"ssl": 5}, 0)}), _side({}))
+        dict_services["aggregations"]["started"]["by_ip"]["buckets"][0]["services"] = {
+            "buckets": {}
+        }
+        for reply in (
+            no_by_ip,
+            no_services,
+            no_side,
+            no_count,
+            text_count,
+            dict_by_ip,
+            dict_services,
+        ):
             with self.assertRaises(QueryFailed):
                 _device_services(_client(reply), [], [LAPTOP], "t")
 

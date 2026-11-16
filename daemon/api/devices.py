@@ -853,8 +853,9 @@ def _registry_known(request: web.Request, macs: list[str]) -> dict[str, dict]:
     try:
         return registry.get_devices(macs)
     except Exception as exc:
+        # OLD CODE: "Device names from the registry unavailable, using DNS names: %s" (NET-317: known_since too)
         logger.warning(
-            "Device names from the registry unavailable, using DNS names: %s", exc
+            "Device registry unavailable, using DNS names and no first seen: %s", exc
         )
         return {}
 
