@@ -644,15 +644,32 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
         )
         self.assertEqual(by_component["zeek"]["update_type"], "unknown")
 
-    def test_nettap_images_skipped_others_cant_be_checked(self):
+    # OLD CODE START — nettap-grafana (pinned in NetTap's compose file) read as a failed check
+    # def test_nettap_images_skipped_others_cant_be_checked(self):
+    #     result, _ = self._run(
+    #         {"tag_name": "v26.02.0"},
+    #         [
+    #             ("nettap-web", "nettap/web:latest"),
+    #             ("nettap-grafana", "grafana/grafana:10.4.2"),
+    #         ],
+    #     )
+    #     self.assertEqual(result["failed_checks"], ["nettap-grafana"])
+    # OLD CODE END
+    def test_pinned_and_foreign_images_are_never_failed_checks(self):
+        """[G11] "Couldn't check nettap-nginx for updates" showed on every load."""
         result, _ = self._run(
             {"tag_name": "v26.02.0"},
             [
                 ("nettap-web", "nettap/web:latest"),
                 ("nettap-grafana", "grafana/grafana:10.4.2"),
+                ("nettap-nginx", "nginx:1.30-alpine"),
+                ("portainer", "portainer/portainer-ce:2.21"),  # not NetTap's
             ],
         )
-        self.assertEqual(result["failed_checks"], ["nettap-grafana"])
+        self.assertEqual(result["failed_checks"], [])
+        self.assertIn("nettap-nginx", result["checked"])
+        self.assertIn("nettap-grafana", result["checked"])
+        self.assertNotIn("portainer", result["checked"])  # reads "Not checked"
 
     def test_unparseable_tag_cant_be_checked(self):
         result, _ = self._run(
@@ -686,11 +703,24 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
                 ("nettap-nginx", "nginx:stable-alpine"),
             ],
         )
+        # OLD CODE START — nettap-nginx wasn't checked (and was a failed check)
+        # self.assertEqual(
+        #     result["checked"],
+        #     ["geoip-db", "logstash", "nettap-daemon", "nettap-web", "suricata-rules"],
+        # )
+        # self.assertNotIn("nettap-nginx", result["checked"])
+        # OLD CODE END
         self.assertEqual(
             result["checked"],
-            ["geoip-db", "logstash", "nettap-daemon", "nettap-web", "suricata-rules"],
+            [
+                "geoip-db",
+                "logstash",
+                "nettap-daemon",
+                "nettap-nginx",
+                "nettap-web",
+                "suricata-rules",
+            ],
         )
-        self.assertNotIn("nettap-nginx", result["checked"])
 
 
 class TestNetTapImagesFollowTheRelease(unittest.TestCase):
@@ -969,11 +999,34 @@ class TestGeoIPDatabaseInLogstash(unittest.TestCase):
         self.assertEqual(failed, [])
         self.assertIsNone(argv)
 
+    # OLD CODE START — applicable with or without geoipupdate (the daemon image has none, so it failed)
+    # def test_stale_local_database_stays_applicable(self):
+    #     update, _, argv = self._check(mtime=self.G11_DB_MTIME, local_db=True)
+    #     self.assertEqual(update.component, "geoip-db")
+    #     self.assertIsNone(update.applies_with)
+    #     self.assertIsNone(argv)
+    # OLD CODE END
     def test_stale_local_database_stays_applicable(self):
-        update, _, argv = self._check(mtime=self.G11_DB_MTIME, local_db=True)
+        from unittest.mock import patch
+
+        with patch(
+            "services.update_checker.shutil.which", return_value="/usr/bin/geoipupdate"
+        ):
+            update, _, argv = self._check(mtime=self.G11_DB_MTIME, local_db=True)
         self.assertEqual(update.component, "geoip-db")
         self.assertIsNone(update.applies_with)
         self.assertIsNone(argv)
+        self.assertEqual(
+            update.release_date, ""
+        )  # no release date is known (was the check time)
+
+    def test_stale_local_database_without_geoipupdate_says_how_to_update_it(self):
+        from unittest.mock import patch
+
+        with patch("services.update_checker.shutil.which", return_value=None):
+            update, _, _ = self._check(mtime=self.G11_DB_MTIME, local_db=True)
+        self.assertIn("geoipupdate isn't installed", update.applies_with)
+        self.assertIn("GeoLite2-City.mmdb", update.applies_with)
 
 
 class TestEveryApplicableRowIsAcceptedByTheApplyApi(unittest.TestCase):
@@ -1022,6 +1075,11 @@ class TestEveryApplicableRowIsAcceptedByTheApplyApi(unittest.TestCase):
             uc.set_version_manager(VM())
             # a stale rules file and a stale GeoIP file: both exist, both a month old
             with (
+                # a box whose daemon has geoipupdate: the local GeoIP row is applicable there
+                patch(
+                    "services.update_checker.shutil.which",
+                    return_value="/usr/bin/geoipupdate",
+                ),
                 patch("os.path.exists", return_value=True),
                 patch("os.path.getmtime", return_value=month_old),
                 patch(

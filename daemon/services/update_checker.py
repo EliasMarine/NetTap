@@ -3,13 +3,16 @@ NetTap Update Checker Service
 
 Checks for available updates across all NetTap components by querying
 Docker Hub, GitHub Releases API, and package repositories. Results are
-cached and refreshed every 6 hours.
+cached; get_available() says when they are older than 6 hours ("stale"),
+and the Updates page then runs a check.
 """
+# OLD CODE (said "refreshed every 6 hours", which nothing did): "Results are cached and refreshed every 6 hours."
 
 import asyncio
 import logging
 import os
 import re
+import shutil
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
@@ -70,6 +73,11 @@ _LOGSTASH_GEOIP_APPLIES_WITH = "Comes with Malcolm's Logstash image: a newer one
 _GEOIP_NEWER = "newer weekly release"
 # the update executor has no way to replace the running daemon and web containers
 NETTAP_APPLIES_WITH = "NetTap can't replace itself from this page: get the new release and rerun its install script."
+# a local GeoIP database is only applicable where geoipupdate exists (the daemon image has none)
+_GEOIP_MANUAL = (
+    "NetTap can't download GeoIP databases itself (geoipupdate isn't installed): put a newer "
+    "GeoLite2-City.mmdb from MaxMind in place of {path}."
+)
 
 
 _RELEASE_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
@@ -129,6 +137,10 @@ class UpdateChecker:
         self._available_updates: list[AvailableUpdate] = []
         self._last_check: str | None = None
         self._checking: bool = False
+        # one check at a time: overlapping callers await the same one (two tabs opening the page)
+        self._check_task: asyncio.Task | None = None
+        # the last finished check, which get_available() serves so nobody reads one half-way
+        self._last_result: dict | None = None
         # Components the last check could not ask about (#96): unknown, not "up to date"
         self._failed_checks: list[str] = []
         self._malcolm_known = (
@@ -164,10 +176,19 @@ class UpdateChecker:
             "last_check" (ISO timestamp), "count" (int),
             "has_updates" (bool) and "failed_checks" (components that
             could not be checked, so their update state is unknown).
+            Overlapping callers share one check and all get its finished result.
         """
-        if self._checking:
-            return await self.get_available()
+        # OLD CODE START — a caller during a check got the cache at once (a half-built failed list
+        # included), which read as a finished check
+        # if self._checking:
+        #     return await self.get_available()
+        # OLD CODE END
+        if self._check_task is None or self._check_task.done():
+            self._check_task = asyncio.create_task(self._run_check())
+        return {**await asyncio.shield(self._check_task), "stale": False}
 
+    async def _run_check(self) -> dict:
+        """One check of every source (check_updates runs it once for all callers)."""
         self._checking = True
         now = datetime.now(timezone.utc).isoformat()
         self._failed_checks = []
@@ -253,6 +274,9 @@ class UpdateChecker:
                 if nettap_current
                 else (_MALCOLM_REGISTRY,)
             )
+            # NetTap's compose file pins its other images too (nginx, grafana), so a nettap-*
+            # container follows the NetTap release the same way
+            nettap_pinned = "nettap-" if nettap_current else ()
             # OLD CODE START — a source that couldn't be read was still listed as checked
             # self._checked = sorted(
             #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
@@ -282,6 +306,7 @@ class UpdateChecker:
                         c
                         for c, i in images.items()
                         if i.startswith((*own_images, *_MALCOLM_TAGGED))
+                        or c.startswith(nettap_pinned)
                     ),
                 }
                 - set(self._failed_checks)
@@ -292,7 +317,7 @@ class UpdateChecker:
                 len(all_updates),
             )
 
-            return {
+            self._last_result = {
                 "updates": [u.to_dict() for u in all_updates],
                 "last_check": self._last_check,
                 "count": len(all_updates),
@@ -300,6 +325,7 @@ class UpdateChecker:
                 "failed_checks": list(dict.fromkeys(self._failed_checks)),
                 "checked": list(self._checked),
             }
+            return self._last_result
         finally:
             self._checking = False
 
@@ -308,16 +334,35 @@ class UpdateChecker:
 
         Returns:
             Dict with "updates" (list), "last_check" (ISO timestamp),
-            "count" (int), "has_updates" (bool) and "failed_checks" (list).
+            "count" (int), "has_updates" (bool), "failed_checks" (list) and
+            "stale" (no check yet, or the last one is older than the TTL).
         """
+        if (
+            self._last_result is not None
+        ):  # the last finished check, also while one runs
+            return {**self._last_result, "stale": self._is_stale()}
+        # nothing finished yet; while the first check runs its lists are half-built
         return {
             "updates": [u.to_dict() for u in self._available_updates],
             "last_check": self._last_check,
             "count": len(self._available_updates),
             "has_updates": len(self._available_updates) > 0,
-            "failed_checks": list(dict.fromkeys(self._failed_checks)),
-            "checked": list(self._checked),
+            "failed_checks": []
+            if self._checking
+            else list(dict.fromkeys(self._failed_checks)),
+            "checked": [] if self._checking else list(self._checked),
+            "stale": self._is_stale(),
         }
+
+    def _is_stale(self) -> bool:
+        """No check since the daemon started, or the last one is older than the TTL."""
+        if self._last_check is None:
+            return True
+        try:
+            checked = datetime.fromisoformat(self._last_check)
+        except ValueError:
+            return True
+        return (datetime.now(timezone.utc) - checked).total_seconds() > self._cache_ttl
 
     async def get_update_for(self, component: str) -> dict | None:
         """Get update info for a specific component.
@@ -546,10 +591,14 @@ class UpdateChecker:
         for component, image in sorted(images.items()):
             if image.startswith(_MALCOLM_TAGGED):
                 malcolm.append(component)
-            elif not image.startswith(_NETTAP_IMAGE_PREFIX):
-                # shortcut: no registry lookup for third-party images (grafana, nginx);
-                # add one if NetTap ever updates them itself
-                self._failed_checks.append(component)
+            # OLD CODE START — every other image was a failed check: [G11] "Couldn't check nettap-nginx"
+            # on every load, though NetTap's compose file pins nginx:1.30-alpine (it moves with a
+            # NetTap release, like nettap/*), and a container that isn't NetTap's has nothing to check
+            # elif not image.startswith(_NETTAP_IMAGE_PREFIX):
+            #     # shortcut: no registry lookup for third-party images (grafana, nginx);
+            #     # add one if NetTap ever updates them itself
+            #     self._failed_checks.append(component)
+            # OLD CODE END
         if not malcolm:
             return []
 
@@ -727,7 +776,8 @@ class UpdateChecker:
             latest_version=now.strftime("%Y-%m-%d"),
             update_type="patch",
             release_url="https://rules.emergingthreats.net/",
-            release_date=now.isoformat(),
+            # OLD CODE: release_date=now.isoformat(), (the check's time, not a release date)
+            release_date="",
             changelog=f"Suricata rules are {age_days} day(s) old",
             # OLD CODE START — #96: an approximate size shown as the download size
             # size_mb=15.0,  # Approximate ET ruleset size
@@ -777,13 +827,19 @@ class UpdateChecker:
                         latest_version=_GEOIP_NEWER,
                         update_type="patch",
                         release_url="https://dev.maxmind.com/geoip/updating-databases",
-                        release_date=now.isoformat(),
+                        # OLD CODE: release_date=now.isoformat(), (the check's time, not a release date)
+                        release_date="",
                         changelog=f"GeoIP database is {age_days} day(s) old",
                         # OLD CODE START — #96: an approximate size shown as the download size
                         # size_mb=65.0,  # Approximate GeoLite2-City size
                         # OLD CODE END
                         size_mb=None,
                         requires_restart=False,
+                        # was applicable everywhere: the daemon image has no geoipupdate, so the
+                        # update could only fail
+                        applies_with=None
+                        if shutil.which("geoipupdate")
+                        else _GEOIP_MANUAL.format(path=geoip_path),
                     )
                 return None
             except OSError:
@@ -814,7 +870,8 @@ class UpdateChecker:
             latest_version=_GEOIP_NEWER,
             update_type="patch",
             release_url="https://dev.maxmind.com/geoip/updating-databases",
-            release_date=now.isoformat(),
+            # OLD CODE: release_date=now.isoformat(), (the check's time, not a release date)
+            release_date="",
             changelog=f"Logstash's GeoIP database is {age_days} day(s) old",
             size_mb=None,
             requires_restart=False,
@@ -922,7 +979,7 @@ class UpdateChecker:
             async with session.get(
                 url,
                 headers={"Accept": "application/json"},
-                ssl=False,
+                # OLD CODE: ssl=False, (TLS unchecked; the daemon image verifies api.github.com fine)
             ) as resp:
                 if resp.status == 200:
                     return await resp.json()
