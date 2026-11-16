@@ -138,7 +138,7 @@ describe('legacyCounts', () => {
 			{ name: 'telnet', count: 2 },
 			{ name: 'unknown', count: 18 },
 		]);
-		expect(counts).toEqual({ byName: { http: 30, ftp: 0, telnet: 2, pop3: 0, imap: 0 } });
+		expect(counts).toEqual({ http: 30, ftp: 0, telnet: 2, pop3: 0, imap: 0 });
 	});
 });
 

@@ -18,23 +18,26 @@ from typing import Any, Callable
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.alerts import _every_key, _primary_severity
+from api.alerts import SEVERITY_AGG, _every_key, _primary_severity
 from api.error_replies import incomplete, public_json
 from api.offload import in_thread, run_blocking
 from api.traffic import (
+    DNS_PLAIN,
+    DOT,
+    ELIGIBLE,
+    LEGACY,
     LEGACY_PROTOCOLS,
     NETWORK_INDEX,
     PRIVATE_LOCAL,
     PRIVATE_LOCAL_SCOPE,
-    _PAYLOAD_FIELDS,
     _ZEEK_CONN_FILTERS,
     _get_client,
     _parse_time_range,
     _time_range_filter,
 )
-from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import (
     PAYLOAD_BOTH,
+    PAYLOAD_FIELDS,
     RFC1918_SOURCE_FILTER,
     build_excluded_ips_filter,
     valid_excluded_ips,
@@ -46,7 +49,7 @@ from services.iot_monitor import (
     LOCAL_CHATTER_EXCLUSION,
     NO_PAYLOAD_PROTOCOLS,
 )
-from services.investigation_store import InvestigationStore, clean_alert_rules
+from services.investigation_store import InvestigationStore
 from storage.exact_terms import PartialResultsError
 from storage.snapshot_search import QueryFailed, checked
 
@@ -98,23 +101,26 @@ PUBLIC: dict = {"bool": {"must_not": [PRIVATE_LOCAL, UNKNOWN]}}
 #     "bool": {"filter": [{"range": {f: {"gt": 0}}} for f in _PAYLOAD_FIELDS]}
 # }
 # OLD CODE END
-# /api/traffic/protocols' encryption and dns_plain filters (a test holds them equal)
-ELIGIBLE: dict = {
-    "bool": {
-        "must_not": [
-            *LOCAL_CHATTER_EXCLUSION,
-            {"terms": {"network.protocol": NO_PAYLOAD_PROTOCOLS}},
-        ]
-    }
-}
+# OLD CODE START — NET-308: copies of /api/traffic/protocols' filters, held equal by a test; one
+# definition each in api/traffic.py now (ELIGIBLE, DNS_PLAIN, DOT and LEGACY, imported above)
+# # /api/traffic/protocols' encryption and dns_plain filters (a test holds them equal)
+# ELIGIBLE: dict = {
+#     "bool": {
+#         "must_not": [
+#             *LOCAL_CHATTER_EXCLUSION,
+#             {"terms": {"network.protocol": NO_PAYLOAD_PROTOCOLS}},
+#         ]
+#     }
+# }
+# DNS_PLAIN: dict = {
+#     "bool": {
+#         "filter": [{"term": {"network.protocol": "dns"}}],
+#         "must_not": [{"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}}],
+#     }
+# }
+# DOT: dict = {"term": {"destination.port": 853}}
+# OLD CODE END
 UNENCRYPTED: dict = {"bool": {"must_not": [ENCRYPTED_CONN_FILTER]}}
-DNS_PLAIN: dict = {
-    "bool": {
-        "filter": [{"term": {"network.protocol": "dns"}}],
-        "must_not": [{"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}}],
-    }
-}
-DOT: dict = {"term": {"destination.port": 853}}
 
 # Fixed filters the page's advice reads, so a quiet Telnet service can't hide behind busier ones
 _RISKY: dict[str, tuple[str, int | None]] = {
@@ -194,7 +200,7 @@ def logs_query(name: str) -> str:
     ]
     # OLD CODE: return " AND ".join([risky, *(_q_not(c) for c in exclusions)]) (NET-308)
     # NET-308: the scored set is connections with data both ways (PAYLOAD_BOTH)
-    payload = [f"{f}:>0" for f in _PAYLOAD_FIELDS]
+    payload = [f"{f}:>0" for f in PAYLOAD_FIELDS]
     return " AND ".join([risky, *(_q_not(c) for c in exclusions), *payload])
 
 
@@ -455,7 +461,8 @@ def _dns(app: web.Application, search: Search) -> dict:
 def _patch(app: web.Application, search: Search) -> dict:
     aggs = {
         "legacy": {
-            "filter": {"terms": {"network.protocol": LEGACY_PROTOCOLS}},
+            # OLD CODE: "filter": {"terms": {"network.protocol": LEGACY_PROTOCOLS}}, (NET-308: LEGACY)
+            "filter": LEGACY,
             "aggs": {
                 # include: a two-label record (ssl,http) must not add an ssl row; 5 names, size 5
                 "services": {
@@ -580,11 +587,12 @@ def _coverage(investigations: list) -> tuple[set, dict]:
             )
             counts["skipped"] += 1
             continue
-        rules = clean_alert_rules(inv.alert_rules)
         counts["linked_alerts"] += len(ids)
         for alert_id in ids:
-            if alert_id in rules:
-                covered.add(rules[alert_id])
+            if (
+                alert_id in inv.alert_rules
+            ):  # the store cleans it on load (_clean_alert_rules)
+                covered.add(inv.alert_rules[alert_id])
             else:
                 counts["unresolved_links"] += 1
     return covered, counts
@@ -594,7 +602,6 @@ async def handle_alert_response(request: web.Request) -> web.Response:
     """GET /api/posture/alert-response?from=&to=. Async: the store isn't thread-safe, so it is
     read on the loop; only the alert scan runs on the route pool."""
     from_ts, to_ts = _parse_time_range(request)
-    severity = {"severity": {"terms": {"field": "suricata.alert.severity", "size": 3}}}
     try:
         # top-signatures' exact scan of the counted alerts, so the groups equal the Alerts list
         buckets, complete = await run_blocking(
@@ -603,7 +610,7 @@ async def handle_alert_response(request: web.Request) -> web.Response:
             from_ts,
             to_ts,
             {"field": "rule.name", "missing_bucket": True},
-            severity,
+            SEVERITY_AGG,
             "posture alert response",
         )
     except PartialResultsError as exc:
@@ -620,12 +627,14 @@ async def handle_alert_response(request: web.Request) -> web.Response:
     store: InvestigationStore = request.app["investigation_store"]
     covered, counts = _coverage(store.open_during(from_ts, to_ts))
     groups = [
-        {"rule": b["key"]["key"], "count": b["doc_count"]}
+        {
+            "rule": b["key"]["key"],
+            "count": b["doc_count"],
+            "investigated": b["key"]["key"] in covered,
+        }
         for b in buckets
         if _primary_severity(b) == _HIGH
     ]
-    for g in groups:
-        g["investigated"] = g["rule"] in covered
     # the ones without an investigation first, then the busiest
     groups.sort(
         key=lambda g: (

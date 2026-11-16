@@ -14,13 +14,15 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
+from api.time_range import _utc
+
 logger = logging.getLogger("nettap.investigation_store")
 
 # Statuses that mean the work is done; their last change stands in for a close time (NET-308)
 _DONE_STATUSES = ("resolved", "closed")
 
 
-def clean_alert_rules(value: object) -> dict[str, str | None]:
+def _clean_alert_rules(value: object) -> dict[str, str | None]:
     """A stored alert_rules map with only well-formed entries: a str alert id to its rule name as
     a str, or None for an alert with no rule name. A bad entry is dropped alone; a non-dict is {}.
     """
@@ -38,15 +40,6 @@ def clean_alert_rules(value: object) -> dict[str, str | None]:
             "Dropped %d malformed alert_rules entries", len(value) - len(clean)
         )
     return clean
-
-
-def _utc(stamp: object) -> datetime | None:
-    """An ISO 8601 time as an aware UTC datetime (a naive one is read as UTC), or None."""
-    try:
-        when = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
 @dataclass
@@ -125,7 +118,7 @@ class InvestigationStore:
                         device_ips=inv_data.get("device_ips", []),
                         notes=notes,
                         tags=inv_data.get("tags", []),
-                        alert_rules=clean_alert_rules(inv_data.get("alert_rules")),
+                        alert_rules=_clean_alert_rules(inv_data.get("alert_rules")),
                     )
                     self._investigations[inv.id] = inv
                 logger.info(
@@ -361,20 +354,19 @@ class InvestigationStore:
     def open_during(self, from_ts: str, to_ts: str) -> list[Investigation]:
         """Investigations open at some point in [from_ts, to_ts]: created by the end, and either
         still open or last changed after the start. NetTap stores no close time, so a done
-        investigation's updated_at stands in for it. An unreadable time leaves the record out."""
+        investigation's updated_at stands in for it. An unreadable record time leaves it out.
+        The window is the caller's, already validated (_parse_time_range)."""
         start, end = _utc(from_ts), _utc(to_ts)
-        if start is None or end is None:
-            raise ValueError("unreadable window")
         found = []
         for inv in self._investigations.values():
-            created = _utc(inv.created_at)
-            if created is None or created > end:
+            done = inv.status in _DONE_STATUSES
+            try:
+                created = _utc(inv.created_at)
+                changed = _utc(inv.updated_at) if done else None
+            except (AttributeError, ValueError):  # not a str, or not an ISO time
                 continue
-            if inv.status in _DONE_STATUSES:
-                changed = _utc(inv.updated_at)
-                if changed is None or changed < start:
-                    continue
-            found.append(inv)
+            if created <= end and (changed is None or changed >= start):
+                found.append(inv)
         return found
 
     def get_stats(self) -> dict:

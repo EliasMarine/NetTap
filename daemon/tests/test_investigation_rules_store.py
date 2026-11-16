@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.investigation_store import InvestigationStore, clean_alert_rules
+from services.investigation_store import InvestigationStore, _clean_alert_rules
 
 FROM, TO = "2026-11-05T00:00:00Z", "2026-11-06T00:00:00Z"
 
@@ -41,6 +41,7 @@ class TestOpenDuring(StoreTestCase):
             (False, "open", "2026-11-06T00:00:01+00:00", "2026-11-06T00:00:01+00:00"),
             (False, "closed", early, "2026-11-04T23:59:59+00:00"),  # closed before
             (False, "open", "yesterday", inside),  # unreadable created_at
+            (False, "open", 7, inside),  # not a str
             (False, "resolved", early, ""),  # closed, unreadable updated_at
         ]
         made = [
@@ -48,10 +49,6 @@ class TestOpenDuring(StoreTestCase):
         ]
         found = {inv.id for inv in self.store.open_during(FROM, TO)}
         self.assertEqual(found, {inv.id for kept, inv in made if kept})
-
-    def test_an_unreadable_window_is_an_error(self):
-        with self.assertRaises(ValueError):
-            self.store.open_during("now-1d", TO)
 
 
 class TestAlertRules(StoreTestCase):
@@ -81,9 +78,9 @@ class TestAlertRules(StoreTestCase):
 
     def test_a_map_that_isnt_one_loads_empty(self):
         with self.assertLogs("nettap.investigation_store", logging.WARNING):
-            self.assertEqual(clean_alert_rules(["a1"]), {})
-        self.assertEqual(clean_alert_rules(None), {})  # a record from before NET-308
-        self.assertEqual(clean_alert_rules({"a": "b"}), {"a": "b"})
+            self.assertEqual(_clean_alert_rules(["a1"]), {})
+        self.assertEqual(_clean_alert_rules(None), {})  # a record from before NET-308
+        self.assertEqual(_clean_alert_rules({"a": "b"}), {"a": "b"})
 
     def test_relinking_fills_the_rule_without_a_second_id(self):
         inv = self.store.create(title="x", alert_ids=["a1"])  # unresolved

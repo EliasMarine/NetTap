@@ -2819,9 +2819,8 @@ class IoTMonitor:
         high_count = 0
         medium_count = 0
         for pair in pairs:
-            if not pair[
-                "reached"
-            ]:  # NET-308: an attempt that got nothing back costs nothing
+            # NET-308: an attempt that got nothing back costs nothing
+            if not pair["reached"]:
                 continue
             r = pair["risk"]
             if r == "critical":

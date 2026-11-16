@@ -398,7 +398,8 @@ const UPDATE_FIX = 'Check for a firmware or software update; replace the device 
 
 export function patchReport(data: ReportData): Report {
 	const { inputs, category, names } = data;
-	const counts = legacyCounts(inputs.protocols.services);
+	// OLD CODE: const counts = legacyCounts(inputs.protocols.services); (NET-308: the record itself, by name)
+	const byName = legacyCounts(inputs.protocols.services);
 	// NET-308: the score's own figures, each connection once
 	const patch = inputs.protocols.patch ?? { legacy: 0, connections: 0 };
 	const detail: PatchDetail | undefined = data.extras['patch-currency'];
@@ -429,8 +430,8 @@ export function patchReport(data: ReportData): Report {
 		if (note) notes.push({ ...note, text: `${serviceLabel(p.name)}: ${note.text}` });
 	}
 
-	const telnetFtp = counts.byName.telnet + counts.byName.ftp;
-	const plainOther = counts.byName.http + counts.byName.pop3 + counts.byName.imap;
+	const telnetFtp = byName.telnet + byName.ftp;
+	const plainOther = byName.http + byName.pop3 + byName.imap;
 	const steps: Step[] = [
 		...(telnetFtp > 0 ? [{ priority: 'high' as const, text: `Turn off Telnet and FTP (${fmt(telnetFtp)} connections): they send passwords in plain text. ${UPDATE_FIX}` }] : []),
 		...(plainOther > 0 ? [{ priority: 'medium' as const, text: `Move devices off plain HTTP, POP3 and IMAP (${fmt(plainOther)} connections) where they offer an encrypted option, usually after an update.` }] : []),
@@ -451,7 +452,7 @@ export function patchReport(data: ReportData): Report {
 			counts: ['Old protocols: plain HTTP, FTP, Telnet, POP3 and IMAP.'],
 			// OLD CODE: limits: [ …, 'A connection with two labels counts twice in the score.'], (NET-308: it counts once)
 			limits: ["NetTap can't read software versions; old protocols are a sign of out-of-date software, not proof."],
-			bars: Object.entries(counts.byName)
+			bars: Object.entries(byName)
 				.filter(([, n]) => n > 0)
 				.map(([name, n], i) => ({ key: name, label: serviceLabel(name), value: n, display: fmt(n), colour: (((i % 6) + 1) as 1 | 2 | 3 | 4 | 5 | 6) })),
 		},

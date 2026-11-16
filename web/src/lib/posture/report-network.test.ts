@@ -159,15 +159,16 @@ describe('alertReport', () => {
 		expect(review.text).toContain('Volume alone is never a reason.');
 	});
 
-	it('says plainly that links made before this change don\'t count, and how to link again (R5)', () => {
+	it('says plainly that links made before this change don\'t count, and how to count the rule (R5)', () => {
 		const old = { ...RESPONSE, investigations: { ...RESPONSE.investigations, unresolved_links: 3, skipped: 1 } };
 		const r = alerts({ inputs: { ...ALERTS, alertResponse: old }, extras: { signatures: SIGS } });
-		expect(r.drivers.counts).toContain('3 alerts linked before this change can’t be matched to a rule, so they don’t count.');
+		expect(r.drivers.counts).toContain(
+			'3 alerts linked before this change can’t be matched to a rule, so they don’t count. To count a rule, open an investigation from one of its alerts.',
+		);
 		expect(r.drivers.counts).toContain('1 investigation record(s) couldn’t be read, so they don’t count.');
 		expect(r.drivers.counts.join(' ')).not.toMatch(/from the alert/);
-		expect(r.drivers.limits).toContain(
-			'To link an alert to an investigation you already have, there is no button yet: send the alert’s id to that investigation’s alerts endpoint (POST /api/investigations/{id}/alerts). An alert whose data has expired can’t be matched to its rule.',
-		);
+		// plain English: no API instructions on the page
+		expect([...r.drivers.counts, ...r.drivers.limits].join(' ')).not.toMatch(/\/api\/|endpoint|POST/);
 		expect(r.drivers.limits).toContain('NetTap keeps no close time, so a closed investigation counts until its last change; a note added after closing keeps it counting.');
 		expect(r.drivers.limits).not.toContain('Investigations count all time; alerts count the last 24 hours.');
 	});

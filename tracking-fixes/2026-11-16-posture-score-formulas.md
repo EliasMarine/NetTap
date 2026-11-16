@@ -68,4 +68,6 @@ drawer and `alert-view` tests. `tests/fake_drill_opensearch.py` learnt the `ids`
 ## Next
 
 - Deploy, then check the six scores on the G11 against the table above.
-- Re-linking an alert to an existing investigation is API-only (no button yet).
+- Re-linking an alert to an existing investigation is API-only (no button yet):
+  `POST /api/investigations/{id}/alerts` with `{"alert_id": "…"}`. The page doesn't say so (plain English);
+  it says to open an investigation from one of the rule's alerts. An expired alert can't be linked.

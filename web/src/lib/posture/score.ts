@@ -9,7 +9,7 @@ import type { DeviceCountResponse } from '$api/devices';
 import type { RiskScoresResponse } from '$api/risk';
 // OLD CODE: import type { InvestigationStats } from '$api/investigations'; (NET-308: alertResponse)
 import type { NetworkIsolation } from '$api/iot';
-import type { AlertResponseDetail } from '$api/posture';
+import { ISOLATION_RISKS, type AlertResponseDetail } from '$api/posture';
 import { nothingFound } from '$api/system';
 import type { HealthCheck } from '$lib/utils/read-health';
 import { fmt } from '$lib/utils/drilldown';
@@ -145,12 +145,12 @@ export function getStatusClass(score: number): string {
 // OLD CODE END
 /** Each legacy service label's connection count, for the findings, bars and steps (a connection
  * with two labels shows under each; the score counts it once, from protocols.patch). */
-export function legacyCounts(services: readonly { name: string; count: number }[]): { byName: Record<string, number> } {
+export function legacyCounts(services: readonly { name: string; count: number }[]): Record<string, number> {
 	const byName: Record<string, number> = {};
 	for (const lp of LEGACY_PROTOCOLS) {
 		byName[lp] = services.filter((s) => s.name.toLowerCase() === lp).reduce((sum, s) => sum + s.count, 0);
 	}
-	return { byName };
+	return byName;
 }
 
 /** The six categories, scored from the five inputs, in the overview's order. */
@@ -267,7 +267,7 @@ export function scoreCategories(inputs: PostureInputs): CategoryScore[] {
 		if (isolationScore === null) return ['No smart (IoT) devices detected yet'];
 		const reached = isolation.pairs.filter((p) => p.reached);
 		const findings: string[] = [];
-		for (const risk of ['critical', 'high', 'medium', 'low']) {
+		for (const risk of ISOLATION_RISKS) {
 			const n = reached.filter((p) => p.risk === risk).length;
 			if (n > 0) findings.push(`${n} ${risk}-risk smart-device connection(s) to your other devices`);
 		}
@@ -280,7 +280,7 @@ export function scoreCategories(inputs: PostureInputs): CategoryScore[] {
 	function patchFindings(): string[] {
 		const findings: string[] = [];
 		for (const lp of LEGACY_PROTOCOLS) {
-			const count = legacy.byName[lp];
+			const count = legacy[lp];
 			if (count > 0) findings.push(`${fmt(count)} ${lp.toUpperCase()} connections (consider upgrading to encrypted variant)`);
 		}
 		// OLD CODE: if (legacy.total === 0) { (NET-308)

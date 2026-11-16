@@ -5,6 +5,7 @@
  */
 import { BRIDGE_NO_DEVICES, lossWords } from '$api/capture';
 import { listWords, pipelineStage } from '$api/system';
+import { ISOLATION_RISKS } from '$api/posture';
 import { alertsHrefForSignature, fmt, ruleHref } from '$lib/utils/drilldown';
 import { suricataLevel, type SeverityLevel } from '$lib/utils/severity';
 import { device, deviceWords, failedSource, notMeasured, scoreKpi, unloaded, type Finding, type Kpi, type Note, type Report, type ReportData, type Source, type Step } from './report';
@@ -40,7 +41,8 @@ function unscoredFinding(unscored: number, what: string): Finding {
 // --- Network segmentation ---
 
 /** The daemon's risk words (isolation pairs, device risk levels) as severity levels */
-const RISK_LEVEL: Record<string, SeverityLevel> = { critical: 'critical', high: 'high', medium: 'medium', low: 'low' };
+// OLD CODE: const RISK_LEVEL: Record<string, SeverityLevel> = { critical: 'critical', high: 'high', medium: 'medium', low: 'low' }; (NET-308: from ISOLATION_RISKS)
+const RISK_LEVEL: Record<string, SeverityLevel> = Object.fromEntries(ISOLATION_RISKS.map((r) => [r, r]));
 
 // OLD CODE START — NET-308: scored baselines (Monitoring coverage's own figure); isolation was only an extra
 // export function segmentationReport(data: ReportData): Report {
@@ -111,7 +113,6 @@ const RISK_LEVEL: Record<string, SeverityLevel> = { critical: 'critical', high: 
 const MOVE_FIX = 'Move smart devices to a guest or IoT network and turn on client isolation, so they can’t reach your computers.';
 const UNCONFIRMED_FIX =
 	'Check this traffic: NetTap saw it sent but couldn’t tell whether it got through. If the device has no reason to talk to that one, move it to a guest or IoT network.';
-const RISKS = ['critical', 'high', 'medium', 'low'] as const;
 
 /** NET-308: the IoT isolation score; only a pair that reached its host (data both ways) costs points. */
 export function segmentationReport(data: ReportData): Report {
@@ -161,7 +162,7 @@ export function segmentationReport(data: ReportData): Report {
 			: isoMeasured
 				? { key, label, icon: 'iot', value: fmt(value), sub }
 				: { key, label, icon: 'iot', value: 'Not measured', sub: 'No smart (IoT) devices detected yet' };
-	const [c, h, m] = ['critical', 'high', 'medium'].map((r) => byRisk(r).length);
+	const [c, h, m] = ISOLATION_RISKS.map((r) => byRisk(r).length);
 
 	return {
 		kpis: [
@@ -170,6 +171,7 @@ export function segmentationReport(data: ReportData): Report {
 			kpi('unconfirmed', 'Reachability not confirmed', unconfirmed.length, 'no data seen both ways'),
 		],
 		drivers: {
+			// keep the weights in step with iot_monitor.py's get_network_isolation (25, 15, 5)
 			formula: `100 − 25 × ${c} critical − 15 × ${h} high − 5 × ${m} medium reached pairs = ${category.score ?? '—'} (pings, low-risk pairs and pairs whose reachability isn’t confirmed cost nothing)`,
 			counts: [
 				`Smart-device connections to your other devices: ${fmt(pairs.length)}; reached (data both ways): ${fmt(reached.length)}.`,
@@ -182,7 +184,7 @@ export function segmentationReport(data: ReportData): Report {
 			],
 			bars: isoMeasured
 				? [
-						...RISKS.map((risk, i) => ({ key: risk, label: `Reached, ${risk} risk`, value: byRisk(risk).length, display: fmt(byRisk(risk).length), colour: ((i + 1) as 1 | 2 | 3 | 4) })),
+						...ISOLATION_RISKS.map((risk, i) => ({ key: risk, label: `Reached, ${risk} risk`, value: byRisk(risk).length, display: fmt(byRisk(risk).length), colour: ((i + 1) as 1 | 2 | 3 | 4) })),
 						{ key: 'unconfirmed', label: 'Reachability not confirmed', value: unconfirmed.length, display: fmt(unconfirmed.length), colour: 5 as const },
 					]
 				: [],
@@ -414,7 +416,7 @@ export function alertReport(data: ReportData): Report {
 			counts: [
 				'Counted: rules whose alerts in the last 24 hours are counted (not activity) and mostly high severity. A rule is one group however often it fired.',
 				`Investigations open at some point in the last 24 hours: ${fmt(inv.open_during)}, linking ${fmt(inv.linked_alerts)} alerts.`,
-				...(inv.unresolved_links > 0 ? [`${fmt(inv.unresolved_links)} alerts linked before this change can’t be matched to a rule, so they don’t count.`] : []),
+				...(inv.unresolved_links > 0 ? [`${fmt(inv.unresolved_links)} alerts linked before this change can’t be matched to a rule, so they don’t count. To count a rule, open an investigation from one of its alerts.`] : []),
 				...(inv.skipped > 0 ? [`${fmt(inv.skipped)} investigation record(s) couldn’t be read, so they don’t count.`] : []),
 			],
 			limits: [
@@ -422,7 +424,6 @@ export function alertReport(data: ReportData): Report {
 				'NetTap keeps no close time, so a closed investigation counts until its last change; a note added after closing keeps it counting.',
 				'It checks that an investigation was opened, not that it was finished.',
 				'Medium and low-severity rules aren’t scored here.',
-				'To link an alert to an investigation you already have, there is no button yet: send the alert’s id to that investigation’s alerts endpoint (POST /api/investigations/{id}/alerts). An alert whose data has expired can’t be matched to its rule.',
 			],
 			bars: [
 				{ key: 'investigated', label: 'With an investigation', value: resp.investigated, display: fmt(resp.investigated), colour: 1 },

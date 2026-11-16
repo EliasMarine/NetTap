@@ -25,7 +25,6 @@ from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
 from services.excluded_ips import (
     CONN_ACCOUNTING,
     PAYLOAD_BOTH,
-    PAYLOAD_FIELDS,
     build_excluded_ips_filter,
     valid_excluded_ips,
 )
@@ -88,8 +87,7 @@ _CONN_STATE_CODES = {
 # counter is one-way too.
 _ICMP_FILTER = {"terms": {"network.transport": ICMP_TRANSPORTS}}
 # OLD CODE: _PAYLOAD_FIELDS = ("zeek.conn.orig_bytes", "zeek.conn.resp_bytes") (NET-308: one
-# definition in services/excluded_ips.py, which IoT isolation reads too)
-_PAYLOAD_FIELDS = PAYLOAD_FIELDS
+# definition, services/excluded_ips.PAYLOAD_FIELDS, which IoT isolation reads too)
 _UNLABELLED_AGG = {
     "filter": {"bool": {"must_not": [{"exists": {"field": "network.protocol"}}]}},
     "aggs": {
@@ -149,6 +147,26 @@ PRIVATE_LOCAL: dict = {"terms": {"destination.ip": PRIVATE_LOCAL_SCOPE}}
 # The Patch currency score's legacy names (moved from api/posture.py); keep in step with
 # web/src/lib/posture/score.ts
 LEGACY_PROTOCOLS = ["http", "ftp", "telnet", "pop3", "imap"]
+# NET-308: the score inputs' filters (moved from api/posture.py, whose detail reads the same sets)
+# #86: local chatter (pings, DNS/DHCP/NTP, discovery, multicast) and STUN can't be encrypted
+ELIGIBLE: dict = {
+    "bool": {
+        "must_not": [
+            *LOCAL_CHATTER_EXCLUSION,
+            {"terms": {"network.protocol": NO_PAYLOAD_PROTOCOLS}},
+        ]
+    }
+}
+# Plain DNS lookups (mDNS/LLMNR are local name services, as on the DNS page) and DNS-over-TLS;
+# DNS-over-HTTPS looks like any HTTPS and can't be told apart
+DNS_PLAIN: dict = {
+    "bool": {
+        "filter": [{"term": {"network.protocol": "dns"}}],
+        "must_not": [{"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}}],
+    }
+}
+DOT: dict = {"term": {"destination.port": 853}}
+LEGACY: dict = {"terms": {"network.protocol": LEGACY_PROTOCOLS}}
 
 # A QUIC connection carries two labels, quic and ssl. Exact counts (terms buckets can be
 # approximate or missing) replace the quic, ssl and unknown entries, so QUIC counts once.
@@ -634,15 +652,9 @@ def handle_protocols(request: web.Request) -> web.Response:
             # #86: Security Posture's Encryption and DNS cards, with the IoT encryption rule (#42).
             # Local chatter (pings, DNS/DHCP/NTP, discovery, multicast) and STUN can't be encrypted
             # traffic, so they are left out of the share
+            # OLD CODE: "encryption": {"filter": {"bool": {"must_not": [...]}}, (NET-308: ELIGIBLE)
             "encryption": {
-                "filter": {
-                    "bool": {
-                        "must_not": [
-                            *LOCAL_CHATTER_EXCLUSION,
-                            {"terms": {"network.protocol": NO_PAYLOAD_PROTOCOLS}},
-                        ]
-                    }
-                },
+                "filter": ELIGIBLE,
                 # OLD CODE: "aggs": {"encrypted": {"filter": ENCRYPTED_CONN_FILTER}}, (NET-308: a one-way
                 # attempt counted as unencrypted; G11 15%, 917,850 unencrypted of which 46,505 both ways)
                 "aggs": {
@@ -656,24 +668,18 @@ def handle_protocols(request: web.Request) -> web.Response:
             # DNS-over-TLS; DNS-over-HTTPS looks like any HTTPS and can't be told apart
             # NET-308: lookups to a private or local-scope resolver (router, Pi-hole) are local, on
             # both sides; the resolver's own lookups out are what the score judges
+            # OLD CODE: "dns_plain": {"filter": {"bool": {...}}}, (NET-308: DNS_PLAIN, defined above)
             "dns_plain": {
-                "filter": {
-                    "bool": {
-                        "filter": [{"term": {"network.protocol": "dns"}}],
-                        "must_not": [
-                            {"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}}
-                        ],
-                    }
-                },
+                "filter": DNS_PLAIN,
                 "aggs": {"private_local": {"filter": PRIVATE_LOCAL}},
             },
             # OLD CODE: "dns_over_tls": {"filter": {"term": {"destination.port": 853}}}, (NET-308)
             "dns_over_tls": {
-                "filter": {"term": {"destination.port": 853}},
+                "filter": DOT,
                 "aggs": {"private_local": {"filter": PRIVATE_LOCAL}},
             },
             # NET-308: Patch currency counts each connection once, not once per label
-            "legacy": {"filter": {"terms": {"network.protocol": LEGACY_PROTOCOLS}}},
+            "legacy": {"filter": LEGACY},
             "connections": {"filter": {"match_all": {}}},
             **_EXACT_SERVICE_AGGS,
         },

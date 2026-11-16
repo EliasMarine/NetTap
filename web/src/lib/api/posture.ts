@@ -140,7 +140,6 @@ export interface PostureDetails {
 	'alert-response': AlertResponseDetail;
 }
 export type DetailSlug = keyof PostureDetails;
-export type TrafficSlug = Exclude<DetailSlug, 'alert-response'>;
 
 // --- Shape checks ---
 
@@ -222,13 +221,14 @@ export async function getPostureDetail<S extends DetailSlug>(slug: S, win: { fro
 
 // --- Smart-device isolation (NET-308: the Network segmentation score) ---
 
-const RISKS: readonly unknown[] = ['critical', 'high', 'medium', 'low'];
+/** The daemon's isolation risk words, worst first (iot_monitor's _classify_isolation_risk) */
+export const ISOLATION_RISKS = ['critical', 'high', 'medium', 'low'] as const;
 const ports: Check = (v) => list(v, (p) => isNumber(p));
 const pair: Check = (v) =>
 	obj(v, {
 		iot_device: (d) => obj(d, { mac: isString, name: isString, ip: isString }),
 		internal_target: (t) => obj(t, { ip: isString }),
-		risk: (r) => RISKS.includes(r),
+		risk: (r) => (ISOLATION_RISKS as readonly unknown[]).includes(r),
 		connection_count: count,
 		ports,
 		reached: isBoolean,
