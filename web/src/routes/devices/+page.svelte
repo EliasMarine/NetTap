@@ -1,11 +1,11 @@
 <script lang="ts">
 	/**
-	 * Devices: every device NetTap sees on the network.
+	 * Devices: every device NetTap sees on the network, as one sortable table (the IP-keyed device
+	 * list) with type filter and search.
 	 *
-	 * - By type: Home's device cards (moved here, PLAN.md §3): the registry, one card per MAC,
-	 *   with each card's traffic from the device list, grouped by device type. Mirror mode only,
-	 *   as on Home.
-	 * - All devices: the IP-keyed device list as a sortable table, with type filter and search.
+	 * NET-296: the owner dropped the By type tab (registry rows grouped by type, mirror mode only), so
+	 * All devices is the whole page. Its code is kept below as OLD CODE. The registry still loads in
+	 * mirror mode for the new-device banner.
 	 *
 	 * NET-160 slice 2b-3: the page reads its window from the URL (`range`, or an exact `from`/`to`
 	 * shown as Custom), so Home's Devices card opens the devices it counted. One list reply answers
@@ -20,8 +20,10 @@
 	// OLD CODE END
 	import { getDevices } from '$api/devices';
 	import type { Device, DeviceListResponse } from '$api/devices';
-	import { countDifference, customRange, DRILL_RANGES, fmt, linkedCount, rangeWindow, startRange, type LinkedCount } from '$lib/utils/drilldown';
-	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
+	// OLD CODE: import { countDifference, customRange, DRILL_RANGES, fmt, … } (NET-296: fmt was By type's connections)
+	import { countDifference, customRange, DRILL_RANGES, linkedCount, rangeWindow, startRange, type LinkedCount } from '$lib/utils/drilldown';
+	// OLD CODE: import { getNewDeviceCount, getRegistryDevices, isNewDevice } … (NET-296: isNewDevice was By type's New chip)
+	import { getNewDeviceCount, getRegistryDevices } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
 	import { BRIDGE_NO_DEVICES, getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
@@ -29,7 +31,7 @@
 	import { nothingFound } from '$api/system';
 	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
-	import { withTraffic } from '$lib/utils/registry-traffic';
+	// OLD CODE: import { withTraffic } from '$lib/utils/registry-traffic'; (NET-296: By type only)
 	import { likelyType, osBasis, typeBasis } from '$lib/utils/device-guess';
 	import { ipv6ListNotes } from '$lib/utils/ipv6-coverage';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
@@ -45,7 +47,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import { deviceIcon } from '$lib/components/ui/device-icon';
-	import { groupByType } from './device-types';
+	// OLD CODE: import { groupByType } from './device-types'; (NET-296: By type only)
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -139,26 +141,29 @@
 	let categoryFilter = $state('all');
 	let autoRefresh = $state(false);
 
-	// By type: Home's registry cards (mirror mode only)
+	// OLD CODE: // By type: Home's registry cards (mirror mode only) (NET-296: the registry now feeds only the new-device banner)
 	let captureMode = $state<CaptureMode | null>(null);
-	let modeFailed = $state(false);
+	// OLD CODE: let modeFailed = $state(false); (NET-296: only By type said the mode failed)
 	let registryDevices = $state<RegistryDevice[]>([]);
+	// NET-296: By type said a failed registry; now the banner's own notice does
 	let registryFailed = $state(false);
 	const isMirrorMode = $derived(captureMode?.mode === 'mirror');
 	// NET-225: post-NAT, every device's IPv4 traffic carries the router's address
 	const isBridgeMode = $derived(captureMode?.mode === 'bridge');
 
-	// The tab the user picked; until then the URL's `view`; else By type in mirror mode, All devices otherwise
-	let pickedView = $state<'type' | 'all' | null>(null);
-	// OLD CODE START — NET-160 slice 2b-3: no URL view, so Home's card couldn't open All devices
-	// const view = $derived(pickedView ?? (isMirrorMode ? 'type' : 'all'));
+	// OLD CODE START — NET-296: the By type / All devices tabs; All devices is the whole page, and a link's `view` is ignored
+	// // The tab the user picked; until then the URL's `view`; else By type in mirror mode, All devices otherwise
+	// let pickedView = $state<'type' | 'all' | null>(null);
+	// // (inner) OLD CODE START — NET-160 slice 2b-3: no URL view, so Home's card couldn't open All devices
+	// // const view = $derived(pickedView ?? (isMirrorMode ? 'type' : 'all'));
+	// // (inner) OLD CODE END
+	// const VIEWS = [
+	// 	{ value: 'type' as const, label: 'By type' },
+	// 	{ value: 'all' as const, label: 'All devices' },
+	// ];
+	// const urlView = $derived(VIEWS.find((v) => v.value === params.get('view'))?.value ?? null);
+	// const view = $derived(pickedView ?? urlView ?? (isMirrorMode ? 'type' : 'all'));
 	// OLD CODE END
-	const VIEWS = [
-		{ value: 'type' as const, label: 'By type' },
-		{ value: 'all' as const, label: 'All devices' },
-	];
-	const urlView = $derived(VIEWS.find((v) => v.value === params.get('view'))?.value ?? null);
-	const view = $derived(pickedView ?? urlView ?? (isMirrorMode ? 'type' : 'all'));
 
 	// OLD CODE START — NET-201: By type is the list only (the owner asked to drop the cards), so there is no layout to pick
 	// // NET-180: By type as cards or compact rows, remembered per browser (a convenience, not data)
@@ -355,10 +360,10 @@
 			if (linked?.gen === g) linked = { ...linked, observed: total };
 		}
 		devicesFailed = listRes.status === 'rejected';
-		// a failed mode keeps the last one; with none, By type says so instead of guessing bridge
+		// a failed mode keeps the last one; with none there is no bridge notice (never a guess)
 		if (modeRes.status === 'fulfilled') captureMode = modeRes.value;
-		modeFailed = modeRes.status === 'rejected';
-		// #96: a failed registry keeps the last cards; it never reads as "No devices detected yet"
+		// OLD CODE: modeFailed = modeRes.status === 'rejected'; (NET-296)
+		// a failed registry keeps the last banner devices
 		if (registryRes?.status === 'fulfilled') registryDevices = registryRes.value.devices;
 		registryFailed = registryRes?.status === 'rejected';
 		loading = false;
@@ -366,11 +371,12 @@
 		return outcome([listRes, newRes, modeRes, ...(registryRes ? [registryRes] : [])]);
 	}
 
-	/** A range pill: a rolling window ending now, so the link's exact window (Custom) goes; the URL's tab stays. */
+	// OLD CODE: /** A range pill: … the link's exact window (Custom) goes; the URL's tab stays. */ (NET-296: no tabs)
+	/** A range pill: a rolling window ending now, so the link's exact window (Custom) goes. */
 	function pickRange(value: string) {
 		if (value === 'custom') return;
 		const q = new URLSearchParams({ range: value });
-		if (urlView) q.set('view', urlView);
+		// OLD CODE: if (urlView) q.set('view', urlView); (NET-296: no tabs)
 		void goto(`${$page.url.pathname}?${q}`, { replaceState: true, keepFocus: true, noScroll: true });
 	}
 
@@ -414,12 +420,14 @@
 	// Derived
 	// ---------------------------------------------------------------------------
 
-	// Home's device cards: the range's traffic per IP; a list shorter than its limit holds every device
-	// OLD CODE: const deviceCards = $derived(withTraffic(registryDevices, listFrom ? devices : null, devices.length < LIST_LIMIT, listFrom ?? '')); (slice 2b-3: one reading)
-	// OLD CODE: const deviceCards = $derived(withTraffic(registryDevices, loaded ? devices : null, devices.length < LIST_LIMIT, loaded?.from ?? '')); (slice 2b-3 review: exactly LIST_LIMIT devices read as cut off)
-	// the list holds every device when it holds the reading's `total`
-	const deviceCards = $derived(withTraffic(registryDevices, loaded ? devices : null, loaded !== null && devices.length >= loaded.total, loaded?.from ?? ''));
-	const typeGroups = $derived(groupByType(deviceCards));
+	// OLD CODE START — NET-296: By type's rows, the registry with the list's traffic, grouped by type
+	// // Home's device cards: the range's traffic per IP; a list shorter than its limit holds every device
+	// // OLD CODE: const deviceCards = $derived(withTraffic(registryDevices, listFrom ? devices : null, devices.length < LIST_LIMIT, listFrom ?? '')); (slice 2b-3: one reading)
+	// // OLD CODE: const deviceCards = $derived(withTraffic(registryDevices, loaded ? devices : null, devices.length < LIST_LIMIT, loaded?.from ?? '')); (slice 2b-3 review: exactly LIST_LIMIT devices read as cut off)
+	// // the list holds every device when it holds the reading's `total`
+	// const deviceCards = $derived(withTraffic(registryDevices, loaded ? devices : null, loaded !== null && devices.length >= loaded.total, loaded?.from ?? ''));
+	// const typeGroups = $derived(groupByType(deviceCards));
+	// OLD CODE END
 
 	let filteredDevices = $derived.by(() => {
 		let list = [...devices];
@@ -499,26 +507,28 @@
 	// }
 	// OLD CODE END
 
-	/** A registry card's traffic: undefined is unknown (the list didn't cover it), 0 is a real zero. */
-	function cardBytes(bytes: number | undefined): string {
-		return bytes === undefined || bytes < 0 ? '—' : formatBytes(bytes);
-	}
-
-	// NET-180: the card and its List row read these, so both show the same figures
-	const cardName = (d: RegistryDevice) => d.display_name || d.mac;
-	/** NET-200: List-row photo URLs that failed to load; those rows show the icon instead. */
-	let failedPhotos = $state(new Set<string>());
-	const photoFailed = (url: string | null | undefined) => {
-		if (url) failedPhotos = new Set([...failedPhotos, url]);
-	};
-	const cardAddress = (d: RegistryDevice) => d.ips[0] ?? d.mac;
-	const cardConnections = (d: RegistryDevice) => (d.connection_count != null ? fmt(d.connection_count) : '—');
-	/** Some of the device's addresses weren't in the device list, so its traffic is theirs only. */
-	const partlyListed = (d: RegistryDevice) => !!d.ips_listed && d.ips_listed < d.ips.length;
-	const openCard = (d: RegistryDevice) => goto(`/devices/mac/${encodeURIComponent(d.mac)}`);
-	/** A List row's address suffix: " +2 · 2 of 3 listed" (the card's addresses note, shortened). */
-	const addressMore = (d: RegistryDevice) =>
-		(d.ips.length > 1 ? ` +${d.ips.length - 1}` : '') + (partlyListed(d) ? ` · ${d.ips_listed} of ${d.ips.length} listed` : '');
+	// OLD CODE START — NET-296: By type's row helpers (rows opened /devices/mac/<mac>)
+	// /** A registry card's traffic: undefined is unknown (the list didn't cover it), 0 is a real zero. */
+	// function cardBytes(bytes: number | undefined): string {
+	// 	return bytes === undefined || bytes < 0 ? '—' : formatBytes(bytes);
+	// }
+//
+	// // NET-180: the card and its List row read these, so both show the same figures
+	// const cardName = (d: RegistryDevice) => d.display_name || d.mac;
+	// /** NET-200: List-row photo URLs that failed to load; those rows show the icon instead. */
+	// let failedPhotos = $state(new Set<string>());
+	// const photoFailed = (url: string | null | undefined) => {
+	// 	if (url) failedPhotos = new Set([...failedPhotos, url]);
+	// };
+	// const cardAddress = (d: RegistryDevice) => d.ips[0] ?? d.mac;
+	// const cardConnections = (d: RegistryDevice) => (d.connection_count != null ? fmt(d.connection_count) : '—');
+	// /** Some of the device's addresses weren't in the device list, so its traffic is theirs only. */
+	// const partlyListed = (d: RegistryDevice) => !!d.ips_listed && d.ips_listed < d.ips.length;
+	// const openCard = (d: RegistryDevice) => goto(`/devices/mac/${encodeURIComponent(d.mac)}`);
+	// /** A List row's address suffix: " +2 · 2 of 3 listed" (the card's addresses note, shortened). */
+	// const addressMore = (d: RegistryDevice) =>
+	// 	(d.ips.length > 1 ? ` +${d.ips.length - 1}` : '') + (partlyListed(d) ? ` · ${d.ips_listed} of ${d.ips.length} listed` : '');
+	// OLD CODE END
 
 	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
 	// function formatNumber(n: number): string {
@@ -603,19 +613,21 @@
 		{ key: 'last_seen', label: 'Last seen', cell: seenCell, sortValue: (d) => (d.last_seen ? Date.parse(d.last_seen) : null) },
 	];
 
-	// NET-180: By type's List layout. Unknown figures sort as missing (last both ways), never as 0;
-	// Last seen descending is the cards' order (device-types.ts)
-	const listColumns: Column<RegistryDevice>[] = [
-		{ key: 'name', label: 'Device', cell: listDeviceCell, sortValue: cardName },
-		{ key: 'address', label: 'Address', cell: listAddressCell, sortValue: cardAddress },
-		{ key: 'manufacturer', label: 'Maker', cell: listMakerCell, sortValue: (d) => d.manufacturer || null },
-		{
-			key: 'total_bytes', label: 'Traffic', numeric: true, cell: listBytesCell,
-			sortValue: (d) => (d.total_bytes === undefined || d.total_bytes < 0 ? null : d.total_bytes),
-		},
-		{ key: 'connection_count', label: 'Connections', numeric: true, cell: listConnCell, sortValue: (d) => d.connection_count ?? null },
-		{ key: 'last_seen', label: 'Last seen', cell: listSeenCell, sortValue: (d) => Date.parse(d.last_seen) },
-	];
+	// OLD CODE START — NET-296: By type's columns
+	// // NET-180: By type's List layout. Unknown figures sort as missing (last both ways), never as 0;
+	// // Last seen descending is the cards' order (device-types.ts)
+	// const listColumns: Column<RegistryDevice>[] = [
+	// 	{ key: 'name', label: 'Device', cell: listDeviceCell, sortValue: cardName },
+	// 	{ key: 'address', label: 'Address', cell: listAddressCell, sortValue: cardAddress },
+	// 	{ key: 'manufacturer', label: 'Maker', cell: listMakerCell, sortValue: (d) => d.manufacturer || null },
+	// 	{
+	// 		key: 'total_bytes', label: 'Traffic', numeric: true, cell: listBytesCell,
+	// 		sortValue: (d) => (d.total_bytes === undefined || d.total_bytes < 0 ? null : d.total_bytes),
+	// 	},
+	// 	{ key: 'connection_count', label: 'Connections', numeric: true, cell: listConnCell, sortValue: (d) => d.connection_count ?? null },
+	// 	{ key: 'last_seen', label: 'Last seen', cell: listSeenCell, sortValue: (d) => Date.parse(d.last_seen) },
+	// ];
+	// OLD CODE END
 
 	function resetFilters() {
 		searchQuery = '';
@@ -660,10 +672,11 @@ OLD CODE END -->
 {#snippet alertCell(d: Device)}{formatNumber(d.alert_count)}{/snippet}
 {#snippet seenCell(d: Device)}{timeAgo(d.last_seen)}{/snippet}
 
-<!-- NET-180: By type's List rows. The Device cell sits inside the row's button: no links or buttons in it -->
+<!-- OLD CODE START — NET-296: By type's row cells (inner comments written <! - - … - - >)
+<! - - NET-180: By type's List rows. The Device cell sits inside the row's button: no links or buttons in it - - >
 {#snippet listDeviceCell(d: RegistryDevice)}
-	<!-- OLD CODE: <span class="who"><Icon name={deviceIcon(d.category)} /> … (NET-200: the owner's photo or picked icon) -->
-	<!-- PR #214 review: a photo that fails to load falls back to the icon, as DeviceTile does (it hid the image and left a gap) -->
+	<! - - OLD CODE: <span class="who"><Icon name={deviceIcon(d.category)} /> … (NET-200: the owner's photo or picked icon) - - >
+	<! - - PR #214 review: a photo that fails to load falls back to the icon, as DeviceTile does (it hid the image and left a gap) - - >
 	<span class="who">{#if d.picture && !failedPhotos.has(d.picture)}<img class="who-photo" src={d.picture} alt="" width="20" height="20" loading="lazy" onerror={() => photoFailed(d.picture)} />{:else}<Icon name={deviceIcon(d.icon ?? d.category)} />{/if}<span class="who-name">{cardName(d)}</span>{#if isNewDevice(d)}<span class="chip is-ok">New</span>{/if}</span>
 {/snippet}
 {#snippet listAddressCell(d: RegistryDevice)}
@@ -675,6 +688,7 @@ OLD CODE END -->
 {#snippet listBytesCell(d: RegistryDevice)}{cardBytes(d.total_bytes)}{/snippet}
 {#snippet listConnCell(d: RegistryDevice)}{cardConnections(d)}{/snippet}
 {#snippet listSeenCell(d: RegistryDevice)}{timeAgo(d.last_seen)}{/snippet}
+OLD CODE END -->
 
 <svelte:head>
 	<title>Devices | NetTap</title>
@@ -703,6 +717,10 @@ OLD CODE END -->
 {/if}
 
 <!-- New device detection banner (mirror mode), fed from the registry as on Home -->
+<!-- NET-296: with By type gone, a failed registry would only hide the banner; say so instead -->
+{#if isMirrorMode && registryFailed}
+	<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed('new devices', registryDevices.length > 0)}</span></p>
+{/if}
 {#if isMirrorMode && registryDevices.length > 0}
 	<NewDeviceBanner devices={registryDevices} />
 {/if}
@@ -759,14 +777,15 @@ OLD CODE END -->
 	{/if}
 </div>
 
+<!-- OLD CODE START — NET-296: the tab strip and the By type panel (inner comments written <! - - … - - >)
 <div>
 	<Pills mode="tabs" idPrefix="devices" ariaLabel="Device view" options={VIEWS} value={view} onchange={(v) => (pickedView = v)} />
 </div>
 
-<!-- OLD CODE START — NET-160 slice 2b-3: By type's and All devices' subtitles and note said "the last 24 hours"
+<! - - OLD CODE START — NET-160 slice 2b-3: By type's and All devices' subtitles and note said "the last 24 hours"
      whatever the window: sub="Grouped by device type · traffic in the last 24 hours",
      sub="Busiest first · traffic in the last 24 hours" and "Traffic in the last 24 hours from the listed addresses…"
-OLD CODE END -->
+OLD CODE END - - >
 <div role="tabpanel" id="devices-panel-type" aria-labelledby="devices-tab-type" hidden={view !== 'type'}>
 	{#if view === 'type'}
 		{#if loading && !captureMode}
@@ -779,7 +798,7 @@ OLD CODE END -->
 			</Card>
 		{:else if !isMirrorMode}
 			<Card title="Devices by type" sub="Grouped by device type">
-				<!-- OLD CODE: message="All devices lists every device NetTap sees in this capture mode." (NET-225: in bridge mode it sees none) -->
+				<! - - OLD CODE: message="All devices lists every device NetTap sees in this capture mode." (NET-225: in bridge mode it sees none) - - >
 				<CardState
 					state="empty"
 					icon="devices"
@@ -801,16 +820,16 @@ OLD CODE END -->
 			</Card>
 		{:else}
 			{#if registryFailed}
-				<!-- OLD CODE: <p class="note">{loadFailed('devices', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+				<! - - OLD CODE: <p class="note">{loadFailed('devices', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) - - >
 				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('devices', true)}</span></p>
 			{/if}
-			<!-- NET-158: a card adds up the device list's rows for its addresses; an address another device took since counts on both -->
-			<!-- OLD CODE START — NET-180: the note stood alone; the Cards / List switch now sits beside it -->
-			<!-- <p class="note">Traffic in the last 24 hours from the listed addresses each device has used.</p> -->
-			<!-- OLD CODE END -->
+			<! - - NET-158: a card adds up the device list's rows for its addresses; an address another device took since counts on both - - >
+			<! - - OLD CODE START — NET-180: the note stood alone; the Cards / List switch now sits beside it - - >
+			<! - - <p class="note">Traffic in the last 24 hours from the listed addresses each device has used.</p> - - >
+			<! - - OLD CODE END - - >
 			<div class="type-head">
 				<p class="note">Traffic in the {words} from the listed addresses each device has used.</p>
-				<!-- OLD CODE: <Pills ariaLabel="Layout" options={LAYOUTS} value={layout} onchange={pickLayout} /> (NET-201: the list only) -->
+				<! - - OLD CODE: <Pills ariaLabel="Layout" options={LAYOUTS} value={layout} onchange={pickLayout} /> (NET-201: the list only) - - >
 			</div>
 			<div class="type-groups">
 				{#each typeGroups as group (group.key)}
@@ -819,7 +838,7 @@ OLD CODE END -->
 							<h2 class="card-title" id="type-{group.key}">{group.label}</h2>
 							<span class="chip">{group.devices.length}</span>
 						</div>
-						<!-- OLD CODE: {#if layout === 'list'} (NET-201: By type is the list only; the Cards markup is kept below) -->
+						<! - - OLD CODE: {#if layout === 'list'} (NET-201: By type is the list only; the Cards markup is kept below) - - >
 							<div class="card dev-list">
 								<DataTable
 									ariaLabel="{group.label}, as a list"
@@ -831,7 +850,7 @@ OLD CODE END -->
 									columns={listColumns}
 								/>
 							</div>
-						<!-- OLD CODE START — NET-201: the Cards layout (NET-180), dropped at the owner's request. Its own
+						<! - - OLD CODE START — NET-201: the Cards layout (NET-180), dropped at the owner's request. Its own
 						     comments are written <! - - … - - > so this one stays whole.
 						{:else}
 							<div class="grid">
@@ -871,16 +890,19 @@ OLD CODE END -->
 								{/each}
 							</div>
 						{/if}
-						OLD CODE END -->
+						OLD CODE END - - >
 					</section>
 				{/each}
 			</div>
 		{/if}
 	{/if}
 </div>
+OLD CODE END -->
 
+<!-- OLD CODE START — NET-296: All devices sat in its tab panel
 <div role="tabpanel" id="devices-panel-all" aria-labelledby="devices-tab-all" hidden={view !== 'all'}>
 	{#if view === 'all'}
+OLD CODE END -->
 		<Card title="All devices" sub="Busiest first · traffic in the {words}">
 			{#if loading && devices.length === 0}
 				<CardState state="loading" title="Loading devices" />
@@ -928,15 +950,19 @@ OLD CODE END -->
 				{/each}
 			{/if}
 		</Card>
+<!-- OLD CODE START — NET-296: the tab panel's close
 	{/if}
 </div>
+OLD CODE END -->
 
 <style>
-	/* OLD CODE: Layout glue the system lacks: the By type groups and their device cards (NET-201: no cards) */
-	/* Layout glue the system lacks: the By type groups and their lists */
+	/* OLD CODE START — NET-296: By type's group styles (inner comments written (* … *))
+	(* OLD CODE: Layout glue the system lacks: the By type groups and their device cards (NET-201: no cards) *)
+	(* Layout glue the system lacks: the By type groups and their lists *)
 	.type-groups { display: flex; flex-direction: column; gap: var(--sp-6); }
 	.type-group { display: flex; flex-direction: column; gap: var(--sp-3); }
 	.group-head { display: flex; align-items: center; gap: var(--sp-2); }
+	OLD CODE END */
 	/* OLD CODE START — NET-201: the Cards layout's styles (its own comments written (* … *))
 	.dev-card { display: flex; flex-direction: column; gap: var(--sp-3); text-decoration: none; color: var(--text-1); }
 	.dev-card:hover { border-color: var(--line-strong); }
@@ -950,10 +976,12 @@ OLD CODE END -->
 	}
 	.dev-card-about { display: flex; flex-direction: column; }
 	OLD CODE END */
+	/* OLD CODE START — NET-296: By type's head and list styles
 	.type-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-3); }
 	.type-head .note { margin-bottom: 0; }
-	/* compact rows: one line each */
+	(* compact rows: one line each *)
 	.dev-list :global(tbody td) { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+	OLD CODE END */
 	/* OLD CODE START — NET-201: the Cards layout's styles
 	.dev-card-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; }
 	.dev-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -967,7 +995,9 @@ OLD CODE END -->
 	/* NET-226: what the table's figures count, under it */
 	.table-note { margin-top: var(--sp-3); margin-bottom: 0; }
 	.basis { color: var(--text-3); font-size: var(--text-xs); }
+	/* OLD CODE START — NET-296: By type's stale note and row photo
 	.load-note { margin-bottom: var(--sp-3); }
-	/* NET-200: the owner's photo in a List row, the size of the row's icon slot */
+	(* NET-200: the owner's photo in a List row, the size of the row's icon slot *)
 	.who-photo { width: 20px; height: 20px; flex: none; border-radius: var(--r-xs); object-fit: cover; }
+	OLD CODE END */
 </style>

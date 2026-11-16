@@ -243,14 +243,16 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		const first = await firstLoad();
 		const href = () => new URL(kpi('Devices').getAttribute('href')!, 'http://x');
 		expect(href().pathname).toBe('/devices');
-		expect(params(kpi('Devices'))).toEqual({ view: 'all', range: '24h' });
+		// OLD CODE: …toEqual({ view: 'all', range: '24h' }); (NET-296: no view in the link)
+		expect(params(kpi('Devices'))).toEqual({ range: '24h' });
 
 		first.forEach((c) => c.reply());
 		await settle();
 		expect(kpi('Devices')).toHaveTextContent('3');
 		expect(href().pathname).toBe('/devices');
 		// OLD CODE: expect(params(kpi('Devices'))).toEqual({ view: 'all', ...REPLY, range: '24h' }); (section D: the figure too)
-		expect(params(kpi('Devices'))).toEqual({ view: 'all', ...REPLY, range: '24h', count: '3' });
+		// OLD CODE: …toEqual({ view: 'all', ...REPLY, range: '24h', count: '3' }); (NET-296)
+		expect(params(kpi('Devices'))).toEqual({ ...REPLY, range: '24h', count: '3' });
 	});
 
 	it("after 24h loads, choosing 7d links the Devices card by range alone while 7d loads and after its count fails", async () => {
@@ -260,12 +262,12 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 
 		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
 		await vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(REQUESTS * 2));
-		expect(params(kpi('Devices'))).toEqual({ view: 'all', range: '7d' });
+		expect(params(kpi('Devices'))).toEqual({ range: '7d' }); // OLD CODE: { view: 'all', range: '7d' } (NET-296)
 
 		calls.slice(REQUESTS).forEach((c) => (c.path === '/api/devices/count' ? c.fail() : c.reply()));
 		await settle();
 		expect(kpi('Devices')).toHaveTextContent('—');
-		expect(params(kpi('Devices'))).toEqual({ view: 'all', range: '7d' });
+		expect(params(kpi('Devices'))).toEqual({ range: '7d' }); // OLD CODE: { view: 'all', range: '7d' } (NET-296)
 	});
 
 	it('a card with no number links by range alone', async () => {
