@@ -5,6 +5,8 @@
   the chart is role="img" and its aria-label carries the headline. Empty series render nothing.
   With `onpick` (NET-249) the chart is a focusable group: a click or tap picks a point, a drag
   picks a range, and the arrow keys (Shift for a range) and Enter do the same from the keyboard.
+  With `gaps`, a stretch where no series has a value is a hatched "No data" band whose tooltip says
+  why, and the chart is a focusable group too, so the arrow keys can read every point (chart gaps).
 -->
 <script lang="ts" module>
 	export interface AreaSeries {
@@ -18,7 +20,7 @@
 
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { monotonePath, finiteRuns, fitAxis, fitByteAxis, labelStep, nearestIndex, tipBox, type Point } from './geometry';
+	import { monotonePath, finiteRuns, emptyRuns, fitAxis, fitByteAxis, labelStep, nearestIndex, tipBox, type Point } from './geometry';
 	import { observeWidth } from './resize';
 
 	let {
@@ -44,7 +46,8 @@
 		height?: number;
 		/** Values are bytes: ticks land on round decimal units (1 GB = 10^9 bytes), like the byte formatters. */
 		bytes?: boolean;
-		/** Break the line and fill at a non-finite value, so a missing point shows as a gap (NET-205). Off: drawn across it. */
+		/** Break the line and fill at a non-finite value, so a missing point shows as a gap (NET-205); a stretch with no
+		 * value in any series is a hatched "No data" band with a tooltip, read by the arrow keys too (chart gaps). Off: drawn across it. */
 		gaps?: boolean;
 		/** Points `from..to` (inclusive indices into `series`) were picked by click, drag or keyboard (NET-249). Without it the chart is a picture. */
 		onpick?: (from: number, to: number) => void;
@@ -66,6 +69,9 @@
 	/** A drag shorter than this (px) is a click, so a shaky tap still picks one point. */
 	const CLICK_SLOP = 4;
 	const KEY_HELP = 'Use the left and right arrow keys to choose a point, Shift with an arrow key to choose a range, and Enter to open it.';
+	const READ_HELP = 'Use the left and right arrow keys to read each point.';
+	/** A "No data" band at least this wide (px) carries its label, at tipBox's 6.2 px a character. */
+	const NODATA_LABEL_MIN = 64;
 
 	const w = $derived(Math.max(MIN_WIDTH, Math.round(measured) || FALLBACK_WIDTH));
 	const h = $derived(Math.max(height, Math.round(measuredH)));
@@ -85,6 +91,10 @@
 	const highlight = $derived(
 		highlightIndex !== undefined && highlightIndex >= 0 && highlightIndex < n ? highlightIndex : null,
 	);
+	/** Keyboard reading: a picked chart, or one whose gaps explain themselves only in the tooltip (chart gaps) */
+	const inspectable = $derived(!!onpick || gaps);
+	/** With gaps: the stretches where no series has a value, each drawn as a "No data" band */
+	const holes = $derived(gaps ? emptyRuns(n, (i) => series.some((s) => Number.isFinite(s.points[i]?.v))) : []);
 	// OLD CODE: const active = $derived(hoverIndex ?? highlight); (NET-249: the keyboard's point shows its tooltip too)
 	const active = $derived(hoverIndex ?? focusIndex ?? highlight);
 	/** The range being picked (a drag, or Shift+arrows from an anchor); null for none or a single point. */
@@ -144,9 +154,12 @@
 		const dots = series
 			.filter((s) => Number.isFinite(s.points[i]?.v))
 			.map((s) => ({ colour: s.colour, x: X(i), y: Y(s.points[i].v) }));
-		if (dots.length === 0) return null;
+		// OLD CODE: if (dots.length === 0) return null; (chart gaps: a "No data" point says why in its tooltip)
+		if (dots.length === 0 && !holes.some(([a, b]) => i >= a && i <= b)) return null;
 		const text = formatTip(i);
-		return { dots, text, tip: tipBox(X(i), Math.min(...dots.map((d) => d.y)), text, w) };
+		// a "No data" point has no dot: its tooltip is centred on the plot's middle
+		const y = dots.length ? Math.min(...dots.map((d) => d.y)) : PAD.t + ih / 2 + 26;
+		return { dots, text, tip: tipBox(X(i), y, text, w) };
 	}
 	const mark = $derived(active === null ? null : marker(active));
 
@@ -200,8 +213,10 @@
 	};
 
 	function onkeydown(e: KeyboardEvent) {
-		if (!onpick || n === 0) return;
+		// OLD CODE: if (!onpick || n === 0) return; (chart gaps: a gaps chart reads its points without onpick)
+		if (!inspectable || n === 0) return;
 		if (e.key === 'Enter' || e.key === ' ') {
+			if (!onpick) return; // reading only: nothing to open
 			e.preventDefault();
 			if (e.repeat) return; // a held key opens one moment, not one per repeat
 			const point = focusIndex ?? highlight;
@@ -216,7 +231,8 @@
 		e.preventDefault();
 		// from nothing chosen, the first step lands next to the headline, or on the first point
 		const current = focusIndex ?? highlight ?? -1;
-		anchor = e.shiftKey ? (anchor ?? Math.max(0, current)) : null;
+		// OLD CODE: anchor = e.shiftKey ? (anchor ?? Math.max(0, current)) : null; (chart gaps: a range is for picking only)
+		anchor = e.shiftKey && onpick ? (anchor ?? Math.max(0, current)) : null;
 		focusIndex = Math.max(0, Math.min(n - 1, move(current)));
 	}
 </script>
@@ -242,16 +258,22 @@
 		>
 	OLD CODE END -->
 	<!-- a picked chart is one keyboard stop that moves between its points, as DotMap's hotspots are buttons -->
+	<!-- OLD CODE (chart gaps: `onpick` became `inspectable`, so a gaps chart reads its points by keyboard too):
+	     role={onpick ? 'group' : undefined} tabindex={onpick ? 0 : undefined}
+	     aria-label={onpick ? `${ariaLabel.replace(/\.?$/, '.')} ${KEY_HELP}` : undefined}
+	     onkeydown={onpick ? onkeydown : undefined} onblur={onpick ? clearPick : undefined}
+	     svg: role={onpick ? undefined : 'img'} aria-label={onpick ? undefined : ariaLabel} aria-hidden={onpick ? 'true' : undefined}
+	     {#if onpick}<span class="sr-only" aria-live="polite">{liveText}</span>{/if} -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
 		class="chart"
 		class:pickable={!!onpick}
 		style:min-height="{height}px"
-		role={onpick ? 'group' : undefined}
-		tabindex={onpick ? 0 : undefined}
-		aria-label={onpick ? `${ariaLabel.replace(/\.?$/, '.')} ${KEY_HELP}` : undefined}
-		onkeydown={onpick ? onkeydown : undefined}
-		onblur={onpick ? clearPick : undefined}
+		role={inspectable ? 'group' : undefined}
+		tabindex={inspectable ? 0 : undefined}
+		aria-label={inspectable ? `${ariaLabel.replace(/\.?$/, '.')} ${onpick ? KEY_HELP : READ_HELP}` : undefined}
+		onkeydown={inspectable ? onkeydown : undefined}
+		onblur={inspectable ? clearPick : undefined}
 		{@attach observeWidth((width, ht) => {
 			measured = width;
 			measuredH = ht;
@@ -261,9 +283,9 @@
 			viewBox="0 0 {w} {h}"
 			width={w}
 			height={h}
-			role={onpick ? undefined : 'img'}
-			aria-label={onpick ? undefined : ariaLabel}
-			aria-hidden={onpick ? 'true' : undefined}
+			role={inspectable ? undefined : 'img'}
+			aria-label={inspectable ? undefined : ariaLabel}
+			aria-hidden={inspectable ? 'true' : undefined}
 			{onpointermove}
 			{onpointerdown}
 			{onpointerup}
@@ -279,6 +301,11 @@
 						<stop offset="1" class="st-bot" />
 					</linearGradient>
 				{/each}
+				{#if gaps}
+					<pattern id="{uid}-nodata" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+						<line class="hatch" x1="0" y1="0" x2="0" y2="6" />
+					</pattern>
+				{/if}
 			</defs>
 			{#each axis.values as v, k (k)}
 				<line class="gl" class:dash={v > 0} x1={PAD.l} x2={w - PAD.r} y1={Y(v).toFixed(1)} y2={Y(v).toFixed(1)} />
@@ -287,6 +314,15 @@
 			{#each ts as t, i (i)}
 				{#if i % every === 0}
 					<text class="ax" x={X(i).toFixed(1)} y={h - 6} text-anchor="middle">{formatX(t)}</text>
+				{/if}
+			{/each}
+			<!-- chart gaps: each stretch with no value is hatched from the last point before it to the first after it -->
+			{#each holes as [a, b] (a)}
+				{@const x0 = a === 0 ? PAD.l : X(a - 1)}
+				{@const x1 = b === n - 1 ? PAD.l + iw : X(b + 1)}
+				<rect class="nodata" x={x0.toFixed(1)} y={PAD.t} width={(x1 - x0).toFixed(1)} height={ih} fill="url(#{uid}-nodata)" />
+				{#if x1 - x0 >= NODATA_LABEL_MIN}
+					<text class="ax" x={((x0 + x1) / 2).toFixed(1)} y={(PAD.t + ih / 2 + 4).toFixed(1)} text-anchor="middle">No data</text>
 				{/if}
 			{/each}
 			<!-- OLD CODE START — NET-270: with a few points (a picked few minutes) the band grew to most of the
@@ -320,13 +356,19 @@
 				{#each mark.dots as d, k (k)}
 					<circle class="dot dot-{d.colour}" cx={d.x.toFixed(1)} cy={d.y.toFixed(1)} r="4.5" />
 				{/each}
+				<!-- OLD CODE (chart gaps: one line however long; a long reason ran past a phone-width chart):
 				<rect class="tip-bg" x={mark.tip.x.toFixed(1)} y={mark.tip.y.toFixed(1)} width={mark.tip.width} height="24" rx="12" />
 				<text class="tip-tx" x={(mark.tip.x + mark.tip.width / 2).toFixed(1)} y={(mark.tip.y + 16).toFixed(1)} text-anchor="middle"
 					>{mark.text}</text
+				> -->
+				{@const cx = (mark.tip.x + mark.tip.width / 2).toFixed(1)}
+				<rect class="tip-bg" x={mark.tip.x.toFixed(1)} y={mark.tip.y.toFixed(1)} width={mark.tip.width} height={mark.tip.height} rx="12" />
+				<text class="tip-tx" x={cx} y={(mark.tip.y + 16).toFixed(1)} text-anchor="middle"
+					>{#each mark.tip.lines as line, k (k)}<tspan x={cx} dy={k ? 14 : 0}>{line}</tspan>{/each}</text
 				>
 			{/if}
 		</svg>
-		{#if onpick}<span class="sr-only" aria-live="polite">{liveText}</span>{/if}
+		{#if inspectable}<span class="sr-only" aria-live="polite">{liveText}</span>{/if}
 	</div>
 {/if}
 
@@ -344,7 +386,10 @@
 	}
 	/* NET-249: a picked chart; a vertical swipe still scrolls the page, a sideways drag picks a range */
 	.chart.pickable svg { cursor: pointer; touch-action: pan-y; user-select: none; }
-	.chart.pickable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-md); }
+	/* OLD CODE: .chart.pickable:focus-visible { … } (chart gaps: a gaps chart is focusable without onpick) */
+	.chart:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-md); }
+	/* chart gaps: the "No data" band's hatching */
+	.hatch { stroke: var(--line); stroke-width: 1.5; }
 	/* NET-226: a third series; system.css colours the gradient and dot of 1 and 2 only */
 	.chart :global(.g-3 stop) { stop-color: var(--data-3); }
 	.chart :global(.dot-3) { fill: var(--data-3); }
