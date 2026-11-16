@@ -355,18 +355,25 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 		});
 	}
 
-	it('leaves it out of Update All, disables its checkbox and says how it arrives', async () => {
+	// OLD CODE: it('leaves it out of Update All, disables its checkbox and says how it arrives', … (NET-311: a disabled checkbox looked live)
+	it('lists it apart from the picks, with no checkbox, and says how it arrives', async () => {
 		stub();
 		render(UpdatesPage);
 		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
 
-		const pinned = screen.getByRole('checkbox', { name: /^arkime/ });
-		expect(pinned).toBeDisabled();
-		expect(pinned).not.toBeChecked();
-		// OLD CODE START — the versions table now says it too
-		// expect(screen.getByText(MALCOLM)).toBeInTheDocument();
+		// OLD CODE START — it had a disabled checkbox, which looked like a live one
+		// const pinned = screen.getByRole('checkbox', { name: /^arkime/ });
+		// expect(pinned).toBeDisabled();
+		// expect(pinned).not.toBeChecked();
+		// // OLD CODE START — the versions table now says it too
+		// // expect(screen.getByText(MALCOLM)).toBeInTheDocument();
+		// // OLD CODE END
+		// expect(within(pinned.closest('label')!).getByText(MALCOLM)).toBeInTheDocument();
 		// OLD CODE END
-		expect(within(pinned.closest('label')!).getByText(MALCOLM)).toBeInTheDocument();
+		expect(screen.queryByRole('checkbox', { name: /^arkime/ })).toBeNull();
+		expect(screen.getByText("Can't be updated from here")).toBeInTheDocument();
+		const other = screen.getByText('arkime', { selector: '.other-list b' }).closest('li')!;
+		expect(within(other).getByText(MALCOLM)).toBeInTheDocument();
 		// the sentence replaces its size/restart detail; the rules row keeps both
 		expect(screen.getAllByText('size unknown')).toHaveLength(1);
 		expect(screen.getAllByText('Restart required')).toHaveLength(1);
@@ -374,6 +381,7 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 		const rules = screen.getByRole('checkbox', { name: /^suricata-rules/ });
 		expect(rules).toBeEnabled();
 		expect(rules).toBeChecked();
+		expect(screen.getAllByRole('checkbox')).toHaveLength(1);
 		expect(screen.getByRole('button', { name: 'Update 1 component' })).toBeEnabled();
 	});
 
@@ -397,7 +405,240 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 		expect(await screen.findByText('1 update available')).toBeInTheDocument();
 		expect(screen.getByText('None of these can be applied from here: each one says how it arrives.')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Update all' })).toBeNull();
-		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument(); (it opened a picker with nothing to pick, NET-311)
+		expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
+	});
+});
+
+// NET-311: on the G11 nothing listed could be applied, yet Review opened "Apply updates" with two
+// disabled (live-looking) checkboxes and "Update 0 components"
+describe('Software Updates page — the Apply updates picker (NET-311)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const APPLY = '/api/system/updates/apply';
+	const upd = (component: string, extra: Record<string, unknown> = {}) => ({
+		component, current_version: '1', latest_version: '2', update_type: 'patch', release_url: '', release_date: '',
+		changelog: '', size_mb: null, requires_restart: false, applies_with: null, ...extra,
+	});
+	// the G11's reply of 2026-11-16
+	const GEOIP_WITH = "Comes with Malcolm's Logstash image: a newer one arrives with a newer Malcolm release.";
+	const OS_WITH = 'Install them on the box itself: run sudo apt update, then sudo apt upgrade.';
+	const GEOIP = upd('geoip-db', {
+		current_version: '2026-09-29', latest_version: 'newer weekly release', changelog: "Logstash's GeoIP database is 47 day(s) old",
+		applies_with: GEOIP_WITH,
+	});
+	const OS = upd('os', {
+		current_version: '24.04', latest_version: '1 package update', update_type: 'unknown',
+		changelog: '1 Ubuntu package update is ready to install, 0 of them security updates (as of 2026-11-16 08:39 UTC).',
+		applies_with: OS_WITH,
+	});
+	const RULES = upd('suricata-rules', { current_version: '2026-11-01', latest_version: '2026-11-16', changelog: 'Suricata rules are 12 day(s) old' });
+	const MALCOLM_NOTES = '## Malcolm 26.10.0\n- Zeek 7.1\n- Suricata 7.0.8';
+	const MALCOLM = upd('malcolm', {
+		current_version: '26.02.0', latest_version: '26.10.0', update_type: 'unknown', changelog: MALCOLM_NOTES, requires_restart: true,
+	});
+	const status = (state: string, components: string[]) => ({
+		state, components, current_component: state === 'in_progress' ? components[0] : null, current_step: null,
+		progress_percent: state === 'in_progress' ? 45 : 100, started_at: '2026-11-16T17:20:00Z', completed_at: null, results: [],
+	});
+
+	function stub(updates: unknown[]) {
+		const replies: Record<string, unknown> = {
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates, last_check: '2026-11-16T17:17:32Z' },
+			'/api/system/updates/history': { history: [], count: 0 },
+			[APPLY]: status('completed', []),
+		};
+		stubFetch(replies, { [APPLY]: 202 });
+		return replies;
+	}
+	const applied = () =>
+		vi.mocked(fetch).mock.calls
+			.filter(([url]) => String(url) === APPLY)
+			.map(([, init]) => JSON.parse(String(init?.body)).components);
+
+	it("shows the G11's updates as information, with no picker, when none can be applied here", async () => {
+		stub([GEOIP, OS]);
+		render(UpdatesPage);
+
+		const banner = (await screen.findByText('2 updates available')).closest('article')!;
+		expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Update all' })).toBeNull();
+		expect(screen.queryByRole('checkbox')).toBeNull();
+		expect(screen.queryByText('Apply updates')).toBeNull();
+		for (const u of [GEOIP, OS]) {
+			expect(within(banner).getByText(u.component)).toBeInTheDocument();
+			expect(within(banner).getByText(String(u.changelog))).toBeInTheDocument();
+			expect(within(banner).getByText(String(u.applies_with))).toBeInTheDocument();
+		}
+		expect(within(banner).queryByText('unknown')).toBeNull();
+		expect(within(banner).queryByRole('button', { name: /^Changelog/ })).toBeNull();
+	});
+
+	it('ticks and unticks each pick, counts only the ticked ones and sends them', async () => {
+		stub([RULES, MALCOLM]);
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+
+		const rules = screen.getByRole('checkbox', { name: /^suricata-rules/ });
+		const malcolm = screen.getByRole('checkbox', { name: /^malcolm/ });
+		expect(rules).toBeChecked();
+		expect(malcolm).toBeChecked();
+		expect(screen.getByRole('button', { name: 'Update 2 components' })).toBeEnabled();
+
+		await fireEvent.click(rules);
+		expect(rules).not.toBeChecked();
+		expect(screen.getByRole('button', { name: 'Update 1 component' })).toBeEnabled();
+		await fireEvent.click(rules);
+		expect(rules).toBeChecked();
+		expect(screen.getByRole('button', { name: 'Update 2 components' })).toBeEnabled();
+		await fireEvent.click(rules);
+		await fireEvent.click(malcolm);
+		expect(screen.getByRole('button', { name: 'Update 0 components' })).toBeDisabled();
+		// the update type "unknown" isn't printed
+		expect(screen.queryByText('unknown')).toBeNull();
+
+		await fireEvent.click(malcolm);
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 component' }));
+		await screen.findByText('Update complete');
+		expect(applied()).toEqual([['malcolm']]);
+	});
+
+	it('closes the picker when a refresh leaves nothing to apply', async () => {
+		const replies = stub([RULES, GEOIP]);
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+		expect(screen.getByRole('checkbox', { name: /^suricata-rules/ })).toBeChecked();
+
+		replies['/api/system/updates/available'] = { updates: [GEOIP], last_check: '2026-11-16T17:30:00Z' };
+		await refreshPage();
+
+		expect(await screen.findByText('1 update available')).toBeInTheDocument();
+		expect(screen.queryByText('Apply updates')).toBeNull();
+		expect(screen.queryByRole('checkbox')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
+		expect(screen.getAllByText(GEOIP_WITH).length).toBeGreaterThan(0);
+	});
+
+	it("doesn't reopen the picker unasked when a later refresh brings an update back", async () => {
+		const replies = stub([RULES, GEOIP]);
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+		replies['/api/system/updates/available'] = { updates: [GEOIP], last_check: '2026-11-16T17:30:00Z' };
+		await refreshPage();
+		expect(await screen.findByText('1 update available')).toBeInTheDocument();
+
+		replies['/api/system/updates/available'] = { updates: [RULES, GEOIP], last_check: '2026-11-16T17:40:00Z' };
+		await refreshPage();
+
+		expect(await screen.findByText('2 updates available')).toBeInTheDocument();
+		expect(screen.queryByText('Apply updates')).toBeNull();
+		expect(screen.queryByRole('checkbox')).toBeNull();
+		// opening it again starts from a fresh pick
+		await fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+		expect(screen.getByRole('checkbox', { name: /^suricata-rules/ })).toBeChecked();
+		expect(screen.getByRole('button', { name: 'Update 1 component' })).toBeEnabled();
+	});
+
+	it('puts a NetTap release’s multi-line notes in the accordion, in the banner and under the picks', async () => {
+		const NOTES = '## NetTap v0.4.0-alpha.3\n- Apply updates lists what it can update\n- Fixes';
+		const NETTAP = upd('nettap-daemon', {
+			current_version: '0.4.0-alpha.2', latest_version: 'v0.4.0-alpha.3', changelog: NOTES,
+			applies_with: 'Comes with a NetTap release: update NetTap to get it.',
+		});
+		const replies = stub([NETTAP]);
+		const { unmount } = render(UpdatesPage);
+
+		const notesIn = (scope: HTMLElement) => {
+			const item = within(scope).getByText('nettap-daemon', { selector: '.other-list b' }).closest('li')!;
+			expect(within(item).getByRole('button', { name: /^Changelog/ })).toBeInTheDocument();
+			expect(item.querySelector('pre.changelog')?.textContent).toBe(NOTES);
+			// no raw blob beside it
+			expect([...item.querySelectorAll('span.dim')].some((s) => s.textContent?.includes('Fixes'))).toBe(false);
+		};
+		notesIn((await screen.findByText('1 update available')).closest('article')!);
+		unmount();
+
+		replies['/api/system/updates/available'] = { updates: [RULES, NETTAP], last_check: '2026-11-16T17:17:32Z' };
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+		notesIn(screen.getByText('Apply updates').closest('article')!);
+	});
+
+	it('counts and sends only the picks still listed after a refresh', async () => {
+		const replies = stub([RULES, MALCOLM]);
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+		expect(screen.getByRole('button', { name: 'Update 2 components' })).toBeEnabled();
+
+		replies['/api/system/updates/available'] = { updates: [MALCOLM], last_check: '2026-11-16T17:30:00Z' };
+		await refreshPage();
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update 1 component' }));
+		await screen.findByText('Update complete');
+		expect(applied()).toEqual([['malcolm']]);
+	});
+
+	it('shows a one-line changelog inline and keeps the accordion for release notes', async () => {
+		stub([RULES, MALCOLM]);
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+
+		const rulesLabel = screen.getByRole('checkbox', { name: /^suricata-rules/ }).closest('label')!;
+		expect(within(rulesLabel).getByText('Suricata rules are 12 day(s) old')).toBeInTheDocument();
+		expect(within(rulesLabel.closest('li')!).queryByRole('button', { name: /^Changelog/ })).toBeNull();
+
+		const malcolmItem = screen.getByRole('checkbox', { name: /^malcolm/ }).closest('li')!;
+		expect(within(malcolmItem).getByRole('button', { name: /^Changelog/ })).toBeInTheDocument();
+		expect(malcolmItem.querySelector('label')!.textContent).not.toContain('Zeek 7.1');
+		expect(screen.getAllByRole('button', { name: /^Changelog/ })).toHaveLength(1);
+	});
+
+	it.each([
+		[159, 'inline'],
+		[160, 'accordion'],
+	])('shows a %s-character one-line changelog %s', async (length, where) => {
+		const text = 'x'.repeat(length);
+		stub([{ ...RULES, changelog: text }]);
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+
+		const label = screen.getByRole('checkbox', { name: /^suricata-rules/ }).closest('label')!;
+		const accordion = screen.queryByRole('button', { name: /^Changelog/ });
+		if (where === 'inline') {
+			expect(within(label).getByText(text)).toBeInTheDocument();
+			expect(accordion).toBeNull();
+		} else {
+			expect(within(label).queryByText(text)).toBeNull();
+			expect(accordion).toBeInTheDocument();
+		}
+	});
+
+	it('keeps the picks fixed while the start request is pending, also through a refresh', async () => {
+		const replies = stub([RULES, GEOIP]);
+		let answer!: (r: Response) => void;
+		const stubbed = vi.mocked(fetch).getMockImplementation()!;
+		vi.mocked(fetch).mockImplementation((input, init) =>
+			String(input) === APPLY ? new Promise<Response>((resolve) => (answer = resolve)) : stubbed(input, init),
+		);
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 component' }));
+
+		expect(await screen.findByText('Starting the update…')).toBeInTheDocument();
+		expect(screen.queryByRole('checkbox')).toBeNull();
+
+		replies['/api/system/updates/available'] = { updates: [GEOIP], last_check: '2026-11-16T17:30:00Z' };
+		await refreshPage();
+		expect(screen.getByText('Starting the update…')).toBeInTheDocument();
+		expect(screen.queryByRole('checkbox')).toBeNull();
+		expect(screen.queryByText('Select the components you want to update:')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
+
+		answer(new Response(JSON.stringify(status('in_progress', ['suricata-rules'])), { status: 202 }));
+		expect(await screen.findByText('45% complete')).toBeInTheDocument();
+		expect(screen.getByText('suricata-rules', { selector: '.component-status-name' })).toBeInTheDocument();
+		expect(screen.queryByText('Starting the update…')).toBeNull();
 	});
 });
 
@@ -422,7 +663,9 @@ describe('Software Updates page — rows match the real reply', () => {
 
 		render(UpdatesPage);
 
-		const status = async (name: string) => (await screen.findByText(name)).closest('tr')?.querySelector('.vtcol-status')?.textContent?.trim();
+		// OLD CODE: const status = async (name: string) => (await screen.findByText(name)).closest('tr')?.querySelector('.vtcol-status')?.textContent?.trim(); (the banner now lists logstash too)
+		const status = async (name: string) =>
+			(await screen.findByText(name, { selector: '.component-name' })).closest('tr')?.querySelector('.vtcol-status')?.textContent?.trim();
 		expect(await status('logstash')).toBe('Update available');
 		expect(await status('os')).toBe('Not checked');
 		expect(await status('suricata-rules')).toBe('Up to date');
