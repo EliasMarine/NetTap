@@ -701,7 +701,8 @@ class TestNetTapImagesFollowTheRelease(unittest.TestCase):
         async def fetch(url):
             if isinstance(release, Exception):
                 raise release
-            return release if "EliasMarine" in url else {}
+            # OLD CODE: return release if "EliasMarine" in url else {} (the check reads the releases list now)
+            return [release] if "EliasMarine" in url and release else {}
 
         async def none():
             return None
@@ -741,7 +742,8 @@ class TestNetTapUpdatesStayApplicable(unittest.TestCase):
         from services.update_checker import NETTAP_APPLIES_WITH
 
         async def fetch(url):
-            return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"}
+            # OLD CODE: return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"} (releases list now)
+            return [{"tag_name": "v99.0.0", "html_url": "https://github.com/x"}]
 
         uc = UpdateChecker()
         uc._fetch_json = fetch
@@ -1005,7 +1007,8 @@ class TestEveryApplicableRowIsAcceptedByTheApplyApi(unittest.TestCase):
         async def fetch(url):
             if "idaholab/Malcolm" in url:
                 return {"tag_name": f"v{TESTED_MALCOLM_TAG}"}
-            return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"}
+            # OLD CODE: return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"} (releases list now)
+            return [{"tag_name": "v99.0.0", "html_url": "https://github.com/x"}]
 
         month_old = datetime.now(timezone.utc).timestamp() - 30 * 86400
         with tempfile.TemporaryDirectory() as tmp:

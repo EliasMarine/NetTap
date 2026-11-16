@@ -249,8 +249,9 @@ class TestComponentRowsThePageCanAskFor(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/system/versions/nettap-web")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
+        # OLD CODE: ("docker", "latest") (a nettap/*:latest image now reads "built locally")
         self.assertEqual(
-            (data["category"], data["current_version"]), ("docker", "latest")
+            (data["category"], data["current_version"]), ("docker", "built locally")
         )
 
 

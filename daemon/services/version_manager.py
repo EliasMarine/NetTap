@@ -28,7 +28,10 @@ _MALCOLM_IMAGES = (
 logger = logging.getLogger("nettap.services.version_manager")
 
 # Current NetTap daemon version
-NETTAP_VERSION = "0.4.0"
+# OLD CODE: NETTAP_VERSION = "0.4.0" (not the release this is: the update check compared the wrong version)
+# The release tag this daemon is built from, without its "v". Set it in the release PR before tagging:
+# the tag's build fails when they differ (scripts/check_release_version.py, release.yml).
+NETTAP_VERSION = "0.4.0-alpha.2"
 
 # Cache staleness threshold: 10 minutes
 _CACHE_TTL_SECONDS = 600
@@ -319,6 +322,9 @@ class VersionManager:
                     tag = "latest"
                     if ":" in image:
                         tag = image.split(":")[-1]
+                    # NetTap's own images are built on the box from its checkout: "latest" read as "newest"
+                    if image.startswith("nettap/") and tag == "latest":
+                        tag = "built locally"
 
                     # OLD CODE START — names by substring collided: nettap-dashboards-helper and
                     # nettap-dashboards were both "dashboards", and "suricata", "zeek" and

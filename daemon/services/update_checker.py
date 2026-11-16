@@ -72,6 +72,25 @@ _GEOIP_NEWER = "newer weekly release"
 NETTAP_APPLIES_WITH = "NetTap can't replace itself from this page: get the new release and rerun its install script."
 
 
+_RELEASE_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
+
+
+def _release_key(tag: str) -> tuple | None:
+    """A sort key in SemVer order (0.4.0-alpha.2 < 0.4.0-alpha.10 < 0.4.0-beta.1 < 0.4.0), or
+    None for anything that isn't vX.Y.Z[-pre]. key[3] is True for a final release."""
+    m = _RELEASE_RE.match(tag.strip())
+    if m is None:
+        return None
+    pre = m.group(4)
+    # numeric identifiers compare as numbers and sort before alphanumeric ones
+    ids = tuple(
+        (0, int(p), "") if p.isdigit() else (1, 0, p)
+        for p in (pre or "").split(".")
+        if p
+    )
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), pre is None, ids)
+
+
 @dataclass
 class AvailableUpdate:
     """Describes an available update for a NetTap component."""
@@ -318,63 +337,110 @@ class UpdateChecker:
     # Internal check methods
     # -------------------------------------------------------------------
 
+    # OLD CODE START — asked /releases/latest, which GitHub answers 404 while every release is a
+    # pre-release (all of them so far), so "no update" was certain; and the comparison dropped
+    # "-alpha.N", so 0.4.0-alpha.1 equalled 0.4.0-alpha.2 and even 0.4.0
+    # async def _check_github_releases(self) -> list[AvailableUpdate]:
+    #     """Check GitHub Releases API for NetTap updates.
+    #
+    #     Fetches the latest release from the configured GitHub repository
+    #     and compares against the current daemon version.
+    #
+    #     Returns:
+    #         List of AvailableUpdate (0 or 1 items).
+    #
+    #     Raises:
+    #         Exception: if GitHub could not be asked (check_updates records it).
+    #     """
+    #     results: list[AvailableUpdate] = []
+    #     url = f"https://api.github.com/repos/{self._github_repo}/releases/latest"
+    #
+    #     # OLD CODE START — #96: any failure was logged at debug and read as "no update"
+    #     # try:
+    #     #     data = await self._fetch_json(url)
+    #     #     ...
+    #     # except Exception as exc:
+    #     #     logger.debug("GitHub release check failed: %s", exc)
+    #     # OLD CODE END
+    #     data = await self._fetch_json(url)
+    #     if not data or "tag_name" not in data:
+    #         return results
+    #
+    #     latest_tag = data["tag_name"]
+    #     # Strip leading 'v' for version comparison
+    #     latest_version = latest_tag.lstrip("v")
+    #
+    #     # Get current version from VersionManager or fallback
+    #     from services.version_manager import NETTAP_VERSION
+    #
+    #     current = NETTAP_VERSION
+    #
+    #     update_type = await self._compare_versions(current, latest_version)
+    #     if update_type == "same":
+    #         return results
+    #
+    #     results.append(
+    #         AvailableUpdate(
+    #             component="nettap-daemon",
+    #             current_version=current,
+    #             latest_version=latest_version,
+    #             update_type=update_type,
+    #             release_url=data.get("html_url", ""),
+    #             release_date=data.get("published_at", ""),
+    #             changelog=(data.get("body") or "")[:500],
+    #             size_mb=self._estimate_release_size(data),
+    #             requires_restart=True,
+    #             # was unset: the page offered Update and the executor answered
+    #             # "Unsupported component for update: nettap-daemon"
+    #             applies_with=NETTAP_APPLIES_WITH,
+    #         )
+    #     )
+    #
+    #     return results
+    # OLD CODE END
     async def _check_github_releases(self) -> list[AvailableUpdate]:
-        """Check GitHub Releases API for NetTap updates.
+        """The newest NetTap release on GitHub, if it is newer than this one (0 or 1 items).
 
-        Fetches the latest release from the configured GitHub repository
-        and compares against the current daemon version.
-
-        Returns:
-            List of AvailableUpdate (0 or 1 items).
+        Pre-releases count only while this NetTap is itself a pre-release; drafts never do.
 
         Raises:
             Exception: if GitHub could not be asked (check_updates records it).
         """
-        results: list[AvailableUpdate] = []
-        url = f"https://api.github.com/repos/{self._github_repo}/releases/latest"
-
-        # OLD CODE START — #96: any failure was logged at debug and read as "no update"
-        # try:
-        #     data = await self._fetch_json(url)
-        #     ...
-        # except Exception as exc:
-        #     logger.debug("GitHub release check failed: %s", exc)
-        # OLD CODE END
-        data = await self._fetch_json(url)
-        if not data or "tag_name" not in data:
-            return results
-
-        latest_tag = data["tag_name"]
-        # Strip leading 'v' for version comparison
-        latest_version = latest_tag.lstrip("v")
-
-        # Get current version from VersionManager or fallback
         from services.version_manager import NETTAP_VERSION
 
-        current = NETTAP_VERSION
-
-        update_type = await self._compare_versions(current, latest_version)
-        if update_type == "same":
-            return results
-
-        results.append(
+        url = f"https://api.github.com/repos/{self._github_repo}/releases?per_page=20"
+        releases = await self._fetch_json(url) or []  # 404 (no repository) reads as {}
+        current_key = _release_key(NETTAP_VERSION)
+        candidates = [
+            (key, r)
+            for r in releases
+            if isinstance(r, dict) and not r.get("draft")
+            if (key := _release_key(str(r.get("tag_name", "")))) is not None
+            if current_key is not None
+            and (not r.get("prerelease") or not current_key[3])
+        ]
+        if not candidates:
+            return []
+        key, data = max(candidates, key=lambda c: c[0])
+        if key <= current_key:
+            return []
+        latest_version = data["tag_name"].lstrip("v")
+        update_type = await self._compare_versions(NETTAP_VERSION, latest_version)
+        return [
             AvailableUpdate(
                 component="nettap-daemon",
-                current_version=current,
+                current_version=NETTAP_VERSION,
                 latest_version=latest_version,
-                update_type=update_type,
+                # "same" when only the pre-release part moved (alpha.1 -> alpha.2)
+                update_type="unknown" if update_type == "same" else update_type,
                 release_url=data.get("html_url", ""),
                 release_date=data.get("published_at", ""),
                 changelog=(data.get("body") or "")[:500],
                 size_mb=self._estimate_release_size(data),
                 requires_restart=True,
-                # was unset: the page offered Update and the executor answered
-                # "Unsupported component for update: nettap-daemon"
                 applies_with=NETTAP_APPLIES_WITH,
             )
-        )
-
-        return results
+        ]
 
     # OLD CODE START — #96: asked Docker Hub malcolm/*, but the deployed images come from
     # ghcr.io/idaholab/malcolm, so it could never find an update ("up to date" was false)

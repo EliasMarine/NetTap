@@ -38,6 +38,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # The Updates page compares NETTAP_VERSION with GitHub's releases: a tag it doesn't name would
+      # make every box on this release misread what is newer
+      - name: Check NETTAP_VERSION matches the tag
+        run: python3 scripts/check_release_version.py "${GITHUB_REF_NAME}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
