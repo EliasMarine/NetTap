@@ -52,6 +52,7 @@ from api.tshark import register_tshark_routes
 from api.packets import register_packet_routes
 from api.cyberchef import register_cyberchef_routes
 from api.traffic import register_traffic_routes
+from api.posture import register_posture_routes
 from api.alerts import register_alert_routes
 from api.devices import register_device_routes
 from api.geoip import register_geoip_routes
@@ -1173,6 +1174,9 @@ def create_app(
 
     # Traffic analysis (OpenSearch zeek-* queries)
     register_traffic_routes(app, storage)
+
+    # Security posture category pages: what drives each traffic-based score, by device
+    register_posture_routes(app)
 
     # Alert management (OpenSearch suricata-* queries)
     register_alert_routes(app, storage)
