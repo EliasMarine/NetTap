@@ -31,6 +31,10 @@ source "${SCRIPT_DIR}/../common.sh"
 # shellcheck source=ui.sh
 source "${SCRIPT_DIR}/ui.sh"
 
+# apt runs unattended: on Ubuntu 22.04, needrestart otherwise stops the install with a
+# "Daemons using outdated libraries" dialog (24.04 already restarts services on its own).
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+
 # ---------------------------------------------------------------------------
 # Defaults & flags
 # ---------------------------------------------------------------------------
