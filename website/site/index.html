@@ -480,7 +480,7 @@
       <div class="container install__grid">
         <div class="install__intro">
           <p class="eyebrow" data-reveal>Install</p>
-          <h2 class="display-l" id="install-title" data-reveal>Three commands to a working dashboard.</h2>
+          <h2 class="display-l" id="install-title" data-reveal>Four commands to a working dashboard.</h2>
           <ol class="steps" data-reveal>
             <li><div><h3>Run the installer</h3><p>It blinks each port's LED so you can tell them apart, installs Docker and starts the services.</p></div></li>
             <li><div><h3>Open the dashboard</h3><p>Go to <code>https://nettap.local</code> from any device on your network.</p></div></li>
@@ -495,15 +495,17 @@
             </div>
 <pre id="install-cmds" data-commands="git clone https://github.com/EliasMarine/NetTap.git
 cd NetTap
-sudo scripts/install/install.sh"><span class="p">$ </span>git clone https://github.com/EliasMarine/NetTap.git
+git checkout v0.4.0-alpha.2
+sudo scripts/install/install.sh --skip-bridge"><span class="p">$ </span>git clone https://github.com/EliasMarine/NetTap.git
 <span class="p">$ </span>cd NetTap
-<span class="p">$ </span>sudo scripts/install/install.sh</pre>
+<span class="p">$ </span>git checkout v0.4.0-alpha.2
+<span class="p">$ </span>sudo scripts/install/install.sh --skip-bridge</pre>
             <div class="terminal__after">
               <p>Then open <code>https://nettap.local</code></p>
               <a class="text-link" href="https://eliasmarine.github.io/NetTap/getting-started/setup-guide/"><span>Full setup guide</span><svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
             </div>
           </div>
-          <p class="prerelease"><svg class="ic" aria-hidden="true"><use href="#i-threats"/></svg><span><b>Pre-release.</b> No version has been tagged yet. NetTap runs on test hardware, but expect rough edges.</span></p>
+          <p class="prerelease"><svg class="ic" aria-hidden="true"><use href="#i-threats"/></svg><span><b>Pre-release.</b> The current version is <a href="https://github.com/EliasMarine/NetTap/releases/tag/v0.4.0-alpha.2">v0.4.0-alpha.2</a>, an alpha for early testers. The command above is for mirror / SPAN mode, the one tested on real hardware. Expect rough edges.</span></p>
         </div>
       </div>
     </section>
