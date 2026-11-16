@@ -8,10 +8,79 @@ alert linking, and device association. Full CRUD with filtering and stats.
 import logging
 
 from aiohttp import web
+from opensearchpy import OpenSearchException
 
+from api.alerts import NETWORK_INDEX, _SURICATA_ALERT_FILTERS, _get_client
+from api.error_replies import public_json
+from api.offload import run_blocking
 from services.investigation_store import InvestigationStore
+from storage.snapshot_search import QueryFailed, checked
 
 logger = logging.getLogger("nettap.api.investigations")
+
+MAX_ALERT_LINKS = 100  # per investigation; bounds the rule lookup too
+_MAX_ALERT_ID = 256
+RESOLVE_TIMEOUT_S = 4  # well under the web proxy's 10 s (web/src/lib/server/daemon.ts)
+
+
+def _alert_id(value: object) -> str | None:
+    """A linkable alert id: a string of 1 to 256 characters once trimmed, else None."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if 0 < len(value) <= _MAX_ALERT_ID else None
+
+
+def _alert_ids(value: object) -> list[str] | None:
+    """alert_ids on create: omitted or null is []; else distinct ids in order, at most
+    MAX_ALERT_LINKS of them. None when malformed."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return None
+    ids = [_alert_id(v) for v in value]
+    if None in ids:
+        return None
+    unique = list(dict.fromkeys(ids))
+    return unique if len(unique) <= MAX_ALERT_LINKS else None
+
+
+def _resolve_rules(client, ids: list[str]) -> dict[str, str | None]:
+    """Each id's rule.name as stored (None when it has none), from one search of the Suricata
+    alerts. An id that isn't one is missing from the map (NET-308)."""
+    body = {
+        "size": len(ids),
+        "_source": ["rule.name"],
+        "query": {
+            "bool": {"filter": [{"ids": {"values": ids}}, *_SURICATA_ALERT_FILTERS]}
+        },
+    }
+    reply = checked(
+        client.search(
+            index=NETWORK_INDEX, body=body, request_timeout=RESOLVE_TIMEOUT_S
+        ),
+        "alert rule lookup",
+    )
+    found: dict[str, str | None] = {}
+    for hit in reply.get("hits", {}).get("hits", []):
+        rule = (hit.get("_source") or {}).get("rule")
+        name = rule.get("name") if isinstance(rule, dict) else None
+        # shortcut: a multi-valued rule.name keeps its first name; split it if one ever shows up
+        if isinstance(name, list):
+            name = next((n for n in name if isinstance(n, str)), None)
+        found[hit["_id"]] = name if isinstance(name, str) else None
+    return found
+
+
+async def _rules_or_reply(
+    request: web.Request, ids: list[str]
+) -> dict[str, str | None] | web.Response:
+    """The resolved rules, or the 502 to send when OpenSearch can't answer (nothing is stored)."""
+    try:
+        return await run_blocking(_resolve_rules, _get_client(request), ids)
+    except (OpenSearchException, QueryFailed) as exc:
+        logger.error("Alert rule lookup failed: %s", exc)
+        return public_json({"error": "The alert lookup failed"}, status=502)
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +138,33 @@ async def handle_create_investigation(request: web.Request) -> web.Response:
     if not title:
         return web.json_response({"error": "title is required"}, status=400)
 
+    alert_ids = _alert_ids(body.get("alert_ids"))
+    if alert_ids is None:
+        return web.json_response(
+            {"error": f"alert_ids must be a list of up to {MAX_ALERT_LINKS} alert ids"},
+            status=400,
+        )
+    rules: dict[str, str | None] = {}
+    if alert_ids:  # an investigation without alerts never waits on OpenSearch
+        resolved = await _rules_or_reply(request, alert_ids)
+        if isinstance(resolved, web.Response):
+            return resolved
+        if len(resolved) < len(alert_ids):
+            return web.json_response(
+                {"error": "An alert to link wasn't found"}, status=400
+            )
+        rules = resolved
+
     try:
+        # OLD CODE: alert_ids=body.get("alert_ids"), (NET-308: validated, with each alert's rule)
         inv = store.create(
             title=title,
             description=body.get("description", ""),
             severity=body.get("severity", "medium"),
-            alert_ids=body.get("alert_ids"),
+            alert_ids=alert_ids,
             device_ips=body.get("device_ips"),
             tags=body.get("tags"),
+            alert_rules=rules,
         )
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
@@ -214,11 +302,34 @@ async def handle_link_alert(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
-    alert_id = body.get("alert_id", "").strip()
-    if not alert_id:
+    # OLD CODE START — NET-308: .strip() on a non-string was a 500, and the rule wasn't recorded
+    # alert_id = body.get("alert_id", "").strip()
+    # if not alert_id:
+    #     return web.json_response({"error": "alert_id is required"}, status=400)
+    #
+    # if store.link_alert(inv_id, alert_id):
+    #     return web.json_response({"result": "linked", "alert_id": alert_id})
+    # return web.json_response({"error": "Investigation not found"}, status=404)
+    # OLD CODE END
+    alert_id = _alert_id(body.get("alert_id"))
+    if alert_id is None:
         return web.json_response({"error": "alert_id is required"}, status=400)
+    inv = store.get(inv_id)
+    if inv is None:
+        return web.json_response({"error": "Investigation not found"}, status=404)
+    if alert_id not in inv.alert_ids and len(inv.alert_ids) >= MAX_ALERT_LINKS:
+        return web.json_response(
+            {"error": f"An investigation links at most {MAX_ALERT_LINKS} alerts"},
+            status=400,
+        )
 
-    if store.link_alert(inv_id, alert_id):
+    rules = await _rules_or_reply(request, [alert_id])
+    if isinstance(rules, web.Response):
+        return rules
+    if alert_id not in rules:
+        return web.json_response({"error": "Alert not found"}, status=404)
+    # the investigation may have gone while the lookup ran
+    if store.link_alert(inv_id, alert_id, rules[alert_id]):
         return web.json_response({"result": "linked", "alert_id": alert_id})
     return web.json_response({"error": "Investigation not found"}, status=404)
 

@@ -108,16 +108,17 @@ def _excluded_ports(body: dict) -> set[int]:
 
 
 def _dest_bucket(ip: str, total: int, ports: dict[int, int]) -> dict:
-    """A by_dest_ip bucket; flows not counted in ports are ICMP."""
+    """A by_dest_ip bucket; flows not counted in ports are ICMP. Every flow got an answer
+    (NET-308: data both ways), so the pair reached its host."""
+    not_icmp = {
+        "doc_count": sum(ports.values()),
+        "ports": {"buckets": [{"key": k, "doc_count": v} for k, v in ports.items()]},
+    }
     return {
         "key": ip,
         "doc_count": total,
-        "not_icmp": {
-            "doc_count": sum(ports.values()),
-            "ports": {
-                "buckets": [{"key": k, "doc_count": v} for k, v in ports.items()]
-            },
-        },
+        "not_icmp": not_icmp,
+        "reached": {"doc_count": total, "not_icmp": not_icmp},
         "source_ip": {"buckets": [{"key": "192.168.1.40"}]},
     }
 

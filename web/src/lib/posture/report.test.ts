@@ -28,20 +28,26 @@ describe('buildReport', () => {
 	});
 
 	it("prints the category's own score as the formula's result", () => {
-		const i = inputs({ deviceCount: { from: '', to: '', count: 4 }, riskScores: { scores: [{ ip: '192.168.1.2', score: 1, level: 'low', factors: [] }] } });
+		const i = inputs({
+			deviceCount: { from: '', to: '', count: 4 },
+			riskScores: { scores: [{ ip: '192.168.1.2', score: 1, level: 'low', factors: [] }] },
+			isolation: { segmentation_score: 100, segmentation_grade: 'A', pairs: [], recommendation: '' },
+		});
 		const report = (slug: 'network-segmentation' | 'monitoring-coverage') => buildReport(slug, { window: WIN, inputs: i, category: scoreCategories(i).find((c) => c.slug === slug)!, extras: {}, failed: [], names: new Map() });
-		expect(report('network-segmentation').drivers.formula).toBe('100 − 10 × 3 device(s) without a baseline = 70');
+		// OLD CODE: expect(report('network-segmentation').drivers.formula).toBe('100 − 10 × 3 device(s) without a baseline = 70'); (NET-308)
+		expect(report('network-segmentation').drivers.formula).toMatch(/^100 − 25 × 0 critical − 15 × 0 high − 5 × 0 medium reached pairs = 100 /);
 		expect(report('monitoring-coverage').drivers.formula).toBe('1 devices with a risk score ÷ 4 devices seen = 25%');
 	});
 
 	it('orders findings most severe first, then busiest, and steps by priority', () => {
-		const i = inputs({ protocols: { ...EMPTY_DATA.protocols, encryption: { eligible: 21300, encrypted: 19800 } } });
+		const i = inputs({ protocols: { ...EMPTY_DATA.protocols, encryption: { eligible: 21300, encrypted: 19800, one_way: 9200 } } });
 		const r = buildReport('encryption', { window: WIN, inputs: i, category: scoreCategories(i)[0], extras: { encryption: POSTURE_ENCRYPTION }, failed: [], names: new Map() });
 		const rank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 		const order = r.findings.map((f) => rank[f.severity]);
 		expect(order).toEqual([...order].sort((a, b) => a - b));
 		expect(r.findings[0].title).toBe('Telnet remote login');
-		expect(r.steps.map((s) => s.priority)).toEqual(['high', 'high', 'medium', 'low']);
+		// OLD CODE: expect(r.steps.map((s) => s.priority)).toEqual(['high', 'high', 'medium', 'low']); (NET-308: no one-way step)
+		expect(r.steps.map((s) => s.priority)).toEqual(['high', 'high', 'medium']);
 	});
 });
 

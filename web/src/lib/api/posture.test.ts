@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getPostureDetail, isPostureDetail } from './posture';
-import { POSTURE_DNS, POSTURE_DNS_EMPTY, POSTURE_ENCRYPTION, POSTURE_PATCH } from '../../../e2e/visual/fixtures/traffic';
+import { getIsolation, getPostureDetail, isIsolation, isPostureDetail } from './posture';
+import { POSTURE_ALERT_RESPONSE, POSTURE_ALERT_RESPONSE_EMPTY, POSTURE_DNS, POSTURE_DNS_EMPTY, POSTURE_ENCRYPTION, POSTURE_PATCH } from '../../../e2e/visual/fixtures/traffic';
 
 const WIN = { from: '2026-11-15T06:00:00.000Z', to: '2026-11-16T06:00:00.000Z' };
 
@@ -53,5 +53,80 @@ describe('isPostureDetail', () => {
 		expect(isPostureDetail('dns-security', withResolver({ ...resolver, upstream: { dot: 1 } }))).toBe(false);
 		expect(isPostureDetail('dns-security', withResolver({ ...resolver, upstream: undefined }))).toBe(true);
 		expect(isPostureDetail('patch-currency', { ...POSTURE_PATCH, protocols: [{ name: 'http', count: 1 }] })).toBe(false);
+	});
+});
+
+// NET-308: Alert response's input
+describe('the alert-response reply', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('is accepted with no excluded_ips (alerts never leave addresses out), and refused when malformed', async () => {
+		stubFetch(200, POSTURE_ALERT_RESPONSE);
+		const reply = await getPostureDetail('alert-response', WIN);
+		expect([reply.needing, reply.investigated, reply.groups[3].investigated]).toEqual([4, 1, true]);
+		expect(isPostureDetail('alert-response', POSTURE_ALERT_RESPONSE_EMPTY)).toBe(true);
+		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, needing: -1 })).toBe(false);
+		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, groups: [{ rule: 3, count: 1, investigated: false }] })).toBe(false);
+		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, groups: [{ rule: null, count: 1, investigated: 'no' }] })).toBe(false);
+		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, groups: [{ rule: null, count: 1, investigated: false }] })).toBe(true);
+		expect(isPostureDetail('alert-response', { ...POSTURE_ALERT_RESPONSE, investigations: { open_during: 1 } })).toBe(false);
+		// the traffic details still need excluded_ips
+		const { excluded_ips: _, ...noExcluded } = POSTURE_ENCRYPTION;
+		expect(isPostureDetail('encryption', noExcluded)).toBe(false);
+	});
+});
+
+// NET-308 R1-6: a malformed isolation reply throws, so the score reads Couldn't compute, never 100
+describe('getIsolation', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const PAIR = {
+		iot_device: { mac: '02:00:5e:10:00:50', name: 'Camera', ip: '192.168.1.50' },
+		internal_target: { ip: '192.168.1.20', hostname: null },
+		risk: 'high',
+		connection_count: 4,
+		ports: [80, 445],
+		reached: true,
+		reached_ports: [80],
+		description: 'Camera can reach 192.168.1.20 via HTTP',
+	};
+	const GOOD = { segmentation_score: 85, segmentation_grade: 'B', pairs: [PAIR], recommendation: 'Consider a VLAN.' };
+
+	it('asks over exactly the window and accepts a null or 0–100 score', async () => {
+		const fetchMock = stubFetch(200, GOOD);
+		expect((await getIsolation(WIN)).segmentation_score).toBe(85);
+		expect(fetchMock).toHaveBeenCalledWith('/api/iot/network-isolation?from=2026-11-15T06%3A00%3A00.000Z&to=2026-11-16T06%3A00%3A00.000Z');
+		for (const score of [null, 0, 100]) expect(isIsolation({ ...GOOD, segmentation_score: score })).toBe(true);
+		expect(isIsolation({ ...GOOD, segmentation_score: null, segmentation_grade: null, pairs: [] })).toBe(true);
+	});
+
+	it('throws on a malformed reply', async () => {
+		const { segmentation_score: _s, ...noScore } = GOOD;
+		const { pairs: _p, ...noPairs } = GOOD;
+		const { recommendation: _r, ...noRecommendation } = GOOD;
+		const { reached: _x, ...pairWithoutReached } = PAIR;
+		const bad = [
+			noScore,
+			{ ...GOOD, segmentation_score: '85' },
+			{ ...GOOD, segmentation_score: Number.NaN },
+			{ ...GOOD, segmentation_score: Number.POSITIVE_INFINITY },
+			{ ...GOOD, segmentation_score: 101 },
+			{ ...GOOD, segmentation_score: -1 },
+			noPairs,
+			noRecommendation,
+			{ ...GOOD, pairs: [pairWithoutReached] },
+			{ ...GOOD, pairs: [{ ...PAIR, risk: 'severe' }] },
+			{ ...GOOD, pairs: [{ ...PAIR, reached_ports: ['80'] }] },
+			{ ...GOOD, pairs: [{ ...PAIR, iot_device: { mac: 'x', ip: 'y' } }] },
+		];
+		for (const body of bad) {
+			stubFetch(200, body);
+			await expect(getIsolation(WIN), JSON.stringify(body)).rejects.toThrow('The isolation reply was malformed');
+		}
+	});
+
+	it('passes a failed request on as a failure', async () => {
+		stubFetch(502, {});
+		await expect(getIsolation(WIN)).rejects.toThrow('Failed to load network isolation: 502');
 	});
 });

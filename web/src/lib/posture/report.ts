@@ -9,7 +9,7 @@ import type { IconName } from '$lib/components/ui/icons';
 import type { SeverityLevel } from '$lib/utils/severity';
 import type { AlertTopSignaturesResponse } from '$api/alerts';
 import type { CaptureMode, CaptureStatsResponse } from '$api/capture';
-import type { NetworkIsolation } from '$api/iot';
+// OLD CODE: import type { NetworkIsolation } from '$api/iot'; (NET-308: isolation is a score input)
 import type { DeviceList, DnsDetail, EncryptionDetail, PatchDetail } from '$api/posture';
 import { nothingFound } from '$api/system';
 import { loadFailed } from '$lib/utils/load-failed';
@@ -18,12 +18,12 @@ import type { CategoryScore, PostureInputs, PostureSlug } from './score';
 import { encryptionReport, dnsReport, patchReport } from './report-traffic';
 import { segmentationReport, alertReport, monitoringReport } from './report-network';
 
-/** The per-category requests beside the five score inputs. */
+/** The per-category requests beside the six score inputs. */
 export interface PostureExtras {
 	encryption?: EncryptionDetail;
 	'dns-security'?: DnsDetail;
 	'patch-currency'?: PatchDetail;
-	isolation?: NetworkIsolation;
+	// OLD CODE: isolation?: NetworkIsolation; (NET-308: PostureData.isolation)
 	signatures?: AlertTopSignaturesResponse;
 	mode?: CaptureMode;
 	stats?: CaptureStatsResponse;
@@ -34,7 +34,8 @@ export type ExtraKey = keyof PostureExtras;
 export const EXTRAS: Record<PostureSlug, readonly ExtraKey[]> = {
 	encryption: ['encryption'],
 	'dns-security': ['dns-security'],
-	'network-segmentation': ['isolation'],
+	// OLD CODE: 'network-segmentation': ['isolation'], (NET-308)
+	'network-segmentation': [],
 	'patch-currency': ['patch-currency'],
 	'alert-response': ['signatures'],
 	'monitoring-coverage': ['mode', 'stats'],

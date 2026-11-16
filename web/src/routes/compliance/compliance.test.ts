@@ -7,6 +7,14 @@ import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 // `.length` and stayed on "Calculating security posture..." for good. It also compared counts
 // per IP: a second address of one device (G11: an AP's VLAN 40 IP) gave coverage above 100%.
 
+/** Alert response's input: `needing` high-severity rules, `investigated` of them followed up (NET-308) */
+function RESPONSE(needing: number, investigated: number) {
+	return {
+		category: 'alert-response', from: '', to: '', needing, investigated, groups: [],
+		investigations: { open_during: investigated, linked_alerts: investigated, unresolved_links: 0, skipped: 0 },
+	};
+}
+
 const DAEMON_REPLIES: Record<string, unknown> = {
 	'/api/traffic/protocols': {
 		protocols: [],
@@ -16,8 +24,10 @@ const DAEMON_REPLIES: Record<string, unknown> = {
 			{ name: 'unknown', count: 200 },
 			{ name: 'dns', count: 100 },
 		],
-		encryption: { eligible: 200, encrypted: 120 },
-		dns: { plain: 90, over_tls: 10 },
+		// OLD CODE: encryption: { eligible: 200, encrypted: 120 }, dns: { plain: 90, over_tls: 10 }, (NET-308)
+		encryption: { eligible: 200, encrypted: 120, one_way: 40 },
+		dns: { plain: 90, over_tls: 10, local: { plain: 30, over_tls: 0 } },
+		patch: { legacy: 0, connections: 380 },
 	},
 	'/api/alerts/count': { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } },
 	'/api/devices': { from: '', to: '', limit: 100, devices: [{ ip: '192.168.1.10' }, { ip: '192.168.1.198' }] },
@@ -31,7 +41,9 @@ const DAEMON_REPLIES: Record<string, unknown> = {
 			factors: [],
 		})),
 	},
-	'/api/investigations/stats': { total: 0, by_status: {} },
+	// OLD CODE: '/api/investigations/stats': { total: 0, by_status: {} }, (NET-308: alert follow-up and isolation)
+	'/api/iot/network-isolation': { segmentation_score: 100, segmentation_grade: 'A', pairs: [], recommendation: 'No IoT-to-LAN traffic seen.' },
+	'/api/posture/alert-response': RESPONSE(0, 0),
 };
 
 function categoryCard(name: string): HTMLElement {
@@ -91,9 +103,11 @@ describe('Security Posture page', () => {
 		render(CompliancePage);
 
 		await vi.waitFor(() => expect(heading('Network segmentation')).toBeInTheDocument());
-		const network = categoryCard('Network segmentation');
-		expect(within(network).getByText('150 device(s) discovered on your network')).toBeInTheDocument();
-		expect(within(network).getByText('100%')).toBeInTheDocument();
+		// OLD CODE START — NET-308: segmentation reads IoT isolation, not the device count
+		// const network = categoryCard('Network segmentation');
+		// expect(within(network).getByText('150 device(s) discovered on your network')).toBeInTheDocument();
+		// expect(within(network).getByText('100%')).toBeInTheDocument();
+		// OLD CODE END
 		const monitoring = categoryCard('Monitoring coverage');
 		expect(within(monitoring).getByText('150 of 150 device(s) have risk scores computed')).toBeInTheDocument();
 		expect(within(monitoring).getByText('100%')).toBeInTheDocument();
@@ -115,10 +129,12 @@ describe('Security Posture page', () => {
 		await vi.waitFor(() => expect(heading('Encryption')).toBeInTheDocument());
 		const encryption = categoryCard('Encryption');
 		expect(within(encryption).getByText('60%')).toBeInTheDocument();
-		expect(within(encryption).getByText('120 of 200 connections encrypted (60%)')).toBeInTheDocument();
+		// OLD CODE: '120 of 200 connections encrypted (60%)' and '10 DNS-over-TLS connections' (NET-308)
+		expect(within(encryption).getByText('120 of 200 connections with data both ways encrypted (60%)')).toBeInTheDocument();
 		const dns = categoryCard('DNS security');
 		expect(within(dns).getByText('10%')).toBeInTheDocument();
-		expect(within(dns).getByText('10 DNS-over-TLS connections')).toBeInTheDocument();
+		expect(within(dns).getByText('10 DNS-over-TLS connections to non-local resolvers')).toBeInTheDocument();
+		expect(within(dns).getByText('30 lookups to your own resolvers, judged by what they send out')).toBeInTheDocument();
 	});
 });
 
@@ -187,11 +203,13 @@ describe('Security Posture page when an input fails', () => {
 		render(CompliancePage);
 
 		await vi.waitFor(() => expect(heading('Monitoring coverage')).toBeInTheDocument());
-		for (const name of ['Monitoring coverage', 'Network segmentation']) {
+		// OLD CODE: for (const name of ['Monitoring coverage', 'Network segmentation']) { (NET-308: segmentation reads isolation)
+		for (const name of ['Monitoring coverage']) {
 			const card = categoryCard(name);
 			expect(within(card).getAllByText("Couldn't load risk scores: the request failed.").length).toBeGreaterThan(0);
 			expect(within(card).queryByText(/%$/)).not.toBeInTheDocument();
 		}
+		expect(within(categoryCard('Network segmentation')).getByText('100%')).toBeInTheDocument();
 		expect(screen.queryByText(/0 of 2 device\(s\) have risk scores/)).not.toBeInTheDocument();
 		expect(screen.getByText(/Couldn't compute the overall score/)).toBeInTheDocument();
 		// the categories that loaded still score
@@ -218,7 +236,8 @@ describe('Security Posture page when an input fails', () => {
 		stubDaemon({}, {
 			...DAEMON_REPLIES,
 			'/api/alerts/count': { from: '', to: '', counts: { total: 3, high: 1, medium: 2, low: 0 } },
-			'/api/investigations/stats': { total: 2, by_status: { resolved: 1 } },
+			// OLD CODE: '/api/investigations/stats': { total: 2, by_status: { resolved: 1 } }, (NET-308)
+			'/api/posture/alert-response': RESPONSE(2, 1),
 		});
 		render(CompliancePage);
 
@@ -239,28 +258,53 @@ describe('Security Posture page when an input fails', () => {
 		stubDaemon({}, { ...DAEMON_REPLIES, '/api/system/health': health });
 		const { unmount } = render(CompliancePage);
 		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		// OLD CODE: "Can't tell if any rule matched, so there is nothing to score · …" (NET-308: nothing needed a response)
 		expect(
-			within(categoryCard('Alert response')).getAllByText("Can't tell if any rule matched, so there is nothing to score · Data pipeline now: Suricata stopped").length,
+			within(categoryCard('Alert response')).getAllByText("Can't tell if anything needed a response, so there is nothing to score · Data pipeline now: Suricata stopped").length,
 		).toBeGreaterThan(0);
 		unmount();
 
 		stubDaemon({}, { ...DAEMON_REPLIES, '/api/system/health': { ...health, pipeline: { ...pipeline, state: 'fresh' } } });
 		render(CompliancePage);
 		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		// OLD CODE: 'No counted rule matches in this period, so there is nothing to score · …' (NET-308)
 		expect(
-			within(categoryCard('Alert response')).getAllByText('No counted rule matches in this period, so there is nothing to score · Data pipeline now: Newest record 40 s ago').length,
+			within(categoryCard('Alert response')).getAllByText('Nothing needed a response in the last 24 hours, so there is nothing to score · Data pipeline now: Newest record 40 s ago').length,
 		).toBeGreaterThan(0);
 	});
 
-	it('needs investigation stats for Alert Response only when there are alerts', async () => {
-		stubDaemon({ '/api/investigations/stats': 'http' });
+	// OLD CODE START — NET-308: investigation stats gave way to the alert follow-up reply
+	// it('needs investigation stats for Alert Response only when there are alerts', async () => {
+	// 	stubDaemon({ '/api/investigations/stats': 'http' });
+	// 	const { unmount } = render(CompliancePage);
+	// 	// OLD CODE START — F5: no alerts scored 100; it is "Not measured" now
+	// 	// // no alerts: the score is 100 whatever the investigations
+	// 	// await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+	// 	// expect(within(categoryCard('Alert response')).getByText('100%')).toBeInTheDocument();
+	// 	// OLD CODE END
+	// 	// no alerts: nothing to score, whatever the investigations, and no failure either
+	// 	await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+	// 	expect(within(categoryCard('Alert response')).getByText('Not measured')).toBeInTheDocument();
+	// 	expect(within(categoryCard('Alert response')).queryByText(/Couldn't load/)).not.toBeInTheDocument();
+	// 	// no rule matching is not proof of a clean network
+	// 	expect(within(categoryCard('Alert response')).queryByText(/looks clean/)).not.toBeInTheDocument();
+	// 	unmount();
+	//
+	// 	DAEMON_REPLIES['/api/alerts/count'] = { from: '', to: '', counts: { total: 3, high: 1, medium: 2, low: 0 } };
+	// 	try {
+	// 		render(CompliancePage);
+	// 		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+	// 		const card = categoryCard('Alert response');
+	// 		expect(within(card).getAllByText("Couldn't load investigation stats: the request failed.").length).toBeGreaterThan(0);
+	// 		expect(within(card).queryByText('0%')).not.toBeInTheDocument();
+	// 	} finally {
+	// 		DAEMON_REPLIES['/api/alerts/count'] = { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } };
+	// 	}
+	// });
+	// OLD CODE END
+	it('needs the alert follow-up reply for Alert response, and reads nothing needing one as Not measured', async () => {
+		stubDaemon({});
 		const { unmount } = render(CompliancePage);
-		// OLD CODE START — F5: no alerts scored 100; it is "Not measured" now
-		// // no alerts: the score is 100 whatever the investigations
-		// await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
-		// expect(within(categoryCard('Alert response')).getByText('100%')).toBeInTheDocument();
-		// OLD CODE END
-		// no alerts: nothing to score, whatever the investigations, and no failure either
 		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
 		expect(within(categoryCard('Alert response')).getByText('Not measured')).toBeInTheDocument();
 		expect(within(categoryCard('Alert response')).queryByText(/Couldn't load/)).not.toBeInTheDocument();
@@ -268,16 +312,12 @@ describe('Security Posture page when an input fails', () => {
 		expect(within(categoryCard('Alert response')).queryByText(/looks clean/)).not.toBeInTheDocument();
 		unmount();
 
-		DAEMON_REPLIES['/api/alerts/count'] = { from: '', to: '', counts: { total: 3, high: 1, medium: 2, low: 0 } };
-		try {
-			render(CompliancePage);
-			await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
-			const card = categoryCard('Alert response');
-			expect(within(card).getAllByText("Couldn't load investigation stats: the request failed.").length).toBeGreaterThan(0);
-			expect(within(card).queryByText('0%')).not.toBeInTheDocument();
-		} finally {
-			DAEMON_REPLIES['/api/alerts/count'] = { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } };
-		}
+		stubDaemon({ '/api/posture/alert-response': 'http' });
+		render(CompliancePage);
+		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		const card = categoryCard('Alert response');
+		expect(within(card).getAllByText("Couldn't load alert follow-up: the request failed.").length).toBeGreaterThan(0);
+		expect(within(card).queryByText('0%')).not.toBeInTheDocument();
 	});
 });
 
@@ -292,13 +332,16 @@ describe('Security Posture page with nothing to score', () => {
 		'/api/traffic/protocols': {
 			protocols: [],
 			services: [],
-			encryption: { eligible: 0, encrypted: 0 },
-			dns: { plain: 0, over_tls: 0 },
+			encryption: { eligible: 0, encrypted: 0, one_way: 0 },
+			dns: { plain: 0, over_tls: 0, local: { plain: 0, over_tls: 0 } },
+			patch: { legacy: 0, connections: 0 },
 		},
 		'/api/alerts/count': { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } },
 		'/api/devices/count': { from: '', to: '', count: 0 },
 		'/api/risk/scores': { devices: [] },
-		'/api/investigations/stats': { total: 0, by_status: {} },
+		// OLD CODE: '/api/investigations/stats': { total: 0, by_status: {} }, (NET-308)
+		'/api/iot/network-isolation': { segmentation_score: null, segmentation_grade: null, pairs: [], recommendation: 'No IoT devices detected yet.' },
+		'/api/posture/alert-response': RESPONSE(0, 0),
 	};
 
 	/** Traffic seen (Encryption 60, DNS 10, Patch 80), but no devices and no alerts yet. */
@@ -307,8 +350,9 @@ describe('Security Posture page with nothing to score', () => {
 		'/api/traffic/protocols': {
 			protocols: [],
 			services: [{ name: 'ssl', count: 80 }, { name: 'http', count: 20 }],
-			encryption: { eligible: 200, encrypted: 120 },
-			dns: { plain: 90, over_tls: 10 },
+			encryption: { eligible: 200, encrypted: 120, one_way: 0 },
+			dns: { plain: 90, over_tls: 10, local: { plain: 0, over_tls: 0 } },
+			patch: { legacy: 20, connections: 100 },
 		},
 	};
 

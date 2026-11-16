@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Alert } from '$api/alerts';
-import { alertAdvice, alertLevel, alertTitle, groupAlerts, groupCategoryLinked, linkedSuricataCategory, logExplorerHref, shortSeen } from './alert-view';
+import { alertAdvice, alertLevel, alertTitle, groupAlerts, groupCategoryLinked, investigationFor, linkedSuricataCategory, logExplorerHref, shortSeen } from './alert-view';
 
 const alert = (id: string, over: { sev?: number; sig?: string; sid?: number; cat?: string; src?: string; ts?: string } = {}): Alert => ({
 	_id: id,
@@ -24,6 +24,24 @@ describe('alertTitle and alertAdvice', () => {
 		expect(alertTitle({ ...alert('a'), alert: {} })).toBe('Uncategorised alert');
 		expect(alertAdvice({ ...alert('a'), recommendation: 'Patch it.' })).toBe('Patch it.');
 		expect(alertAdvice({ ...alert('a'), recommendation: '  ' })).toBe('No specific advice for this alert yet.');
+	});
+});
+
+// NET-308: the drawer's Open an investigation links this alert, so the daemon records its rule
+describe('investigationFor', () => {
+	it('titles by the rule name, trimmed, and maps the level onto the investigation scale', () => {
+		expect(investigationFor({ ...alert('abcdef123456', { sev: 1 }), rule: { name: '  ET SCAN Nmap ' } })).toEqual({ title: 'ET SCAN Nmap', severity: 'high', alert_ids: ['abcdef123456'] });
+		expect(investigationFor({ ...alert('a1', { sev: 2 }), rule: { name: 'x' } }).severity).toBe('medium');
+		expect(investigationFor({ ...alert('a1', { sev: 3 }), rule: { name: 'x' } }).severity).toBe('low');
+		// info has no place on the investigation scale: it becomes low
+		expect(investigationFor({ ...alert('a1', { sev: 4 }), rule: { name: 'x' } }).severity).toBe('low');
+	});
+
+	it('falls back to the alert id when the rule name is missing or empty (R1-5)', () => {
+		expect(investigationFor(alert('abcdef123456')).title).toBe('Alert abcdef12');
+		expect(investigationFor({ ...alert('abcdef123456'), rule: { name: '' } }).title).toBe('Alert abcdef12');
+		expect(investigationFor({ ...alert('abcdef123456'), rule: { name: '   ' } }).title).toBe('Alert abcdef12');
+		expect(investigationFor({ ...alert('abcdef123456'), rule: {} }).alert_ids).toEqual(['abcdef123456']);
 	});
 });
 

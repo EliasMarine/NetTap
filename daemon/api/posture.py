@@ -5,6 +5,10 @@ GET /api/posture/{category}?from=&to= says what drives the Encryption, DNS secur
 currency scores, by device. The base query is /api/traffic/protocols' own, so every filter total
 here equals the figure the score uses. The page decides its advice from the fixed filters; the
 device lists are for display only (the top 10, with how many connections they leave out).
+
+GET /api/posture/alert-response?from=&to= is the Alert response score's input (NET-308): the
+high-severity rules among the counted alerts, and which of them an investigation open during the
+window links an alert of.
 """
 
 import ipaddress
@@ -14,10 +18,14 @@ from typing import Any, Callable
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.error_replies import public_json
-from api.offload import in_thread
+from api.alerts import _every_key, _primary_severity
+from api.error_replies import incomplete, public_json
+from api.offload import in_thread, run_blocking
 from api.traffic import (
+    LEGACY_PROTOCOLS,
     NETWORK_INDEX,
+    PRIVATE_LOCAL,
+    PRIVATE_LOCAL_SCOPE,
     _PAYLOAD_FIELDS,
     _ZEEK_CONN_FILTERS,
     _get_client,
@@ -26,6 +34,7 @@ from api.traffic import (
 )
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import (
+    PAYLOAD_BOTH,
     RFC1918_SOURCE_FILTER,
     build_excluded_ips_filter,
     valid_excluded_ips,
@@ -37,37 +46,41 @@ from services.iot_monitor import (
     LOCAL_CHATTER_EXCLUSION,
     NO_PAYLOAD_PROTOCOLS,
 )
+from services.investigation_store import InvestigationStore, clean_alert_rules
+from storage.exact_terms import PartialResultsError
 from storage.snapshot_search import QueryFailed, checked
 
 logger = logging.getLogger("nettap.api.posture")
 
 DEVICE_ROWS = 10  # devices listed per check
 TOP = 3  # services, ports, destinations or resolvers per device
-# The Patch currency score's legacy names; keep in step with web/src/lib/posture/score.ts
-LEGACY_PROTOCOLS = ["http", "ftp", "telnet", "pop3", "imap"]
-
-# Address scope. "Private or local-scope" is what the address says, not proof the traffic stayed
-# in this network (a routed VPN address is private too). dns_analytics' LOCAL_DESTINATIONS is left
-# alone: other features read it, and it has no IPv6 ULA.
-PRIVATE_LOCAL_SCOPE = [
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "127.0.0.0/8",
-    "169.254.0.0/16",
-    "224.0.0.0/4",
-    "255.255.255.255",
-    "fc00::/7",
-    "fe80::/10",
-    "ff00::/8",
-    "::1/128",
-]
+# OLD CODE START — NET-308: moved to api/traffic.py, whose protocol figures (the scores) need them
+# # The Patch currency score's legacy names; keep in step with web/src/lib/posture/score.ts
+# LEGACY_PROTOCOLS = ["http", "ftp", "telnet", "pop3", "imap"]
+#
+# # Address scope. "Private or local-scope" is what the address says, not proof the traffic stayed
+# # in this network (a routed VPN address is private too). dns_analytics' LOCAL_DESTINATIONS is left
+# # alone: other features read it, and it has no IPv6 ULA.
+# PRIVATE_LOCAL_SCOPE = [
+#     "10.0.0.0/8",
+#     "172.16.0.0/12",
+#     "192.168.0.0/16",
+#     "127.0.0.0/8",
+#     "169.254.0.0/16",
+#     "224.0.0.0/4",
+#     "255.255.255.255",
+#     "fc00::/7",
+#     "fe80::/10",
+#     "ff00::/8",
+#     "::1/128",
+# ]
+# OLD CODE END
 # Shared address space: an ISP's carrier-grade NAT or a VPN, so neither side can be named
 UNKNOWN_SCOPE = ["100.64.0.0/10"]
 _PRIVATE_NETS = [ipaddress.ip_network(n) for n in PRIVATE_LOCAL_SCOPE]
 _UNKNOWN_NETS = [ipaddress.ip_network(n) for n in UNKNOWN_SCOPE]
 
-PRIVATE_LOCAL: dict = {"terms": {"destination.ip": PRIVATE_LOCAL_SCOPE}}
+# OLD CODE: PRIVATE_LOCAL: dict = {"terms": {"destination.ip": PRIVATE_LOCAL_SCOPE}} (NET-308: in api/traffic.py)
 UNKNOWN: dict = {
     "bool": {
         "should": [
@@ -79,10 +92,12 @@ UNKNOWN: dict = {
 }
 PUBLIC: dict = {"bool": {"must_not": [PRIVATE_LOCAL, UNKNOWN]}}
 
-# NET-219's rule: both payload counters above 0. Anything else is "other" (one way, none, or not measured)
-PAYLOAD_BOTH: dict = {
-    "bool": {"filter": [{"range": {f: {"gt": 0}}} for f in _PAYLOAD_FIELDS]}
-}
+# OLD CODE START — NET-308: one definition in services/excluded_ips.py (imported above)
+# # NET-219's rule: both payload counters above 0. Anything else is "other" (one way, none, or not measured)
+# PAYLOAD_BOTH: dict = {
+#     "bool": {"filter": [{"range": {f: {"gt": 0}}} for f in _PAYLOAD_FIELDS]}
+# }
+# OLD CODE END
 # /api/traffic/protocols' encryption and dns_plain filters (a test holds them equal)
 ELIGIBLE: dict = {
     "bool": {
@@ -177,7 +192,10 @@ def logs_query(name: str) -> str:
         {"terms": {"destination.port": ENCRYPTED_PORTS}},
         {"terms": {"network.protocol": ENCRYPTED_PROTOCOLS}},
     ]
-    return " AND ".join([risky, *(_q_not(c) for c in exclusions)])
+    # OLD CODE: return " AND ".join([risky, *(_q_not(c) for c in exclusions)]) (NET-308)
+    # NET-308: the scored set is connections with data both ways (PAYLOAD_BOTH)
+    payload = [f"{f}:>0" for f in _PAYLOAD_FIELDS]
+    return " AND ".join([risky, *(_q_not(c) for c in exclusions), *payload])
 
 
 def _terms(field: str, size: int, missing: str | None = None) -> dict:
@@ -227,37 +245,78 @@ def _count(agg: dict, name: str) -> int:
 
 
 def _encryption(app: web.Application, search: Search) -> dict:
+    # OLD CODE START — NET-308: every eligible connection was scored, one-way attempts included
+    # aggs = {
+    #     "eligible": {
+    #         "filter": ELIGIBLE,
+    #         "aggs": {
+    #             "encrypted": {"filter": ENCRYPTED_CONN_FILTER},
+    #             "unencrypted": {
+    #                 "filter": UNENCRYPTED,
+    #                 "aggs": {
+    #                     "payload_both": {"filter": PAYLOAD_BOTH},
+    #                     "private_local": {"filter": PRIVATE_LOCAL},
+    #                     "risky": {
+    #                         "filters": {
+    #                             "filters": {n: _risky_filter(n) for n in _RISKY}
+    #                         }
+    #                     },
+    #                     "services": _terms("network.protocol", 10, "unknown"),
+    #                     "devices": _devices(
+    #                         app,
+    #                         {
+    #                             "payload_both": {"filter": PAYLOAD_BOTH},
+    #                             "private_local": {"filter": PRIVATE_LOCAL},
+    #                             "services": _terms("network.protocol", TOP, "unknown"),
+    #                             "ports": _terms("destination.port", TOP),
+    #                         },
+    #                     ),
+    #                 },
+    #             },
+    #         },
+    #     }
+    # }
+    # OLD CODE END
+    # NET-308: only connections with data both ways are scored, so every figure here is that set
     aggs = {
         "eligible": {
             "filter": ELIGIBLE,
             "aggs": {
-                "encrypted": {"filter": ENCRYPTED_CONN_FILTER},
-                "unencrypted": {
-                    "filter": UNENCRYPTED,
+                "both": {
+                    "filter": PAYLOAD_BOTH,
                     "aggs": {
-                        "payload_both": {"filter": PAYLOAD_BOTH},
-                        "private_local": {"filter": PRIVATE_LOCAL},
-                        "risky": {
-                            "filters": {
-                                "filters": {n: _risky_filter(n) for n in _RISKY}
-                            }
-                        },
-                        "services": _terms("network.protocol", 10, "unknown"),
-                        "devices": _devices(
-                            app,
-                            {
-                                "payload_both": {"filter": PAYLOAD_BOTH},
+                        "encrypted": {"filter": ENCRYPTED_CONN_FILTER},
+                        "unencrypted": {
+                            "filter": UNENCRYPTED,
+                            "aggs": {
                                 "private_local": {"filter": PRIVATE_LOCAL},
-                                "services": _terms("network.protocol", TOP, "unknown"),
-                                "ports": _terms("destination.port", TOP),
+                                "risky": {
+                                    "filters": {
+                                        "filters": {n: _risky_filter(n) for n in _RISKY}
+                                    }
+                                },
+                                "services": _terms("network.protocol", 10, "unknown"),
+                                "devices": _devices(
+                                    app,
+                                    {
+                                        "private_local": {"filter": PRIVATE_LOCAL},
+                                        "services": _terms(
+                                            "network.protocol", TOP, "unknown"
+                                        ),
+                                        "ports": _terms("destination.port", TOP),
+                                    },
+                                ),
                             },
-                        ),
+                        },
                     },
-                },
+                }
             },
         }
     }
-    eligible = search(aggs, "posture encryption")["aggregations"]["eligible"]
+    # OLD CODE: eligible = search(aggs, "posture encryption")["aggregations"]["eligible"] (NET-308)
+    eligible = search(aggs, "posture encryption")["aggregations"]["eligible"].get(
+        "both", {}
+    )
     un = eligible.get("unencrypted", {})
     risky = un.get("risky", {}).get("buckets", {})
     return {
@@ -265,7 +324,7 @@ def _encryption(app: web.Application, search: Search) -> dict:
         "encrypted": _count(eligible, "encrypted"),
         "unencrypted": {
             "total": un.get("doc_count", 0),
-            "payload_both": _count(un, "payload_both"),
+            # OLD CODE: "payload_both": _count(un, "payload_both"), (NET-308: always the total now)
             "private_local": _count(un, "private_local"),
             "services": _pairs(un.get("services", {}), "name"),
             "services_other": un.get("services", {}).get("sum_other_doc_count", 0),
@@ -282,7 +341,7 @@ def _encryption(app: web.Application, search: Search) -> dict:
             lambda b: {
                 "ip": b["key"],
                 "connections": b["doc_count"],
-                "payload_both": _count(b, "payload_both"),
+                # OLD CODE: "payload_both": _count(b, "payload_both"), (NET-308: always the count now)
                 "private_local": _count(b, "private_local"),
                 "services": _pairs(b.get("services", {}), "name"),
                 "ports": _pairs(b.get("ports", {}), "port"),
@@ -494,7 +553,104 @@ def handle_posture_detail(request: web.Request) -> web.Response:
     )
 
 
+# ---------------------------------------------------------------------------
+# Alert response (NET-308)
+# ---------------------------------------------------------------------------
+
+RESPONSE_GROUPS = 25  # groups listed; needing and investigated count them all
+_HIGH = 1  # Suricata priority 1, NetTap's High (suricataLevel tops out there)
+
+
+def _coverage(investigations: list) -> tuple[set, dict]:
+    """The rules (str, "" or None) the investigations' resolved links cover, and the counts the
+    page reports. A record whose alert_ids isn't a list of ids is skipped; a link with no rule
+    recorded (made before NET-308) is unresolved and covers nothing."""
+    covered: set = set()
+    counts = {
+        "open_during": len(investigations),
+        "linked_alerts": 0,
+        "unresolved_links": 0,
+        "skipped": 0,
+    }
+    for inv in investigations:
+        ids = inv.alert_ids
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            logger.warning(
+                "Investigation %s: alert_ids isn't a list of ids, left out", inv.id
+            )
+            counts["skipped"] += 1
+            continue
+        rules = clean_alert_rules(inv.alert_rules)
+        counts["linked_alerts"] += len(ids)
+        for alert_id in ids:
+            if alert_id in rules:
+                covered.add(rules[alert_id])
+            else:
+                counts["unresolved_links"] += 1
+    return covered, counts
+
+
+async def handle_alert_response(request: web.Request) -> web.Response:
+    """GET /api/posture/alert-response?from=&to=. Async: the store isn't thread-safe, so it is
+    read on the loop; only the alert scan runs on the route pool."""
+    from_ts, to_ts = _parse_time_range(request)
+    severity = {"severity": {"terms": {"field": "suricata.alert.severity", "size": 3}}}
+    try:
+        # top-signatures' exact scan of the counted alerts, so the groups equal the Alerts list
+        buckets, complete = await run_blocking(
+            _every_key,
+            _get_client(request),
+            from_ts,
+            to_ts,
+            {"field": "rule.name", "missing_bucket": True},
+            severity,
+            "posture alert response",
+        )
+    except PartialResultsError as exc:
+        return incomplete("alert", exc)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in posture alert response: %s", exc)
+        return public_json({"error": "The alert search failed"}, status=502)
+    except QueryFailed as exc:
+        logger.warning("Posture alert response: %s", exc)
+        return public_json({"error": "The alert search was incomplete"}, status=502)
+    if not complete:  # fail closed: a part of the rules can't be graded
+        return public_json({"error": "The alert search was incomplete"}, status=502)
+
+    store: InvestigationStore = request.app["investigation_store"]
+    covered, counts = _coverage(store.open_during(from_ts, to_ts))
+    groups = [
+        {"rule": b["key"]["key"], "count": b["doc_count"]}
+        for b in buckets
+        if _primary_severity(b) == _HIGH
+    ]
+    for g in groups:
+        g["investigated"] = g["rule"] in covered
+    # the ones without an investigation first, then the busiest
+    groups.sort(
+        key=lambda g: (
+            g["investigated"],
+            -g["count"],
+            g["rule"] is None,
+            g["rule"] or "",
+        )
+    )
+    return web.json_response(
+        {
+            "category": "alert-response",
+            "from": from_ts,
+            "to": to_ts,
+            "needing": len(groups),
+            "investigated": sum(g["investigated"] for g in groups),
+            "groups": groups[:RESPONSE_GROUPS],
+            "investigations": counts,
+        }
+    )
+
+
 def register_posture_routes(app: web.Application) -> None:
-    """Register the posture detail route on the given aiohttp application."""
+    """Register the posture routes on the given aiohttp application."""
+    # before {category}: aiohttp matches in registration order
+    app.router.add_get("/api/posture/alert-response", handle_alert_response)
     app.router.add_get("/api/posture/{category}", handle_posture_detail)
-    logger.info("Posture API routes registered (1 endpoint)")
+    logger.info("Posture API routes registered (2 endpoints)")

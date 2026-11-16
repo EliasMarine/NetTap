@@ -11,10 +11,10 @@
 	import { getAlertCount, getAlertTopSignatures } from '$api/alerts';
 	import { getDeviceCount } from '$api/devices';
 	import { getRiskScores } from '$api/risk';
-	import { getInvestigationStats } from '$api/investigations';
-	import { getNetworkIsolation } from '$api/iot';
+	// OLD CODE: import { getInvestigationStats } from '$api/investigations'; (NET-308: alert follow-up)
+	// OLD CODE: import { getNetworkIsolation } from '$api/iot'; (NET-308: a score input, checked)
 	import { getCaptureMode, getCaptureStats } from '$api/capture';
-	import { getPostureDetail } from '$api/posture';
+	import { getIsolation, getPostureDetail } from '$api/posture';
 	import { getRegistryDevices } from '$lib/api/devices-registry';
 	import { namesByIp } from '$lib/utils/device-names';
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
@@ -40,8 +40,10 @@
 		encryption: ['protocols'],
 		'dns-security': ['protocols'],
 		'patch-currency': ['protocols'],
-		'network-segmentation': ['devices', 'risk'],
-		'alert-response': ['alerts', 'investigations', 'risk'],
+		// OLD CODE: 'network-segmentation': ['devices', 'risk'], (NET-308: IoT isolation is the score)
+		'network-segmentation': ['isolation'],
+		// OLD CODE: 'alert-response': ['alerts', 'investigations', 'risk'], (NET-308)
+		'alert-response': ['alerts', 'response', 'risk'],
 		'monitoring-coverage': ['devices', 'risk'],
 	};
 	const INPUTS: Record<Input, { field: keyof PostureData; get: (w: Win) => Promise<unknown> }> = {
@@ -49,14 +51,18 @@
 		alerts: { field: 'alertCounts', get: (w) => getAlertCount(w) },
 		devices: { field: 'deviceCount', get: (w) => getDeviceCount(w) },
 		risk: { field: 'riskScores', get: (w) => getRiskScores(w) },
-		// all time: the stats endpoint takes no window
-		investigations: { field: 'investigationStats', get: () => getInvestigationStats() },
+		// OLD CODE START — NET-308: all-time investigation stats
+		// // all time: the stats endpoint takes no window
+		// investigations: { field: 'investigationStats', get: () => getInvestigationStats() },
+		// OLD CODE END
+		isolation: { field: 'isolation', get: (w) => getIsolation(w) },
+		response: { field: 'alertResponse', get: (w) => getPostureDetail('alert-response', w) },
 	};
 	const EXTRA_GET: Record<ExtraKey, (w: Win) => Promise<unknown>> = {
 		encryption: (w) => getPostureDetail('encryption', w),
 		'dns-security': (w) => getPostureDetail('dns-security', w),
 		'patch-currency': (w) => getPostureDetail('patch-currency', w),
-		isolation: (w) => getNetworkIsolation(w),
+		// OLD CODE: isolation: (w) => getNetworkIsolation(w), (NET-308: a score input now, INPUTS.isolation)
 		signatures: (w) => getAlertTopSignatures({ ...w, limit: 10 }),
 		mode: () => getCaptureMode(),
 		stats: () => getCaptureStats(),

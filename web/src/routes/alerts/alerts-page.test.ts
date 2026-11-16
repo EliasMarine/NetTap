@@ -25,6 +25,7 @@ import {
 	THREAT_SCORE_BRIDGE,
 } from '$api/alerts';
 import { getSystemHealth, type SystemHealth } from '$api/system';
+import { createInvestigation, type Investigation } from '$api/investigations';
 import { _configure as resetAlertSnapshots, alertSnapshots, loadAlertSnapshot } from '$lib/stores/alertSnapshot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import { goto } from '$app/navigation';
@@ -85,6 +86,12 @@ vi.mock('$api/alerts', async (importOriginal) => ({
 	acknowledgeAlert: vi.fn(),
 	suppressAlert: vi.fn(),
 	markFalsePositive: vi.fn(),
+}));
+
+// NET-308: the drawer's Open an investigation
+vi.mock('$api/investigations', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/investigations')>()),
+	createInvestigation: vi.fn(),
 }));
 
 // NET-228: the page reads the pipeline's state for its zero messages
@@ -703,6 +710,23 @@ describe('Alerts — drawer', () => {
 		await flush();
 		expect(markFalsePositive).toHaveBeenCalledWith(2900001);
 		expect(within(drawer).getByRole('alert')).toHaveTextContent('Not applied: Mark false positive failed: 500');
+	});
+
+	it('opens an investigation that links the alert, titled by its rule, and says so (NET-308)', async () => {
+		const drawer = await openFromRow();
+		vi.mocked(createInvestigation).mockRejectedValueOnce(new Error('Creating the investigation failed: HTTP 502'));
+		await fireEvent.click(within(drawer).getByRole('button', { name: 'Open an investigation' }));
+		await flush();
+		expect(within(drawer).getByRole('alert')).toHaveTextContent('Not applied: Creating the investigation failed: HTTP 502');
+
+		vi.mocked(createInvestigation).mockResolvedValueOnce({ id: 'i1' } as Investigation);
+		await fireEvent.click(within(drawer).getByRole('button', { name: 'Open an investigation' }));
+		await flush();
+		expect(createInvestigation).toHaveBeenLastCalledWith({ title: 'ET MALWARE CnC Checkin', severity: 'high', alert_ids: ['e1'] });
+		expect(within(drawer).getByRole('status')).toHaveTextContent('Investigation opened.');
+		expect(within(drawer).getByRole('link', { name: 'Open Investigations' })).toHaveAttribute('href', '/investigations');
+		expect(within(drawer).queryByRole('button', { name: 'Open an investigation' })).not.toBeInTheDocument();
+		expect(within(drawer).queryByRole('alert')).not.toBeInTheDocument();
 	});
 
 	it('loads Related events when opened, and retries after a failure', async () => {

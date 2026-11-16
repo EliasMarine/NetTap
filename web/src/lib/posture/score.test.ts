@@ -18,7 +18,12 @@ describe('scoreCategories', () => {
 		expect(scoreCategories(inputs()).map((c) => c.slug)).toEqual([...POSTURE_SLUGS]);
 	});
 
-	it('scores Encryption and DNS from the daemon figures (G11: 15% and 29%)', () => {
+	// OLD CODE START — NET-308: every eligible connection and every lookup (G11: 15% and 29%)
+	// it('scores Encryption and DNS from the daemon figures (G11: 15% and 29%)', () => { … });
+	// it('takes 10 off segmentation per device without a score, and coverage is the share scored', () => { … });
+	// it('scores Alert response 0 with alerts and no investigations, and needs the investigations then', () => { … });
+	// OLD CODE END
+	it('scores Encryption and DNS from the daemon figures (G11 2026-11-16: 74% and 52%)', () => {
 		const c = bySlug(
 			inputs({
 				protocols: {
@@ -26,32 +31,91 @@ describe('scoreCategories', () => {
 					to: '',
 					protocols: [],
 					services: [{ name: 'unknown', count: 10 }],
-					encryption: { eligible: 1_036_286, encrypted: 155_334 },
-					dns: { plain: 53_332, over_tls: 21_876 },
+					encryption: { eligible: 177_870, encrypted: 131_356, one_way: 907_976 },
+					dns: { plain: 23_317, over_tls: 24_903, local: { plain: 27_896, over_tls: 0 } },
 				},
 			}),
 		);
-		expect(c['encryption'].score).toBe(15);
-		expect(c['encryption'].status).toBe('Poor');
-		expect(c['dns-security'].score).toBe(29);
+		expect(c['encryption'].score).toBe(74);
+		expect(c['encryption'].findings).toContain('131,356 of 177,870 connections with data both ways encrypted (74%)');
+		expect(c['dns-security'].score).toBe(52);
+		expect(c['dns-security'].findings).toContain('27,896 lookups to your own resolvers, judged by what they send out');
 	});
 
-	it('takes 10 off segmentation per device without a score, and coverage is the share scored', () => {
+	it('leaves Encryption Not measured when nothing carried data both ways, and says why', () => {
+		const enc = bySlug(
+			inputs({ protocols: { from: '', to: '', protocols: [], services: [{ name: 'unknown', count: 5 }], encryption: { eligible: 0, encrypted: 0, one_way: 5 } } }),
+		)['encryption'];
+		expect(enc.status).toBe('Not measured');
+		expect(enc.findings[0]).toMatch(/^No connection carried data both ways; 5 carried data one way or none/);
+	});
+
+	it("reads DNS Not measured when only your own resolvers' lookups were seen", () => {
+		const dns = bySlug(
+			inputs({ protocols: { from: '', to: '', protocols: [], services: [], dns: { plain: 0, over_tls: 0, local: { plain: 40, over_tls: 25 } } } }),
+		)['dns-security'];
+		expect(dns.empty).toBe(true);
+		expect(dns.findings).toContain("Your resolvers' own lookups out aren't visible to NetTap, so there is nothing to score");
+	});
+
+	it('scores segmentation from IoT isolation, and coverage is still the share scored', () => {
 		const c = bySlug(
 			inputs({
 				deviceCount: { from: '', to: '', count: 4 },
 				riskScores: { scores: [{ ip: '192.168.1.2', score: 1, level: 'low', factors: [] }] },
+				isolation: { segmentation_score: 75, segmentation_grade: 'C', pairs: [], recommendation: 'Consider a VLAN.' },
 			}),
 		);
-		expect(c['network-segmentation'].score).toBe(70);
+		expect(c['network-segmentation'].score).toBe(75);
+		expect(c['network-segmentation'].needs).toEqual(['isolation']);
+		expect(c['network-segmentation'].findings).toContain('Consider a VLAN.');
 		expect(c['monitoring-coverage'].score).toBe(25);
 		expect(c['monitoring-coverage'].status).toBe('Poor');
 	});
 
-	it('scores Alert response 0 with alerts and no investigations, and needs the investigations then', () => {
-		const c = bySlug(inputs({ alertCounts: { from: '', to: '', counts: { total: 757, high: 295, medium: 219, low: 243 } } }));
-		expect(c['alert-response'].score).toBe(0);
-		expect(c['alert-response'].needs).toEqual(['alerts', 'investigations']);
+	it('reads segmentation Not measured with no smart devices, and Couldn\'t compute when isolation failed', () => {
+		expect(bySlug(inputs())['network-segmentation'].status).toBe('Not measured');
+		expect(bySlug(inputs())['network-segmentation'].findings).toEqual(['No smart (IoT) devices detected yet']);
+		const failed = bySlug(inputs({ failed: ['isolation'], isolation: { ...EMPTY_DATA.isolation, segmentation_score: 100 } }))['network-segmentation'];
+		expect(failed.status).toBe("Couldn't compute");
+		expect(failed.findings[0]).toBe("Couldn't load smart-device isolation: the request failed.");
+		// risk scores no longer feed it
+		expect(bySlug(inputs({ failed: ['risk'] }))['network-segmentation'].status).toBe('Not measured');
+	});
+
+	const response = (needing: number, investigated: number) => ({ ...EMPTY_DATA.alertResponse, needing, investigated });
+
+	it('scores Alert response as the share of high-severity rules with an investigation (G11: 0 of 13)', () => {
+		const alerts = { from: '', to: '', counts: { total: 853, high: 315, medium: 219, low: 319 } };
+		const g11 = bySlug(inputs({ alertCounts: alerts, alertResponse: response(13, 0) }))['alert-response'];
+		expect(g11.score).toBe(0);
+		expect(g11.needs).toEqual(['alerts', 'response']);
+		expect(g11.findings[0]).toBe('13 high-severity rule(s) needed a response; 0 have an investigation open in the last 24 hours');
+		expect(bySlug(inputs({ alertCounts: alerts, alertResponse: response(13, 4) }))['alert-response'].score).toBe(31);
+	});
+
+	it('reads Alert response Not measured when nothing needed a response, whatever the alert count', () => {
+		const alerts = { from: '', to: '', counts: { total: 757, high: 0, medium: 219, low: 538 } };
+		const c = bySlug(inputs({ alertCounts: alerts }))['alert-response'];
+		expect(c.status).toBe('Not measured');
+		// the pipeline state is still being checked, so the zero isn't trusted yet
+		expect(c.findings[0]).toBe("Can't tell if anything needed a response, so there is nothing to score · Data pipeline now: Checking…");
+		const fresh = { health: { pipeline: { state: 'fresh' } } as unknown as NonNullable<PostureInputs['health']['health']>, failed: false };
+		expect(bySlug(inputs({ health: fresh }))['alert-response'].findings[0]).toMatch(/^Nothing needed a response in the last 24 hours, so there is nothing to score · /);
+		expect(bySlug(inputs({ failed: ['response'] }))['alert-response'].findings[0]).toBe("Couldn't load alert follow-up: the request failed.");
+	});
+
+	it('scores Patch currency per connection, so a two-label connection counts once (G11: 98)', () => {
+		const services = [
+			{ name: 'http', count: 30 },
+			{ name: 'ssl', count: 30 },
+		];
+		// 30 connections labelled ssl and http: the labels say 50%, the connections 0 of 30 left
+		const two = bySlug(inputs({ protocols: { from: '', to: '', protocols: [], services, patch: { legacy: 30, connections: 30 } } }))['patch-currency'];
+		expect(two.score).toBe(0);
+		const g11 = bySlug(inputs({ protocols: { from: '', to: '', protocols: [], services, patch: { legacy: 28_460, connections: 1_340_157 } } }))['patch-currency'];
+		expect(g11.score).toBe(98);
+		expect(bySlug(inputs())['patch-currency'].status).toBe('Not measured');
 	});
 
 	it('marks a category with nothing to score Not measured, and one whose input failed Couldn\'t compute', () => {
@@ -65,7 +129,8 @@ describe('scoreCategories', () => {
 });
 
 describe('legacyCounts', () => {
-	it('counts labels as the score does, so a two-label connection counts once per label', () => {
+	// OLD CODE: it('counts labels as the score does, so a two-label connection counts once per label', …) (NET-308: the score counts connections)
+	it('counts each legacy label, for the findings and bars', () => {
 		// "http" and "ssl,http" records both carry http; the service list counts each label
 		const counts = legacyCounts([
 			{ name: 'http', count: 30 },
@@ -73,25 +138,15 @@ describe('legacyCounts', () => {
 			{ name: 'telnet', count: 2 },
 			{ name: 'unknown', count: 18 },
 		]);
-		expect(counts).toEqual({ legacy: 32, total: 100, byName: { http: 30, ftp: 0, telnet: 2, pop3: 0, imap: 0 } });
-	});
-
-	it('is the Patch currency score\'s numerator and denominator', () => {
-		const services = [
-			{ name: 'http', count: 27_494 },
-			{ name: 'unknown', count: 1_262_506 },
-		];
-		const patch = bySlug(inputs({ protocols: { from: '', to: '', protocols: [], services } }))['patch-currency'];
-		const { legacy, total } = legacyCounts(services);
-		expect(patch.score).toBe(Math.round(100 - (legacy / total) * 100));
-		expect(patch.score).toBe(98);
+		expect(counts).toEqual({ byName: { http: 30, ftp: 0, telnet: 2, pop3: 0, imap: 0 } });
 	});
 });
 
 // The Patch page's device lists (daemon) must count the same protocols as the score (here)
 describe('LEGACY_PROTOCOLS', () => {
-	it("matches daemon/api/posture.py's list", () => {
-		const source = readFileSync(resolve(__dirname, '../../../../daemon/api/posture.py'), 'utf-8');
+	// OLD CODE: it("matches daemon/api/posture.py's list", …) (NET-308: it moved to daemon/api/traffic.py)
+	it("matches daemon/api/traffic.py's list", () => {
+		const source = readFileSync(resolve(__dirname, '../../../../daemon/api/traffic.py'), 'utf-8');
 		const daemon = JSON.parse(source.match(/^LEGACY_PROTOCOLS = (\[.*\])$/m)![1]);
 		expect([...LEGACY_PROTOCOLS]).toEqual(daemon);
 	});

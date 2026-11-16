@@ -12,13 +12,20 @@ const REPLIES: Record<string, unknown> = {
 	'/api/traffic/protocols': {
 		protocols: [],
 		services: [{ name: 'ssl', count: 80 }],
-		encryption: { eligible: 200, encrypted: 120 },
-		dns: { plain: 90, over_tls: 10 },
+		// OLD CODE: encryption: { eligible: 200, encrypted: 120 }, dns: { plain: 90, over_tls: 10 }, (NET-308)
+		encryption: { eligible: 200, encrypted: 120, one_way: 0 },
+		dns: { plain: 90, over_tls: 10, local: { plain: 0, over_tls: 0 } },
+		patch: { legacy: 0, connections: 80 },
 	},
 	'/api/alerts/count': { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } },
 	'/api/devices/count': { from: '', to: '', count: 2 },
 	'/api/risk/scores': { devices: [{ ip: '192.168.1.10' }, { ip: '192.168.1.11' }] },
-	'/api/investigations/stats': { total: 0, by_status: {} },
+	// OLD CODE: '/api/investigations/stats': { total: 0, by_status: {} }, (NET-308: alert follow-up and isolation)
+	'/api/iot/network-isolation': { segmentation_score: 100, segmentation_grade: 'A', pairs: [], recommendation: 'No IoT-to-LAN traffic seen.' },
+	'/api/posture/alert-response': {
+		category: 'alert-response', from: '', to: '', needing: 0, investigated: 0, groups: [],
+		investigations: { open_during: 0, linked_alerts: 0, unresolved_links: 0, skipped: 0 },
+	},
 	// NET-228: the zero-alert finding reads the pipeline's state
 	'/api/system/health': {
 		status: 'healthy', healthy: true, opensearch_reachable: true,
@@ -65,7 +72,8 @@ describe('Security posture refresh contract', () => {
 		expect(within(card('Overall security posture')).getByRole('alert')).toHaveTextContent(
 			"Couldn't compute the overall score",
 		);
-		expect(screen.getByText(/^Not shown: Network segmentation, Monitoring coverage/)).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText(/^Not shown: Network segmentation, Monitoring coverage/)).toBeInTheDocument(); (NET-308: segmentation reads isolation)
+		expect(screen.getByText(/^Not shown: Monitoring coverage, because/)).toBeInTheDocument();
 	});
 
 	it('reports failed when every input fails, with Try again on the error states', async () => {
@@ -79,7 +87,8 @@ describe('Security posture refresh contract', () => {
 
 		await fireEvent.click(within(radar).getByRole('button', { name: 'Try again' }));
 		// OLD CODE: await waitFor(() => expect(fetchMock.mock.calls.length).toBe(calls + 5)); (NET-228: and the health)
-		await waitFor(() => expect(fetchMock.mock.calls.length).toBe(calls + 6));
+		// OLD CODE: await waitFor(() => expect(fetchMock.mock.calls.length).toBe(calls + 6)); (NET-308: six inputs and the health)
+		await waitFor(() => expect(fetchMock.mock.calls.length).toBe(calls + 7));
 	});
 
 	it('shows the loading state and no figures until the first load returns', async () => {
@@ -123,6 +132,30 @@ describe('Security posture refresh contract', () => {
 		await new Promise((r) => setTimeout(r, 0));
 		expect(within(card('Monitoring coverage')).queryByText(/of 40 device/)).not.toBeInTheDocument();
 		expect(within(card('Monitoring coverage')).getByText('100%')).toBeInTheDocument();
+	});
+});
+
+describe('Security posture with a malformed isolation reply (NET-308 R1-6)', () => {
+	it('reads Network segmentation as Couldn’t compute, never as 100', async () => {
+		stubDaemon([], { ...REPLIES, '/api/iot/network-isolation': { segmentation_score: 'A', pairs: [], recommendation: '' } });
+		render(CompliancePage);
+		await waitFor(() => expect(get(pageRefresh).status).toBe('partial'));
+		const segmentation = card('Network segmentation');
+		expect(within(segmentation).getAllByText("Couldn't load smart-device isolation: the request failed.").length).toBeGreaterThan(0);
+		expect(within(segmentation).queryByText('100%')).not.toBeInTheDocument();
+	});
+
+	it('sends every request over the same window', async () => {
+		const fetchMock = stubDaemon();
+		render(CompliancePage);
+		await waitFor(() => expect(get(pageRefresh).status).toBe('ok'));
+		const windows = fetchMock.mock.calls
+			.map(([url]) => new URL(url, 'http://x'))
+			.filter((u) => u.pathname !== '/api/system/health')
+			.map((u) => `${u.searchParams.get('from')}|${u.searchParams.get('to')}`);
+		expect(windows).toHaveLength(6);
+		expect(new Set(windows).size).toBe(1);
+		expect(windows[0]).not.toBe('null|null');
 	});
 });
 

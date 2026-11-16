@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.iot_monitor import (
+    ISOLATION_PAIR_AGGS,
     IoTMonitor,
     ANOMALY_NEW_DESTINATION,
     ANOMALY_NEW_COUNTRY,
@@ -1047,18 +1048,21 @@ class TestNetworkIsolation:
 
     def test_detects_iot_to_internal_pairs(self, iot, mock_client):
         self._setup_devices(iot)
+        not_icmp = {
+            "doc_count": 45,
+            "ports": {
+                "buckets": [
+                    {"key": 445, "doc_count": 30},
+                    {"key": 139, "doc_count": 15},
+                ]
+            },
+        }
         pair = {
             "key": {"mac": "AA:BB:CC:DD:EE:FF", "dest": "192.168.1.10"},
             "doc_count": 45,
-            "not_icmp": {
-                "doc_count": 45,
-                "ports": {
-                    "buckets": [
-                        {"key": 445, "doc_count": 30},
-                        {"key": 139, "doc_count": 15},
-                    ]
-                },
-            },
+            "not_icmp": not_icmp,
+            # NET-308: established, so data went both ways
+            "reached": {"doc_count": 45, "not_icmp": not_icmp},
             "source_ip": {"buckets": [{"key": "192.168.1.50", "doc_count": 45}]},
         }
         mock_client.search.side_effect = [
@@ -1077,6 +1081,88 @@ class TestNetworkIsolation:
         assert pair["risk"] == "critical"  # ports 445, 139
         assert 445 in pair["ports"]
         assert "recommendation" in result
+
+    # NET-308 R1-2/R2-4: the real ISOLATION_PAIR_AGGS evaluated on conn documents, so
+    # `reached` comes from the filter, not a canned count
+    def _isolation(self, iot, mock_client, docs):
+        from tests.fake_drill_opensearch import aggregate
+
+        self._setup_devices(iot)
+        pair = {
+            "key": {"mac": "AA:BB:CC:DD:EE:FF", "dest": "192.168.1.10"},
+            "doc_count": len(docs),
+            **aggregate(docs, ISOLATION_PAIR_AGGS),
+        }
+        mock_client.search.side_effect = [
+            {"aggregations": {"all": {"buckets": [pair]}}}
+        ]
+        return iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+
+    @staticmethod
+    def _conn(port, state, **counters):
+        return {
+            "source.ip": "192.168.1.50",
+            "destination.ip": "192.168.1.10",
+            "destination.port": port,
+            "network.transport": "tcp",
+            "zeek.conn.conn_state": state,
+            **{f"zeek.conn.{k}": v for k, v in counters.items()},
+        }
+
+    def test_only_data_both_ways_reaches_a_host(self, iot, mock_client):
+        unreached = {
+            "unanswered": self._conn(445, "S0", orig_bytes=0, resp_bytes=0),
+            "rejected": self._conn(445, "REJ", orig_bytes=0, resp_bytes=0),
+            "one way": self._conn(445, "SF", orig_bytes=300, resp_bytes=0),
+            "no counters": self._conn(445, "OTH"),
+        }
+        for name, doc in unreached.items():
+            result = self._isolation(iot, mock_client, [doc])
+            [pair] = result["pairs"]  # an attempt stays a finding of its own
+            assert pair["reached"] is False, name
+            assert pair["reached_ports"] == [], name
+            assert pair["risk"] == "critical", name  # from the port it tried
+            assert result["segmentation_score"] == 100, name  # but costs nothing
+            assert pair["description"].endswith(
+                "reachability not confirmed (no data seen both ways)"
+            ), name
+            assert "VLAN" not in result["recommendation"], name
+
+        result = self._isolation(
+            iot, mock_client, [self._conn(445, "SF", orig_bytes=300, resp_bytes=500)]
+        )
+        [pair] = result["pairs"]
+        assert (pair["reached"], pair["reached_ports"]) == (True, [445])
+        assert result["segmentation_score"] == 75
+        assert pair["description"] == "smart-camera can reach 192.168.1.10 via SMB"
+        assert "VLAN" in result["recommendation"]
+
+    def test_an_established_ssh_pair_costs_25(self, iot, mock_client):
+        docs = [self._conn(22, "SF", orig_bytes=900, resp_bytes=4000)] * 3
+        result = self._isolation(iot, mock_client, docs)
+        assert result["pairs"][0]["risk"] == "critical"
+        assert result["segmentation_score"] == 75
+
+    def test_risk_comes_from_the_reached_ports(self, iot, mock_client):
+        """Reached the web port, only tried SMB: high (-15), not critical."""
+        docs = [
+            self._conn(80, "SF", orig_bytes=200, resp_bytes=1500),
+            self._conn(445, "S0", orig_bytes=0, resp_bytes=0),
+        ]
+        result = self._isolation(iot, mock_client, docs)
+        [pair] = result["pairs"]
+        assert (pair["risk"], pair["reached_ports"]) == ("high", [80])
+        assert set(pair["ports"]) == {80, 445}
+        assert result["segmentation_score"] == 85
+
+    def test_the_reached_filter_is_the_shared_payload_rule(self):
+        from services.excluded_ips import PAYLOAD_BOTH
+
+        assert ISOLATION_PAIR_AGGS["reached"]["filter"] is PAYLOAD_BOTH
+        assert (
+            ISOLATION_PAIR_AGGS["reached"]["aggs"]["not_icmp"]
+            == ISOLATION_PAIR_AGGS["not_icmp"]
+        )
 
     def test_perfect_segmentation(self, iot, mock_client):
         self._setup_devices(iot)

@@ -17,7 +17,9 @@
 	import KVRow from '$components/drawer/KVRow.svelte';
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	// OLD CODE: import { alertAdvice, alertExplanation, alertLevel, alertTitle, logExplorerHref } from './alert-view'; (slice 2b-2)
-	import { alertAdvice, alertExplanation, alertLevel, alertTitle, linkedSuricataCategory, logExplorerHref } from './alert-view';
+	// OLD CODE: import { alertAdvice, alertExplanation, alertLevel, alertTitle, linkedSuricataCategory, logExplorerHref } from './alert-view'; (NET-308)
+	import { alertAdvice, alertExplanation, alertLevel, alertTitle, investigationFor, linkedSuricataCategory, logExplorerHref } from './alert-view';
+	import { createInvestigation } from '$api/investigations';
 	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (slice 2b-2)
 	// OLD CODE: import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown'; (the rule name opens the rule page)
 	import { ruleHref, suricataCategoryHref } from '$lib/utils/drilldown';
@@ -38,6 +40,8 @@
 
 	let error = $state('');
 	let busy = $state(false);
+	/** NET-308: an investigation this drawer opened, linking the alert */
+	let opened = $state(false);
 	let panel = $state<HTMLElement>();
 
 	// Under 1100 px the column sits below the list (position: static), out of sight: bring it in
@@ -60,6 +64,12 @@
 			busy = false;
 		}
 	}
+
+	const openInvestigation = () =>
+		act(async () => {
+			await createInvestigation(investigationFor(alert));
+			opened = true;
+		});
 
 	function formatTimestamp(ts: string | undefined): string {
 		if (!ts) return '—';
@@ -117,12 +127,18 @@
 	{#if error}
 		<p class="notice is-error" role="alert"><Icon name="warn" />Not applied: {error}</p>
 	{/if}
+	{#if opened}
+		<p class="notice" role="status"><Icon name="check" />Investigation opened. <a href="/investigations">Open Investigations</a></p>
+	{/if}
 	<div class="actions">
 		{#if alert.src_ip}
 			<a class="btn primary" href="/connections?ip={encodeURIComponent(alert.src_ip)}"><Icon name="connections" />View connections</a>
 		{/if}
 		{#if !alert.acknowledged}
 			<button class="btn" type="button" disabled={busy} onclick={() => act(onacknowledge)}><Icon name="check" />Acknowledge</button>
+		{/if}
+		{#if !opened}
+			<button class="btn" type="button" disabled={busy} onclick={openInvestigation}>Open an investigation</button>
 		{/if}
 		{#if hasSignatureId}
 			<button class="btn" type="button" title="Suppress this signature" disabled={busy} onclick={() => act(onsuppress)}>Suppress</button>

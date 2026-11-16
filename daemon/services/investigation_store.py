@@ -16,6 +16,38 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger("nettap.investigation_store")
 
+# Statuses that mean the work is done; their last change stands in for a close time (NET-308)
+_DONE_STATUSES = ("resolved", "closed")
+
+
+def clean_alert_rules(value: object) -> dict[str, str | None]:
+    """A stored alert_rules map with only well-formed entries: a str alert id to its rule name as
+    a str, or None for an alert with no rule name. A bad entry is dropped alone; a non-dict is {}.
+    """
+    if not isinstance(value, dict):
+        if value is not None:
+            logger.warning("Ignoring an alert_rules value that isn't a map")
+        return {}
+    clean = {
+        k: v
+        for k, v in value.items()
+        if isinstance(k, str) and (v is None or isinstance(v, str))
+    }
+    if len(clean) < len(value):
+        logger.warning(
+            "Dropped %d malformed alert_rules entries", len(value) - len(clean)
+        )
+    return clean
+
+
+def _utc(stamp: object) -> datetime | None:
+    """An ISO 8601 time as an aware UTC datetime (a naive one is read as UTC), or None."""
+    try:
+        when = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
 
 @dataclass
 class InvestigationNote:
@@ -45,6 +77,9 @@ class Investigation:
     device_ips: list[str] = field(default_factory=list)
     notes: list[InvestigationNote] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    # NET-308: each linked alert's rule.name as the daemon read it at link time (None: no name), so
+    # Alert response coverage survives the alert's index expiring. A link without one is unresolved.
+    alert_rules: dict[str, str | None] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -90,6 +125,7 @@ class InvestigationStore:
                         device_ips=inv_data.get("device_ips", []),
                         notes=notes,
                         tags=inv_data.get("tags", []),
+                        alert_rules=clean_alert_rules(inv_data.get("alert_rules")),
                     )
                     self._investigations[inv.id] = inv
                 logger.info(
@@ -124,6 +160,7 @@ class InvestigationStore:
         alert_ids: list[str] | None = None,
         device_ips: list[str] | None = None,
         tags: list[str] | None = None,
+        alert_rules: dict[str, str | None] | None = None,
     ) -> Investigation:
         """Create a new investigation.
 
@@ -147,6 +184,7 @@ class InvestigationStore:
             device_ips=device_ips or [],
             notes=[],
             tags=tags or [],
+            alert_rules=dict(alert_rules or {}),
         )
         self._investigations[inv.id] = inv
         self._save()
@@ -262,16 +300,36 @@ class InvestigationStore:
             return True
         return False
 
-    def link_alert(self, investigation_id: str, alert_id: str) -> bool:
-        """Link an alert to an investigation. Returns True on success."""
+    # OLD CODE START — NET-308: the link now records the alert's rule, read by the caller
+    # def link_alert(self, investigation_id: str, alert_id: str) -> bool:
+    #     """Link an alert to an investigation. Returns True on success."""
+    #     inv = self._investigations.get(investigation_id)
+    #     if inv is None:
+    #         return False
+    #
+    #     if alert_id not in inv.alert_ids:
+    #         inv.alert_ids.append(alert_id)
+    #         inv.updated_at = datetime.now(timezone.utc).isoformat()
+    #         self._save()
+    #     return True
+    # OLD CODE END
+    def link_alert(
+        self, investigation_id: str, alert_id: str, rule: str | None
+    ) -> bool:
+        """Link an alert and record its rule name. Re-linking an alert already linked fills in
+        its rule without a second id. Returns True on success."""
         inv = self._investigations.get(investigation_id)
         if inv is None:
             return False
 
-        if alert_id not in inv.alert_ids:
+        linked = alert_id in inv.alert_ids
+        if linked and alert_id in inv.alert_rules and inv.alert_rules[alert_id] == rule:
+            return True  # nothing changes, so updated_at stays
+        if not linked:
             inv.alert_ids.append(alert_id)
-            inv.updated_at = datetime.now(timezone.utc).isoformat()
-            self._save()
+        inv.alert_rules[alert_id] = rule
+        inv.updated_at = datetime.now(timezone.utc).isoformat()
+        self._save()
         return True
 
     def unlink_alert(self, investigation_id: str, alert_id: str) -> bool:
@@ -282,6 +340,7 @@ class InvestigationStore:
 
         if alert_id in inv.alert_ids:
             inv.alert_ids.remove(alert_id)
+            inv.alert_rules.pop(alert_id, None)
             inv.updated_at = datetime.now(timezone.utc).isoformat()
             self._save()
             return True
@@ -298,6 +357,25 @@ class InvestigationStore:
             inv.updated_at = datetime.now(timezone.utc).isoformat()
             self._save()
         return True
+
+    def open_during(self, from_ts: str, to_ts: str) -> list[Investigation]:
+        """Investigations open at some point in [from_ts, to_ts]: created by the end, and either
+        still open or last changed after the start. NetTap stores no close time, so a done
+        investigation's updated_at stands in for it. An unreadable time leaves the record out."""
+        start, end = _utc(from_ts), _utc(to_ts)
+        if start is None or end is None:
+            raise ValueError("unreadable window")
+        found = []
+        for inv in self._investigations.values():
+            created = _utc(inv.created_at)
+            if created is None or created > end:
+                continue
+            if inv.status in _DONE_STATUSES:
+                changed = _utc(inv.updated_at)
+                if changed is None or changed < start:
+                    continue
+            found.append(inv)
+        return found
 
     def get_stats(self) -> dict:
         """Return investigation statistics: counts by status and severity."""

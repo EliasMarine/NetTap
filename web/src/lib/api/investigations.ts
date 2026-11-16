@@ -27,6 +27,8 @@ export interface Investigation {
 	device_ips: string[];
 	notes: InvestigationNote[];
 	tags: string[];
+	/** NET-308: each linked alert's rule name as the daemon read it at link time (null: no name) */
+	alert_rules?: Record<string, string | null>;
 }
 
 export interface InvestigationStats {

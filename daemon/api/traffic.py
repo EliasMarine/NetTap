@@ -24,6 +24,8 @@ from api.time_range import parse_time_range, slot_interval
 from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
 from services.excluded_ips import (
     CONN_ACCOUNTING,
+    PAYLOAD_BOTH,
+    PAYLOAD_FIELDS,
     build_excluded_ips_filter,
     valid_excluded_ips,
 )
@@ -85,7 +87,9 @@ _CONN_STATE_CODES = {
 # packets from one side only (4,469 of 4,469 in an hour: S0, SHR, history D or ^d), so a missing
 # counter is one-way too.
 _ICMP_FILTER = {"terms": {"network.transport": ICMP_TRANSPORTS}}
-_PAYLOAD_FIELDS = ("zeek.conn.orig_bytes", "zeek.conn.resp_bytes")
+# OLD CODE: _PAYLOAD_FIELDS = ("zeek.conn.orig_bytes", "zeek.conn.resp_bytes") (NET-308: one
+# definition in services/excluded_ips.py, which IoT isolation reads too)
+_PAYLOAD_FIELDS = PAYLOAD_FIELDS
 _UNLABELLED_AGG = {
     "filter": {"bool": {"must_not": [{"exists": {"field": "network.protocol"}}]}},
     "aggs": {
@@ -103,24 +107,49 @@ _UNLABELLED_AGG = {
         #     }
         # },
         # OLD CODE END
-        "one_way": {
-            "filter": {
-                "bool": {
-                    "must_not": [
-                        _ICMP_FILTER,
-                        {
-                            "bool": {
-                                "filter": [
-                                    {"range": {f: {"gt": 0}}} for f in _PAYLOAD_FIELDS
-                                ]
-                            }
-                        },
-                    ]
-                }
-            }
-        },
+        # OLD CODE START — NET-308: the payload-both clause written inline; PAYLOAD_BOTH is the one definition
+        # "one_way": {
+        #     "filter": {
+        #         "bool": {
+        #             "must_not": [
+        #                 _ICMP_FILTER,
+        #                 {
+        #                     "bool": {
+        #                         "filter": [
+        #                             {"range": {f: {"gt": 0}}} for f in _PAYLOAD_FIELDS
+        #                         ]
+        #                     }
+        #                 },
+        #             ]
+        #         }
+        #     }
+        # },
+        # OLD CODE END
+        "one_way": {"filter": {"bool": {"must_not": [_ICMP_FILTER, PAYLOAD_BOTH]}}},
     },
 }
+# NET-308: address scope for the posture scores (moved from api/posture.py, which imports them:
+# posture imports this module, so they can't live there). "Private or local-scope" is what the
+# address says, not proof the traffic stayed in this network (a routed VPN address is private too).
+# dns_analytics' LOCAL_DESTINATIONS is left alone: other features read it, and it has no IPv6 ULA.
+PRIVATE_LOCAL_SCOPE = [
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "224.0.0.0/4",
+    "255.255.255.255",
+    "fc00::/7",
+    "fe80::/10",
+    "ff00::/8",
+    "::1/128",
+]
+PRIVATE_LOCAL: dict = {"terms": {"destination.ip": PRIVATE_LOCAL_SCOPE}}
+# The Patch currency score's legacy names (moved from api/posture.py); keep in step with
+# web/src/lib/posture/score.ts
+LEGACY_PROTOCOLS = ["http", "ftp", "telnet", "pop3", "imap"]
+
 # A QUIC connection carries two labels, quic and ssl. Exact counts (terms buckets can be
 # approximate or missing) replace the quic, ssl and unknown entries, so QUIC counts once.
 _QUIC = {"term": {"network.protocol": "quic"}}
@@ -136,6 +165,29 @@ _EXACT_SERVICE_AGGS = {
     },
     "unlabelled": _UNLABELLED_AGG,
 }
+
+
+def _encryption_figures(agg: dict) -> dict:
+    """The Encryption score's inputs (NET-308): only connections with data both ways are scored;
+    one_way is what that leaves out (one way, none, or not measured)."""
+    both = agg["both"]
+    return {
+        "eligible": both["doc_count"],
+        "encrypted": both["encrypted"]["doc_count"],
+        "one_way": agg["doc_count"] - both["doc_count"],
+    }
+
+
+def _dns_figures(plain: dict, dot: dict) -> dict:
+    """The DNS security score's inputs (NET-308): plain lookups and DoT connections to non-local
+    (or unknown) addresses; the ones to private or local-scope resolvers, kept apart for display."""
+    plain_local = plain["private_local"]["doc_count"]
+    dot_local = dot["private_local"]["doc_count"]
+    return {
+        "plain": plain["doc_count"] - plain_local,
+        "over_tls": dot["doc_count"] - dot_local,
+        "local": {"plain": plain_local, "over_tls": dot_local},
+    }
 
 
 def _services_and_unidentified(aggs: dict) -> tuple[list[dict], dict]:
@@ -591,10 +643,19 @@ def handle_protocols(request: web.Request) -> web.Response:
                         ]
                     }
                 },
-                "aggs": {"encrypted": {"filter": ENCRYPTED_CONN_FILTER}},
+                # OLD CODE: "aggs": {"encrypted": {"filter": ENCRYPTED_CONN_FILTER}}, (NET-308: a one-way
+                # attempt counted as unencrypted; G11 15%, 917,850 unencrypted of which 46,505 both ways)
+                "aggs": {
+                    "both": {
+                        "filter": PAYLOAD_BOTH,
+                        "aggs": {"encrypted": {"filter": ENCRYPTED_CONN_FILTER}},
+                    }
+                },
             },
             # Plain DNS lookups (mDNS/LLMNR are local name services, as on the DNS page) and
             # DNS-over-TLS; DNS-over-HTTPS looks like any HTTPS and can't be told apart
+            # NET-308: lookups to a private or local-scope resolver (router, Pi-hole) are local, on
+            # both sides; the resolver's own lookups out are what the score judges
             "dns_plain": {
                 "filter": {
                     "bool": {
@@ -603,9 +664,17 @@ def handle_protocols(request: web.Request) -> web.Response:
                             {"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}}
                         ],
                     }
-                }
+                },
+                "aggs": {"private_local": {"filter": PRIVATE_LOCAL}},
             },
-            "dns_over_tls": {"filter": {"term": {"destination.port": 853}}},
+            # OLD CODE: "dns_over_tls": {"filter": {"term": {"destination.port": 853}}}, (NET-308)
+            "dns_over_tls": {
+                "filter": {"term": {"destination.port": 853}},
+                "aggs": {"private_local": {"filter": PRIVATE_LOCAL}},
+            },
+            # NET-308: Patch currency counts each connection once, not once per label
+            "legacy": {"filter": {"terms": {"network.protocol": LEGACY_PROTOCOLS}}},
+            "connections": {"filter": {"match_all": {}}},
             **_EXACT_SERVICE_AGGS,
         },
     }
@@ -648,15 +717,24 @@ def handle_protocols(request: web.Request) -> web.Response:
             "protocols": protocols,
             "services": services,
             "unidentified": unidentified,
-            "encryption": {
-                "eligible": aggs.get("encryption", {}).get("doc_count", 0),
-                "encrypted": aggs.get("encryption", {})
-                .get("encrypted", {})
-                .get("doc_count", 0),
-            },
-            "dns": {
-                "plain": aggs.get("dns_plain", {}).get("doc_count", 0),
-                "over_tls": aggs.get("dns_over_tls", {}).get("doc_count", 0),
+            # OLD CODE START — NET-308: every eligible connection, and every plain lookup and DoT
+            # connection whatever its destination
+            # "encryption": {
+            #     "eligible": aggs.get("encryption", {}).get("doc_count", 0),
+            #     "encrypted": aggs.get("encryption", {})
+            #     .get("encrypted", {})
+            #     .get("doc_count", 0),
+            # },
+            # "dns": {
+            #     "plain": aggs.get("dns_plain", {}).get("doc_count", 0),
+            #     "over_tls": aggs.get("dns_over_tls", {}).get("doc_count", 0),
+            # },
+            # OLD CODE END
+            "encryption": _encryption_figures(aggs["encryption"]),
+            "dns": _dns_figures(aggs["dns_plain"], aggs["dns_over_tls"]),
+            "patch": {
+                "legacy": aggs["legacy"]["doc_count"],
+                "connections": aggs["connections"]["doc_count"],
             },
             "excluded_ips": excluded,
         }

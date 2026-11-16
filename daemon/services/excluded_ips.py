@@ -513,6 +513,14 @@ CONN_ACCOUNTING: dict = {
     }
 }
 
+# NET-219/222: a conn record carried data both ways when both payload counters are above 0. A
+# missing counter is one way (on the G11 every such record had packets from one side only).
+# Shared by Home's Unidentified split, the Encryption score and IoT isolation (NET-308).
+PAYLOAD_FIELDS = ("zeek.conn.orig_bytes", "zeek.conn.resp_bytes")
+PAYLOAD_BOTH: dict = {
+    "bool": {"filter": [{"range": {f: {"gt": 0}}} for f in PAYLOAD_FIELDS]}
+}
+
 
 # OLD CODE START — #79: MGMT_IP was trusted as is. .env.example ships MGMT_IP=192.168.1.100,
 # so that placeholder (often a real device's address) was excluded from every page while

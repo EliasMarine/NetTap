@@ -375,24 +375,24 @@ class TestAlertLinking(unittest.TestCase):
 
     def test_link_alert(self):
         """link_alert() should add alert ID to the investigation."""
-        self.assertTrue(self.store.link_alert(self.inv.id, "alert-1"))
+        self.assertTrue(self.store.link_alert(self.inv.id, "alert-1", "ET X"))
         inv = self.store.get(self.inv.id)
         self.assertIn("alert-1", inv.alert_ids)
 
     def test_link_alert_duplicate(self):
         """link_alert() should not duplicate alert IDs."""
-        self.store.link_alert(self.inv.id, "alert-1")
-        self.store.link_alert(self.inv.id, "alert-1")
+        self.store.link_alert(self.inv.id, "alert-1", "ET X")
+        self.store.link_alert(self.inv.id, "alert-1", "ET X")
         inv = self.store.get(self.inv.id)
         self.assertEqual(inv.alert_ids.count("alert-1"), 1)
 
     def test_link_alert_nonexistent(self):
         """link_alert() should return False for unknown investigation."""
-        self.assertFalse(self.store.link_alert("bad-id", "alert-1"))
+        self.assertFalse(self.store.link_alert("bad-id", "alert-1", "ET X"))
 
     def test_unlink_alert(self):
         """unlink_alert() should remove the alert ID."""
-        self.store.link_alert(self.inv.id, "alert-1")
+        self.store.link_alert(self.inv.id, "alert-1", "ET X")
         self.assertTrue(self.store.unlink_alert(self.inv.id, "alert-1"))
         inv = self.store.get(self.inv.id)
         self.assertNotIn("alert-1", inv.alert_ids)
@@ -455,7 +455,7 @@ class TestPersistence(unittest.TestCase):
         store1 = InvestigationStore(store_file=self.tmp.name)
         inv = store1.create(title="Persist Test", severity="high")
         store1.add_note(inv.id, "A note")
-        store1.link_alert(inv.id, "alert-99")
+        store1.link_alert(inv.id, "alert-99", "ET X")
 
         # Create a new store instance from the same file
         store2 = InvestigationStore(store_file=self.tmp.name)

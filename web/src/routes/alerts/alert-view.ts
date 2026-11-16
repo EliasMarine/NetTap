@@ -32,6 +32,18 @@ export function alertAdvice(alert: Alert): string {
 	return text(alert.recommendation) ?? 'No specific advice for this alert yet.';
 }
 
+/** The investigation the drawer's "Open an investigation" creates (NET-308): it links this alert,
+ * so the daemon records its rule and Alert response counts it. Titled by the rule name, or by the
+ * alert's id when it has none; info becomes low, the investigation scale's lowest. */
+export function investigationFor(alert: Alert): { title: string; severity: 'low' | 'medium' | 'high'; alert_ids: string[] } {
+	const level = alertLevel(alert.alert?.severity);
+	return {
+		title: alert.rule?.name?.trim() || `Alert ${alert._id.slice(0, 8)}`,
+		severity: level === 'high' || level === 'medium' ? level : 'low',
+		alert_ids: [alert._id],
+	};
+}
+
 /** Log Explorer query for both ends of the alert (the old drawer's "View in Log Explorer"). */
 export function logExplorerHref(alert: Alert): string {
 	const ips = [alert.src_ip, alert.dest_ip].filter(Boolean);

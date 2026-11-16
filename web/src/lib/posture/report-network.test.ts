@@ -22,8 +22,9 @@ const ISOLATION: NetworkIsolation = {
 	segmentation_grade: 'C',
 	recommendation: 'Put smart devices on their own network.',
 	pairs: [
-		{ iot_device: { mac: '02:00:5e:10:00:50', name: 'Camera', ip: '192.168.1.50' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'high', connection_count: 40, ports: [445], description: 'Camera reached a computer on port 445.' },
-		{ iot_device: { mac: '02:00:5e:10:00:31', name: 'Thermostat', ip: '192.168.1.31' }, internal_target: { ip: '192.168.1.6', hostname: null }, risk: 'low', connection_count: 2, ports: [], description: 'Thermostat pinged a server.' },
+		{ iot_device: { mac: '02:00:5e:10:00:50', name: 'Camera', ip: '192.168.1.50' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'high', connection_count: 40, ports: [80, 445], reached: true, reached_ports: [80], description: 'Camera can reach 192.168.1.20 via HTTP' },
+		{ iot_device: { mac: '02:00:5e:10:00:31', name: 'Thermostat', ip: '192.168.1.31' }, internal_target: { ip: '192.168.1.6', hostname: null }, risk: 'low', connection_count: 2, ports: [], reached: true, reached_ports: [], description: 'Thermostat can reach 192.168.1.6 via ping (ICMP)' },
+		{ iot_device: { mac: '02:00:5e:10:00:60', name: 'Plug', ip: '192.168.1.60' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'critical', connection_count: 9, ports: [22], reached: false, reached_ports: [], description: 'Plug sent traffic to 192.168.1.20 via SSH; reachability not confirmed (no data seen both ways)' },
 	],
 };
 const health = (state: string, sensors: Record<string, string> = {}): PostureInputs['health'] => ({
@@ -33,37 +34,50 @@ const health = (state: string, sensors: Record<string, string> = {}): PostureInp
 const stats = (lost: number, arrived = 100_000): CaptureStatsResponse =>
 	({ loss_window: { state: 'ok', interface: 'enp1s0', window: { arrived, lost, drop_rate_pct: (lost / arrived) * 100, seconds: 3600 }, cumulative: null } }) as unknown as CaptureStatsResponse;
 
+// OLD CODE START — NET-308: segmentation scored baselines; isolation was an extra
+// describe('segmentationReport', () => { … baseline source, "100 − 10 × …" formula, isolation extra … });
+// OLD CODE END
 describe('segmentationReport', () => {
-	it('lists each isolation pair with both addresses, and steps high pairs up', () => {
-		const r = segmentationReport(reportData('network-segmentation', { inputs: devices(5, 5), extras: { isolation: ISOLATION }, names: new Map([['192.168.1.20', 'Laptop']]) }));
-		const pair = r.findings[0];
-		expect(pair).toMatchObject({ severity: 'high', count: 40, devices: [{ ip: '192.168.1.50' }, { ip: '192.168.1.20', name: 'Laptop' }] });
-		expect(pair.detail).toContain('Ports: 445.');
+	const seg = (o: Parameters<typeof reportData>[1] = {}) => segmentationReport(reportData('network-segmentation', o));
+
+	it('scores reached pairs only, and lists an unconfirmed one as its own finding', () => {
+		const r = seg({ inputs: { isolation: ISOLATION }, names: new Map([['192.168.1.20', 'Laptop']]) });
+		const [camera, plug] = [r.findings.find((f) => f.key.includes('192.168.1.50'))!, r.findings.find((f) => f.key.includes('192.168.1.60'))!];
+		expect(camera).toMatchObject({ severity: 'high', title: 'Camera reached another device on your network', count: 40, devices: [{ ip: '192.168.1.50' }, { ip: '192.168.1.20', name: 'Laptop' }] });
+		expect(camera.detail).toBe('Camera can reach 192.168.1.20 via HTTP Ports: 80.');
+		expect(plug).toMatchObject({ severity: 'critical', title: 'Reachability not confirmed' });
+		expect(plug.fix).toMatch(/couldn’t tell whether it got through/);
 		expect(r.steps[0]).toEqual({ priority: 'high', text: 'Move Camera to a guest or IoT network: it reached Laptop.' });
-		expect(r.steps.at(-1)!.priority).toBe('low');
-		expect(r.drivers.counts.join(' ')).toContain('smart-device isolation 70/100 (grade C). Put smart devices on their own network.');
-		expect(r.drivers.limits[0]).toMatch(/not whether your network is split into zones/);
+		expect(r.steps.filter((x) => x.priority === 'high')).toHaveLength(1); // the unconfirmed plug is no high step
+		expect(r.kpis.map((k) => [k.label, k.value])).toEqual([['Score', '70'], ['Smart devices reaching others', '2'], ['Reachability not confirmed', '1']]);
+		expect(r.kpis[1].sub).toBe('isolation 70/100, grade C');
+		expect(r.drivers.formula).toBe('100 − 25 × 0 critical − 15 × 1 high − 5 × 0 medium reached pairs = 70 (pings, low-risk pairs and pairs whose reachability isn’t confirmed cost nothing)');
+		expect(r.drivers.bars.map((b) => [b.key, b.value])).toEqual([['critical', 0], ['high', 1], ['medium', 0], ['low', 1], ['unconfirmed', 1]]);
+		expect(r.drivers.limits).toEqual([
+			'It only sees traffic that passes NetTap; two devices on the same switch or access point can talk without it.',
+			'A device counts as smart (IoT) by its maker; one NetTap doesn’t recognise isn’t checked.',
+			'A connection counts as reaching a device only if data went both ways; a bare TCP handshake with no data doesn’t count.',
+		]);
+		expect(r.drivers.counts.join(' ')).toContain('Put smart devices on their own network.');
 	});
 
-	it('marks only isolation not measured when there are no smart devices, and keeps the baseline findings (R2-1)', () => {
-		const r = segmentationReport(reportData('network-segmentation', { inputs: devices(6, 4), extras: { isolation: { ...ISOLATION, segmentation_score: null, segmentation_grade: null, pairs: [] } } }));
-		expect(r.sources.map((s) => [s.key, s.state])).toEqual([['baseline', 'measured'], ['isolation', 'not-measured']]);
-		expect(r.sources[1].note).toMatch(/^No smart \(IoT\) devices detected yet · Data pipeline now:/);
-		expect(r.kpis[2]).toMatchObject({ value: 'Not measured' });
-		expect(r.findings).toEqual([expect.objectContaining({ key: 'unscored', count: 2, href: '/devices' })]);
-		expect(r.drivers.formula).toBe('100 − 10 × 2 device(s) without a baseline = 80');
+	it('reads Not measured with no smart devices, and no baseline finding any more', () => {
+		const r = seg({ inputs: { ...devices(6, 4), isolation: { ...ISOLATION, segmentation_score: null, segmentation_grade: null, pairs: [] } } });
+		expect(r.sources.map((x) => [x.key, x.state])).toEqual([['isolation', 'not-measured']]);
+		expect(r.sources[0].note).toMatch(/^No smart \(IoT\) devices detected yet · Data pipeline now:/);
+		expect(r.kpis[1]).toMatchObject({ value: 'Not measured' });
+		expect(r.findings).toEqual([]);
 	});
 
-	it('keeps the baseline source when the isolation request failed', () => {
-		const r = segmentationReport(reportData('network-segmentation', { inputs: devices(3, 3), failed: ['isolation'] }));
-		expect(r.sources.map((s) => s.state)).toEqual(['measured', 'failed']);
-		expect(r.kpis[2]).toMatchObject({ value: '—' });
+	it("reads a failed isolation request as failed, never as a 100", () => {
+		const r = seg({ inputs: { failed: ['isolation'], isolation: { ...ISOLATION, segmentation_score: 100 } } });
+		expect(r.sources.map((x) => x.state)).toEqual(['failed']);
+		expect(r.kpis[0].value).toBe('—');
+		expect(r.kpis[1]).toMatchObject({ value: '—', sub: "Couldn't load" });
+		expect(r.findings).toEqual([]);
 	});
 
-	it('shows no stand-in "0 of 0" when the device count or risk scores failed (review M2)', () => {
-		const r = segmentationReport(reportData('network-segmentation', { inputs: { failed: ['risk'] }, extras: { isolation: ISOLATION } }));
-		expect(r.kpis[1]).toMatchObject({ key: 'baseline', value: '—', sub: "Couldn't load" });
-		expect(r.findings.length).toBe(2);
+	it('shows no stand-in "0 of 0" on Monitoring coverage when the device count failed (review M2)', () => {
 		const m = monitoringReport(reportData('monitoring-coverage', { inputs: { failed: ['devices'], health: health('fresh') }, extras: { mode: { mode: 'mirror', interface: 'x' }, stats: stats(0) } }));
 		expect(m.kpis[1]).toMatchObject({ key: 'scored', value: '—', sub: "Couldn't load" });
 	});
@@ -87,6 +101,9 @@ describe('rule links', () => {
 	});
 });
 
+// OLD CODE START — NET-308: investigation status (all time) against 24 hours of alerts
+// describe('alertReport', () => { … "757 alerts and no investigations, so the score is 0.", "Investigations (all time)" … });
+// OLD CODE END
 describe('alertReport', () => {
 	const ALERTS: Partial<PostureInputs> = { alertCounts: { from: '', to: '', counts: { total: 757, high: 295, medium: 219, low: 243 } } };
 	const SIGS = {
@@ -100,40 +117,86 @@ describe('alertReport', () => {
 			{ signature: null, count: 4, severity: 2 },
 		],
 	};
+	const RESPONSE = {
+		...EMPTY_DATA.alertResponse,
+		from: WIN.from,
+		to: WIN.to,
+		needing: 3,
+		investigated: 1,
+		groups: [
+			{ rule: 'IPFire DBL Phishing DNS', count: 266, investigated: false },
+			{ rule: null, count: 2, investigated: false },
+			{ rule: 'ET SCAN Nmap', count: 5, investigated: true },
+		],
+		investigations: { open_during: 1, linked_alerts: 1, unresolved_links: 0, skipped: 0 },
+	};
+	const alerts = (o: Parameters<typeof reportData>[1] = {}) => alertReport(reportData('alert-response', o));
 
-	it('asks for an investigation when there are alerts and none was opened, and reviews informational rules without suppressing by volume (R1-4)', () => {
-		const r = alertReport(reportData('alert-response', { inputs: ALERTS, extras: { signatures: SIGS } }));
-		expect(r.drivers.formula).toBe('757 alerts and no investigations, so the score is 0.');
-		expect(r.steps[0]).toMatchObject({ priority: 'high', href: '/investigations' });
-		const review = r.steps.find((s) => s.priority === 'low')!;
-		expect(review.text).toContain('Only once you have confirmed the activity is expected');
-		expect(review.text).toContain('Volume alone is never a reason.');
-		const info = r.findings.find((f) => f.title === 'ET INFO Spotify P2P Client')!;
-		expect(info.fix).toBe('Review it; it is often expected activity.');
-		expect(r.findings.find((f) => f.title === 'IPFire DBL Phishing DNS')).toMatchObject({ severity: 'high', fix: 'Check the devices it involved today.' });
-		expect(r.findings.find((f) => f.title === 'Alerts with no rule name')!.href).toMatch(/no_rule_name=true/);
+	it('lists each high-severity rule, an uninvestigated one high and linked to its Alerts list', () => {
+		const r = alerts({ inputs: { ...ALERTS, alertResponse: RESPONSE }, extras: { signatures: SIGS } });
+		const dbl = r.findings.find((f) => f.key === 'group-0')!;
+		expect(dbl).toMatchObject({ severity: 'high', title: 'IPFire DBL Phishing DNS', count: 266, fix: 'Open one of its alerts and choose Open an investigation.' });
+		expect(dbl.href).toMatch(/^\/alerts\?signature=IPFire\+DBL\+Phishing\+DNS&/);
+		expect(r.findings.find((f) => f.key === 'group-1')).toMatchObject({ title: 'Alerts with no rule name', severity: 'high' });
+		expect(r.findings.find((f) => f.key === 'group-1')!.href).toMatch(/no_rule_name=true/);
+		expect(r.findings.find((f) => f.key === 'group-2')).toMatchObject({ severity: 'info', title: 'ET SCAN Nmap' });
+		// the busiest rules that aren't high still show; the high one is listed once, as a group
+		expect(r.findings.filter((f) => f.title === 'IPFire DBL Phishing DNS')).toHaveLength(1);
+		expect(r.findings.find((f) => f.title === 'ET INFO Spotify P2P Client')!.fix).toBe('Review it; it is often expected activity.');
+		expect(r.kpis.map((k) => [k.label, k.value])).toEqual([['Score', '33'], ['Rules that needed a response', '1 of 3'], ['Alerts', '757']]);
+		expect(r.drivers.formula).toBe('1 with an investigation ÷ 3 high-severity rules = 33%');
+		expect(r.drivers.counts[1]).toBe('Investigations open at some point in the last 24 hours: 1, linking 1 alerts.');
+		expect(r.drivers.bars.map((b) => [b.label, b.value])).toEqual([['With an investigation', 1], ['Without an investigation', 2]]);
 	});
 
-	it('labels investigations all time, and adds devices whose own traffic matched rules', () => {
+	it('asks for an investigation from the alert for each rule without one, never from the Investigations page', () => {
+		const r = alerts({ inputs: { ...ALERTS, alertResponse: RESPONSE }, extras: { signatures: SIGS } });
+		expect(r.steps[0]).toEqual({
+			priority: 'high',
+			text: 'Open an investigation for each of the 2 high-severity rules without one: open one of its alerts and choose Open an investigation. An investigation made on the Investigations page links no alert, so it doesn’t count.',
+		});
+		const review = r.steps.find((x) => x.priority === 'low')!;
+		expect(review.text).toContain('Volume alone is never a reason.');
+	});
+
+	it('says plainly that links made before this change don\'t count, and how to link again (R5)', () => {
+		const old = { ...RESPONSE, investigations: { ...RESPONSE.investigations, unresolved_links: 3, skipped: 1 } };
+		const r = alerts({ inputs: { ...ALERTS, alertResponse: old }, extras: { signatures: SIGS } });
+		expect(r.drivers.counts).toContain('3 alerts linked before this change can’t be matched to a rule, so they don’t count.');
+		expect(r.drivers.counts).toContain('1 investigation record(s) couldn’t be read, so they don’t count.');
+		expect(r.drivers.counts.join(' ')).not.toMatch(/from the alert/);
+		expect(r.drivers.limits).toContain(
+			'To link an alert to an investigation you already have, there is no button yet: send the alert’s id to that investigation’s alerts endpoint (POST /api/investigations/{id}/alerts). An alert whose data has expired can’t be matched to its rule.',
+		);
+		expect(r.drivers.limits).toContain('NetTap keeps no close time, so a closed investigation counts until its last change; a note added after closing keeps it counting.');
+		expect(r.drivers.limits).not.toContain('Investigations count all time; alerts count the last 24 hours.');
+	});
+
+	it('notes when only the first 25 of the rules are listed', () => {
+		const many = { ...RESPONSE, needing: 40, investigated: 0, groups: Array.from({ length: 25 }, (_, i) => ({ rule: `ET R${i}`, count: 1, investigated: false })) };
+		const r = alerts({ inputs: { ...ALERTS, alertResponse: many }, extras: { signatures: SIGS } });
+		expect(r.notes).toEqual([{ text: 'Showing 25 of the 40 high-severity rules, the ones without an investigation first.' }]);
+	});
+
+	it('adds devices whose own traffic matched rules', () => {
 		const inputs = {
 			...ALERTS,
-			investigationStats: { total: 4, by_status: { open: 1, resolved: 2, closed: 1 }, by_severity: {} },
+			alertResponse: RESPONSE,
 			riskScores: { scores: [score('192.168.1.44', { level: 'high', alert_count: 12, factors: [{ name: 'alert_count', score: 30, max: 40, description: '12 alerts, 2 high' }] })] },
 		};
-		const r = alertReport(reportData('alert-response', { inputs, extras: { signatures: SIGS } }));
-		expect(r.kpis[2]).toMatchObject({ label: 'Investigations (all time)', value: '3 of 4' });
-		expect(r.drivers.formula).toBe('3 resolved or closed ÷ 4 investigations = 75%');
-		expect(r.drivers.limits).toContain('Investigations count all time; alerts count the last 24 hours.');
-		expect(r.steps.map((s) => s.priority)).toEqual(['medium', 'low']);
+		const r = alerts({ inputs, extras: { signatures: SIGS } });
 		expect(r.findings.find((f) => f.key === 'device-192.168.1.44')).toMatchObject({ severity: 'high', count: 12, detail: '12 alerts: 12 alerts, 2 high.' });
 	});
 
-	it('reads no counted alerts as not measured with the pipeline state, and a failed list as failed', () => {
-		const quiet = alertReport(reportData('alert-response', { extras: { signatures: { ...SIGS, signatures: [] } } }));
-		expect(quiet.sources[0]).toMatchObject({ state: 'not-measured' });
+	it('reads nothing needing a response as not measured, and a failed follow-up request as failed', () => {
+		const quiet = alerts({ inputs: ALERTS, extras: { signatures: { ...SIGS, signatures: [] } } });
+		expect(quiet.sources[0]).toMatchObject({ key: 'response', state: 'not-measured' });
+		expect(quiet.sources[0].note).toMatch(/^Nothing needed a response in the last 24 hours · /);
 		expect(quiet.steps).toEqual([]);
-		const failed = alertReport(reportData('alert-response', { inputs: ALERTS, failed: ['signatures'] }));
+		const failed = alerts({ inputs: { ...ALERTS, failed: ['response'] }, extras: { signatures: SIGS } });
 		expect(failed.sources[0].state).toBe('failed');
+		expect(failed.kpis[1]).toMatchObject({ value: '—', sub: "Couldn't load" });
+		expect(alerts({ inputs: ALERTS, failed: ['signatures'] }).sources[1].state).toBe('failed');
 	});
 });
 

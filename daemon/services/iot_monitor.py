@@ -23,6 +23,7 @@ from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import (
     CONN_ACCOUNTING,
+    PAYLOAD_BOTH,
     build_excluded_ips_filter,
     valid_excluded_ips,
 )
@@ -82,9 +83,36 @@ ISOLATION_NOISE_EXCLUSION: list[dict] = [
 ISOLATION_CRITICAL_PORTS = [22, 23, 139, 445, 3389, 5900]
 ISOLATION_HIGH_PORTS = [80, 5000, 8080, 8443, 9090]
 _ISOLATION_RISKY_PORTS = [*ISOLATION_CRITICAL_PORTS, *ISOLATION_HIGH_PORTS]
-# Per (IoT MAC, LAN host) pair
-ISOLATION_PAIR_AGGS: dict = {
-    # Zeek stores the ICMP code in destination.port; keep it out
+# OLD CODE START — NET-308: a pair's risk came from the ports it tried, so blocked attempts cost points
+# # Per (IoT MAC, LAN host) pair
+# ISOLATION_PAIR_AGGS: dict = {
+#     # Zeek stores the ICMP code in destination.port; keep it out
+#     "not_icmp": {
+#         "filter": {
+#             "bool": {"must_not": [{"terms": {"network.transport": ICMP_TRANSPORTS}}]}
+#         },
+#         "aggs": {
+#             "ports": {"terms": {"field": "destination.port", "size": 20}},
+#             # the top 20 can miss a sweep's one SMB connection; risky ports come apart (#96)
+#             "risky": {
+#                 "filter": {"terms": {"destination.port": _ISOLATION_RISKY_PORTS}},
+#                 "aggs": {
+#                     "ports": {
+#                         "terms": {
+#                             "field": "destination.port",
+#                             "size": len(_ISOLATION_RISKY_PORTS),
+#                         }
+#                     }
+#                 },
+#             },
+#             "port_count": {"cardinality": {"field": "destination.port"}},
+#         },
+#     },
+#     "source_ip": {"terms": {"field": "source.ip", "size": 1}},
+# }
+# OLD CODE END
+# Zeek stores the ICMP code in destination.port; keep it out
+_ISOLATION_PORTS: dict = {
     "not_icmp": {
         "filter": {
             "bool": {"must_not": [{"terms": {"network.transport": ICMP_TRANSPORTS}}]}
@@ -106,6 +134,13 @@ ISOLATION_PAIR_AGGS: dict = {
             "port_count": {"cardinality": {"field": "destination.port"}},
         },
     },
+}
+# Per (IoT MAC, LAN host) pair: every attempt, and apart the ones that reached the host (data
+# went both ways, NET-308). Only reached pairs cost points; on the G11 that matched Zeek's
+# established states (SF, RSTO, RSTR, S3) and never REJ or S0.
+ISOLATION_PAIR_AGGS: dict = {
+    **_ISOLATION_PORTS,
+    "reached": {"filter": PAYLOAD_BOTH, "aggs": _ISOLATION_PORTS},
     "source_ip": {"terms": {"field": "source.ip", "size": 1}},
 }
 
@@ -2746,6 +2781,9 @@ class IoTMonitor:
                     {"dest": {"terms": {"field": "destination.ip"}}},
                 ],
                 aggs=ISOLATION_PAIR_AGGS,
+                # NET-308: `reached` doubles a pair's buckets (35 to 69 at worst), so 1,000 pairs a
+                # page could pass OpenSearch's 65,535 max_buckets; 500 keeps it at 34,500
+                page_size=500,
             )
         except Exception as exc:
             logger.error("Network isolation query failed: %s", exc)
@@ -2781,6 +2819,10 @@ class IoTMonitor:
         high_count = 0
         medium_count = 0
         for pair in pairs:
+            if not pair[
+                "reached"
+            ]:  # NET-308: an attempt that got nothing back costs nothing
+                continue
             r = pair["risk"]
             if r == "critical":
                 score -= 25
@@ -2796,11 +2838,12 @@ class IoTMonitor:
         grade = self._scorer.score_to_grade(score)
 
         # Build recommendation
+        # OLD CODE: ... for p in pairs if p["risk"] in ("high", "critical") (NET-308: reached only)
         iot_reaching_workstations = len(
             set(
                 p["iot_device"]["mac"]
                 for p in pairs
-                if p["risk"] in ("high", "critical")
+                if p["reached"] and p["risk"] in ("high", "critical")
             )
         )
         if not pairs:
@@ -2860,21 +2903,37 @@ class IoTMonitor:
         # OLD CODE: dev_name = dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown") (NET-200)
         dev_name = self._device_name(raw_mac, dev_info)
 
-        not_icmp = bucket.get("not_icmp", {})
-        top = [pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])]
-        risky = not_icmp.get("risky", {}).get("ports", {}).get("buckets", [])
-        ports = [*top, *(pb["key"] for pb in risky if pb["key"] not in top)]
+        # OLD CODE START — NET-308: the ports read once, for every attempt; now per level
+        # not_icmp = bucket.get("not_icmp", {})
+        # top = [pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])]
+        # risky = not_icmp.get("risky", {}).get("ports", {}).get("buckets", [])
+        # ports = [*top, *(pb["key"] for pb in risky if pb["key"] not in top)]
+        # conn_count = bucket.get("doc_count", 0)
+        # pinged = conn_count > not_icmp.get("doc_count", 0)
+        # OLD CODE END
         conn_count = bucket.get("doc_count", 0)
-        pinged = conn_count > not_icmp.get("doc_count", 0)
+        ports, port_names = self._isolation_ports(bucket)
+        reached_level = bucket.get("reached", {})
+        reached = reached_level.get("doc_count", 0) > 0
+        reached_ports, reached_names = self._isolation_ports(reached_level)
 
         src_ip_buckets = bucket.get("source_ip", {}).get("buckets", [])
         src_ip = src_ip_buckets[0]["key"] if src_ip_buckets else ""
 
-        port_count = not_icmp.get("port_count", {}).get("value")
-        port_names = self._port_names(ports, port_count) if ports else ""
-        if pinged:
-            # ping-only pairs get no ports, so they classify as low risk
-            port_names = f"{port_names}, ping" if port_names else "ping (ICMP)"
+        # OLD CODE START — NET-308: moved to _isolation_ports
+        # port_count = not_icmp.get("port_count", {}).get("value")
+        # port_names = self._port_names(ports, port_count) if ports else ""
+        # if pinged:
+        #     # ping-only pairs get no ports, so they classify as low risk
+        #     port_names = f"{port_names}, ping" if port_names else "ping (ICMP)"
+        # OLD CODE END
+        if reached:
+            description = f"{dev_name} can reach {dest_ip} via {reached_names}"
+        else:  # one-way delivery, a missing counter or a one-sided mirror look the same
+            description = (
+                f"{dev_name} sent traffic to {dest_ip} via {port_names}; reachability "
+                "not confirmed (no data seen both ways)"
+            )
 
         return {
             "iot_device": {"mac": raw_mac, "name": dev_name, "ip": src_ip},
@@ -2882,11 +2941,30 @@ class IoTMonitor:
                 "ip": dest_ip,
                 "hostname": None,  # Would need reverse DNS
             },
-            "risk": self._classify_isolation_risk(ports),
+            # OLD CODE: "risk": self._classify_isolation_risk(ports), (NET-308)
+            "risk": self._classify_isolation_risk(reached_ports if reached else ports),
             "connection_count": conn_count,
             "ports": ports,
-            "description": f"{dev_name} can reach {dest_ip} via {port_names}",
+            "reached": reached,
+            "reached_ports": reached_ports,
+            # OLD CODE: "description": f"{dev_name} can reach {dest_ip} via {port_names}", (NET-308)
+            "description": description,
         }
+
+    def _isolation_ports(self, level: dict) -> tuple[list[int], str]:
+        """The ports of one level of a pair bucket (every attempt, or the reached part) and
+        their names, with "ping" when ICMP is part of it."""
+        not_icmp = level.get("not_icmp", {})
+        top = [pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])]
+        risky = not_icmp.get("risky", {}).get("ports", {}).get("buckets", [])
+        ports = [*top, *(pb["key"] for pb in risky if pb["key"] not in top)]
+        pinged = level.get("doc_count", 0) > not_icmp.get("doc_count", 0)
+        port_count = not_icmp.get("port_count", {}).get("value")
+        port_names = self._port_names(ports, port_count) if ports else ""
+        if pinged:
+            # ping-only pairs get no ports, so they classify as low risk
+            port_names = f"{port_names}, ping" if port_names else "ping (ICMP)"
+        return ports, port_names
 
     @staticmethod
     def _classify_isolation_risk(ports: list[int]) -> str:

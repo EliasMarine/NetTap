@@ -168,11 +168,12 @@ export const START_WITH_SHARE = 50;
 
 export function encryptionReport(data: ReportData): Report {
 	const { inputs, category, names } = data;
-	const enc = inputs.protocols.encryption ?? { eligible: 0, encrypted: 0 };
+	// OLD CODE: const enc = inputs.protocols.encryption ?? { eligible: 0, encrypted: 0 }; (NET-308)
+	const enc = inputs.protocols.encryption ?? { eligible: 0, encrypted: 0, one_way: 0 };
 	const detail = data.extras.encryption;
 	const failed = data.failed.includes('encryption');
 	const u = detail?.unencrypted;
-	const other = u ? u.total - u.payload_both : 0;
+	// OLD CODE: const other = u ? u.total - u.payload_both : 0; (NET-308: one-way connections are left out now)
 
 	const sources: Source[] = failed || !detail
 		? [failedSource('devices', 'Devices sending unencrypted traffic')]
@@ -188,7 +189,8 @@ export function encryptionReport(data: ReportData): Report {
 				key: `device-${d.ip}`,
 				severity: hint.severity,
 				title: hint.label,
-				detail: `${fmt(d.connections)} unencrypted connections (${pct(d.connections, u.total)}% of all), ${fmt(d.payload_both)} with data both ways; ${fmt(d.private_local)} went to private or local-scope addresses. ${hint.what} ${portWords(d.ports)}`.trim(),
+				// OLD CODE: detail: `… (${pct(d.connections, u.total)}% of all), ${fmt(d.payload_both)} with data both ways; …`, (NET-308: all of them are)
+				detail: `${fmt(d.connections)} unencrypted connections (${pct(d.connections, u.total)}% of all); ${fmt(d.private_local)} went to private or local-scope addresses. ${hint.what} ${portWords(d.ports)}`.trim(),
 				devices: [device(d.ip, names)],
 				count: d.connections,
 				fix: hint.fix,
@@ -214,9 +216,11 @@ export function encryptionReport(data: ReportData): Report {
 		if (risky.telnet.count > 0) steps.push({ priority: 'high', text: `${fmt(risky.telnet.count)} Telnet connections send logins in plain text. Open them to see which devices, then turn Telnet off on each (use SSH instead).`, href: logs(risky.telnet.logs_query) });
 		if (risky.ftp.count > 0) steps.push({ priority: 'high', text: `${fmt(risky.ftp.count)} FTP connections send passwords in plain text. Open them to see which devices, then switch them to SFTP or FTPS.`, href: logs(risky.ftp.logs_query) });
 		if (risky.http.count > 0) steps.push({ priority: 'medium', text: `${fmt(risky.http.count)} unencrypted web (HTTP) connections. Open them to see which devices and sites, and use HTTPS where it is offered.`, href: logs(risky.http.logs_query) });
-		if (u.total > 0 && pct(other, u.total) >= START_WITH_SHARE) {
-			steps.push({ priority: 'low', text: `${pct(other, u.total)}% of the unencrypted connections carried data one way or none, often attempts that never got an answer. They lower the score; see What drives this score.` });
-		}
+		// OLD CODE START — NET-308: one-way connections no longer lower the score
+		// if (u.total > 0 && pct(other, u.total) >= START_WITH_SHARE) {
+		// 	steps.push({ priority: 'low', text: `${pct(other, u.total)}% of the unencrypted connections carried data one way or none, often attempts that never got an answer. They lower the score; see What drives this score.` });
+		// }
+		// OLD CODE END
 		const note = truncationNote(detail.devices);
 		if (note) notes.push(note);
 	}
@@ -224,27 +228,44 @@ export function encryptionReport(data: ReportData): Report {
 	return {
 		kpis: [
 			scoreKpi(category),
-			unloaded({ key: 'encrypted', label: 'Encrypted', icon: 'check', value: fmt(enc.encrypted), sub: `of ${fmt(enc.eligible)} connections that can be encrypted` }, inputs.failed.includes('protocols')),
-			{ key: 'both', label: 'Payload both ways', icon: 'connections', value: u ? fmt(u.payload_both) : '—', sub: u ? `of ${fmt(u.total)} unencrypted connections` : "Couldn't load" },
+			// OLD CODE: unloaded({ key: 'encrypted', …, sub: `of ${fmt(enc.eligible)} connections that can be encrypted` }, …), (NET-308)
+			unloaded({ key: 'encrypted', label: 'Encrypted', icon: 'check', value: fmt(enc.encrypted), sub: `of ${fmt(enc.eligible)} connections with data both ways` }, inputs.failed.includes('protocols')),
+			// OLD CODE: { key: 'both', label: 'Payload both ways', icon: 'connections', value: u ? fmt(u.payload_both) : '—', … }, (NET-308)
+			unloaded({ key: 'left-out', label: 'Left out', icon: 'connections', value: fmt(enc.one_way), sub: 'carried data one way or none' }, inputs.failed.includes('protocols')),
 		],
 		drivers: {
-			formula: `${fmt(enc.encrypted)} encrypted ÷ ${fmt(enc.eligible)} connections that can be encrypted = ${category.score ?? '—'}%`,
+			// OLD CODE: formula: `${fmt(enc.encrypted)} encrypted ÷ ${fmt(enc.eligible)} connections that can be encrypted = …`, (NET-308)
+			formula: `${fmt(enc.encrypted)} encrypted ÷ ${fmt(enc.eligible)} connections with data both ways = ${category.score ?? '—'}%`,
 			counts: [
 				'Counted as encrypted: HTTPS and other TLS, QUIC, SSH, VPNs (WireGuard, OpenVPN, IPsec), and ports 443, 853, 8443 and 8883.',
 				'Left out: DNS, DHCP, NTP, local discovery (mDNS, LLMNR, SSDP, NetBIOS), pings, multicast, broadcast and STUN, which are never encrypted.',
+				`Left out: ${fmt(enc.one_way)} connections that carried data one way or none, mostly attempts that never got an answer.`,
 				...(u ? [`${fmt(u.private_local)} of the unencrypted connections went to private or local-scope addresses.`] : []),
 			],
-			limits: [
-				'A one-way attempt (a connection that never got a reply) counts as unencrypted, so an app trying unreachable peers lowers the score.',
-				"“Other” is a connection whose data went one way only, none, or wasn't measured; a log message sent one way lands here.",
-			],
-			bars: u
-				? [
+			// OLD CODE START — NET-308: one-way attempts are left out now, so there is no "Other"
+			// limits: [
+			// 	'A one-way attempt (a connection that never got a reply) counts as unencrypted, so an app trying unreachable peers lowers the score.',
+			// 	"“Other” is a connection whose data went one way only, none, or wasn't measured; a log message sent one way lands here.",
+			// ],
+			// OLD CODE END
+			limits: ['A connection that sends data one way only (a log message, a one-way stream) is left out, even when it is unencrypted.'],
+			// OLD CODE START — NET-308
+			// bars: u
+			// 	? [
+			// 			{ key: 'encrypted', label: 'Encrypted', value: enc.encrypted, display: fmt(enc.encrypted), colour: 1 },
+			// 			{ key: 'both', label: 'Unencrypted, data both ways', value: u.payload_both, display: fmt(u.payload_both), colour: 3 },
+			// 			{ key: 'other', label: 'Unencrypted, other', value: other, display: fmt(other), colour: 4 },
+			// 		]
+			// 	: [],
+			// OLD CODE END
+			// from the score input only, so the bars equal the formula
+			bars: inputs.failed.includes('protocols')
+				? []
+				: [
 						{ key: 'encrypted', label: 'Encrypted', value: enc.encrypted, display: fmt(enc.encrypted), colour: 1 },
-						{ key: 'both', label: 'Unencrypted, data both ways', value: u.payload_both, display: fmt(u.payload_both), colour: 3 },
-						{ key: 'other', label: 'Unencrypted, other', value: other, display: fmt(other), colour: 4 },
-					]
-				: [],
+						{ key: 'unencrypted', label: 'Unencrypted', value: enc.eligible - enc.encrypted, display: fmt(enc.eligible - enc.encrypted), colour: 3 },
+						{ key: 'left-out', label: 'Not scored (one way or none)', value: enc.one_way, display: fmt(enc.one_way), colour: 4 },
+					],
 		},
 		sources,
 		findings,
@@ -263,7 +284,8 @@ const orgWords = (ip: string, org: string | null) => (org ? `${ip} (${org})` : i
 
 export function dnsReport(data: ReportData): Report {
 	const { inputs, category, names } = data;
-	const dns = inputs.protocols.dns ?? { plain: 0, over_tls: 0 };
+	// OLD CODE: const dns = inputs.protocols.dns ?? { plain: 0, over_tls: 0 }; (NET-308)
+	const dns = inputs.protocols.dns ?? { plain: 0, over_tls: 0, local: { plain: 0, over_tls: 0 } };
 	const detail: DnsDetail | undefined = data.extras['dns-security'];
 	const failed = data.failed.includes('dns-security');
 	const scope = detail?.plain_scope;
@@ -328,21 +350,39 @@ export function dnsReport(data: ReportData): Report {
 			{ key: 'public', label: 'Plain lookups to public addresses', icon: 'warn', value: scope ? fmt(scope.public) : '—', sub: scope ? 'sent straight to resolvers on the internet' : "Couldn't load" },
 		],
 		drivers: {
-			formula: `${fmt(dns.over_tls)} DNS-over-TLS ÷ (${fmt(dns.plain)} plain + ${fmt(dns.over_tls)} DNS-over-TLS) = ${category.score ?? '—'}%`,
-			counts: ["Plain: lookups NetTap identified as DNS, leaving out local discovery (mDNS on 5353, LLMNR on 5355).", 'DNS-over-TLS: connections to port 853.'],
+			// OLD CODE: formula: `${fmt(dns.over_tls)} DNS-over-TLS ÷ (${fmt(dns.plain)} plain + ${fmt(dns.over_tls)} DNS-over-TLS) = …`, (NET-308)
+			formula: `${fmt(dns.over_tls)} DNS-over-TLS ÷ (${fmt(dns.plain)} plain + ${fmt(dns.over_tls)} DNS-over-TLS), both to non-local or unknown addresses = ${category.score ?? '—'}%`,
+			counts: [
+				"Plain: lookups NetTap identified as DNS, leaving out local discovery (mDNS on 5353, LLMNR on 5355).",
+				'DNS-over-TLS: connections to port 853.',
+				`Left out: ${fmt(dns.local.plain)} plain lookups and ${fmt(dns.local.over_tls)} DNS-over-TLS connections to your own resolvers (private or local-scope addresses); each one is judged by what it sends out.`,
+			],
+			// OLD CODE: 'Lookups to your own resolver (router, Pi-hole) count as plain, even when it forwards them encrypted.', (NET-308: they are left out)
 			limits: [
 				"DNS-over-HTTPS (DoH) looks like any other HTTPS, so NetTap can't count it; a device using it is in neither figure.",
-				'Lookups to your own resolver (router, Pi-hole) count as plain, even when it forwards them encrypted.',
+				"A resolver whose lookups out don't pass NetTap (a router's internet side, say) can't be judged; its lookups are in neither figure.",
+				'A private address isn’t proof the resolver is yours: a VPN’s resolver has one too.',
 				'Addresses in 100.64.0.0/10, or missing, are “unknown”: often an ISP’s carrier-grade NAT or a VPN.',
 			],
-			bars: scope
-				? [
-						{ key: 'dot', label: 'DNS-over-TLS', value: detail!.over_tls, display: fmt(detail!.over_tls), colour: 1 },
-						{ key: 'local', label: 'Plain, to private or local-scope addresses', value: scope.private_local, display: fmt(scope.private_local), colour: 2 },
-						{ key: 'public', label: 'Plain, to public addresses', value: scope.public, display: fmt(scope.public), colour: 3 },
-						{ key: 'unknown', label: 'Plain, address unknown', value: scope.unknown, display: fmt(scope.unknown), colour: 4 },
-					]
-				: [],
+			// OLD CODE START — NET-308: the bars came from the detail and mixed scored and local lookups
+			// bars: scope
+			// 	? [
+			// 			{ key: 'dot', label: 'DNS-over-TLS', value: detail!.over_tls, display: fmt(detail!.over_tls), colour: 1 },
+			// 			{ key: 'local', label: 'Plain, to private or local-scope addresses', value: scope.private_local, display: fmt(scope.private_local), colour: 2 },
+			// 			{ key: 'public', label: 'Plain, to public addresses', value: scope.public, display: fmt(scope.public), colour: 3 },
+			// 			{ key: 'unknown', label: 'Plain, address unknown', value: scope.unknown, display: fmt(scope.unknown), colour: 4 },
+			// 		]
+			// 	: [],
+			// OLD CODE END
+			// from the score input only, so the bars equal the formula; one plain bar (it mixes public and unknown)
+			bars: inputs.failed.includes('protocols')
+				? []
+				: [
+						{ key: 'dot', label: 'DNS-over-TLS to non-local or unknown addresses', value: dns.over_tls, display: fmt(dns.over_tls), colour: 1 },
+						{ key: 'plain', label: 'Plain to non-local or unknown addresses', value: dns.plain, display: fmt(dns.plain), colour: 3 },
+						{ key: 'local-plain', label: 'Plain to your own resolvers, not scored', value: dns.local.plain, display: fmt(dns.local.plain), colour: 2 },
+						{ key: 'local-dot', label: 'DNS-over-TLS to your own resolvers, not scored', value: dns.local.over_tls, display: fmt(dns.local.over_tls), colour: 4 },
+					],
 			resolvers,
 		},
 		sources,
@@ -359,13 +399,16 @@ const UPDATE_FIX = 'Check for a firmware or software update; replace the device 
 export function patchReport(data: ReportData): Report {
 	const { inputs, category, names } = data;
 	const counts = legacyCounts(inputs.protocols.services);
+	// NET-308: the score's own figures, each connection once
+	const patch = inputs.protocols.patch ?? { legacy: 0, connections: 0 };
 	const detail: PatchDetail | undefined = data.extras['patch-currency'];
 	const failed = data.failed.includes('patch-currency');
 	const lan = detail ? { lan: detail.protocols.reduce((s, p) => s + p.devices.lan, 0), other: 0, rows: detail.protocols.flatMap((p) => p.devices.rows) } : null;
 
 	const sources: Source[] = failed || !detail
 		? [failedSource('legacy', 'Devices using old protocols')]
-		: [listSource('legacy', 'Devices using old protocols', { seen: counts.total > 0 || detail.unique_connections > 0, total: detail.unique_connections, list: lan!, nothing: 'No labelled connections in the last 24 hours' }, inputs)];
+		// OLD CODE: : [listSource('legacy', …, { seen: counts.total > 0 || detail.unique_connections > 0, … }, inputs)]; (NET-308)
+		: [listSource('legacy', 'Devices using old protocols', { seen: patch.connections > 0 || detail.unique_connections > 0, total: detail.unique_connections, list: lan!, nothing: 'No connections in the last 24 hours' }, inputs)];
 
 	const findings: Finding[] = [];
 	const notes: Note[] = [];
@@ -397,16 +440,17 @@ export function patchReport(data: ReportData): Report {
 	return {
 		kpis: [
 			scoreKpi(category),
-			unloaded({ key: 'legacy', label: 'Old-protocol connections', icon: 'warn', value: fmt(counts.legacy), sub: `of ${fmt(counts.total)} labelled connections` }, inputs.failed.includes('protocols')),
+			// OLD CODE: unloaded({ key: 'legacy', …, value: fmt(counts.legacy), sub: `of ${fmt(counts.total)} labelled connections` }, …), (NET-308)
+			unloaded({ key: 'legacy', label: 'Old-protocol connections', icon: 'warn', value: fmt(patch.legacy), sub: `of ${fmt(patch.connections)} connections` }, inputs.failed.includes('protocols')),
 			unloaded({ key: 'telnet-ftp', label: 'Telnet or FTP connections', icon: 'threats', value: fmt(telnetFtp), sub: 'send passwords in plain text' }, inputs.failed.includes('protocols')),
 		],
 		drivers: {
-			formula: `100 − (${fmt(counts.legacy)} old-protocol labels ÷ ${fmt(counts.total)} labels × 100) = ${category.score ?? '—'}`,
-			counts: [
-				'Old protocols: plain HTTP, FTP, Telnet, POP3 and IMAP.',
-				...(detail ? [`Connections with an old-protocol label, each counted once: ${fmt(detail.unique_connections)}.`] : []),
-			],
-			limits: ["NetTap can't read software versions; old protocols are a sign of out-of-date software, not proof.", 'A connection with two labels counts twice in the score.'],
+			// OLD CODE: formula: `100 − (${fmt(counts.legacy)} old-protocol labels ÷ ${fmt(counts.total)} labels × 100) = …`, (NET-308)
+			formula: `100 − (${fmt(patch.legacy)} old-protocol connections ÷ ${fmt(patch.connections)} connections × 100) = ${category.score ?? '—'}`,
+			// OLD CODE: ...(detail ? [`Connections with an old-protocol label, each counted once: ${fmt(detail.unique_connections)}.`] : []), (NET-308: the score counts them once now)
+			counts: ['Old protocols: plain HTTP, FTP, Telnet, POP3 and IMAP.'],
+			// OLD CODE: limits: [ …, 'A connection with two labels counts twice in the score.'], (NET-308: it counts once)
+			limits: ["NetTap can't read software versions; old protocols are a sign of out-of-date software, not proof."],
 			bars: Object.entries(counts.byName)
 				.filter(([, n]) => n > 0)
 				.map(([name, n], i) => ({ key: name, label: serviceLabel(name), value: n, display: fmt(n), colour: (((i % 6) + 1) as 1 | 2 | 3 | 4 | 5 | 6) })),
