@@ -29,6 +29,7 @@ import { SETUP_ROUTES } from './setup.ts';
 import { STORAGE_ROUTES } from './storage.ts';
 import { SURICATA_ROUTES } from './suricata.ts';
 import { SURICATA_CATEGORY_ROUTES } from './suricata-category.ts';
+import { SURICATA_RULE_ROUTES } from './suricata-rule.ts';
 import { SYSTEM_ROUTES } from './system.ts';
 import { THREAT_ROUTES } from './threats.ts';
 import { TOOLS_ROUTES } from './tools.ts';
@@ -65,6 +66,7 @@ export const ROUTES: readonly FixtureRoute[] = [
 	...STORAGE_ROUTES,
 	...SURICATA_ROUTES,
 	...SURICATA_CATEGORY_ROUTES,
+	...SURICATA_RULE_ROUTES,
 	...SYSTEM_ROUTES,
 	...THREAT_ROUTES,
 	...TOOLS_ROUTES,

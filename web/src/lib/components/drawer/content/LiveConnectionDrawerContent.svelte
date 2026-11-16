@@ -17,7 +17,8 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (slice 2b-2)
 	// OLD CODE: import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown'; (NET-249: the history chart picks)
-	import { alertsHrefForSignature, chartTime, pickWindow, suricataCategoryHref, windowQuery, type TimeChart } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, chartTime, pickWindow, suricataCategoryHref, windowQuery, type TimeChart } from '$lib/utils/drilldown'; (the rule page)
+	import { chartTime, pickWindow, ruleHref, suricataCategoryHref, windowQuery, type TimeChart } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 	import { goto } from '$app/navigation';
 	import { toTimeChart } from '$lib/utils/chart-pick';
@@ -275,7 +276,8 @@
 							<span class="alert-time">{formatTimestamp(alert.timestamp)}</span>
 						</div>
 						<!-- OLD CODE: <div class="alert-sig">{alert.signature}</div> (slice 2a: not a link) -->
-						<div class="alert-sig">{#if alert.signature}<a href={alertsHrefForSignature(alert.signature)}>{alert.signature}</a>{/if}</div>
+						<!-- OLD CODE: <div class="alert-sig">{#if alert.signature}<a href={alertsHrefForSignature(alert.signature)}>…</a>{/if}</div> (the rule page explains the rule and lists its devices) -->
+						<div class="alert-sig">{#if alert.signature}<a href={ruleHref(alert.signature)}>{alert.signature}</a>{/if}</div>
 						<!-- OLD CODE: <div class="alert-cat">{alert.category}</div> (slice 2b-2: links when rule.category holds it, so its page lists this alert) -->
 						<div class="alert-cat">{#if alert.category && alert.rule_category?.includes(alert.category)}<a href={suricataCategoryHref(alert.category)}>{alert.category}</a>{:else}{alert.category}{/if}</div>
 					</div>

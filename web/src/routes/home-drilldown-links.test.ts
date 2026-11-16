@@ -97,6 +97,10 @@ const kpi = (label: string) => screen.getByText(label, { selector: '.kpi-top > s
 const params = (el: Element) => Object.fromEntries(new URL(el.getAttribute('href')!, 'http://x').searchParams);
 /** The Alert summary card's row for a smart alert, by its shown signature. */
 const row = (signature: string) => screen.getByText(signature, { selector: '.sig' }).closest('.top-cat') as HTMLElement;
+/** A smart alert's ×N, the link to its exact list (the tile itself is no link since the rule page) */
+const count = (signature: string) => row(signature).querySelector('a.num') as HTMLElement;
+/** A smart alert's rule name, the link to its rule page */
+const rule = (signature: string) => screen.getByText(signature, { selector: '.sig' });
 
 async function firstLoad(): Promise<Call[]> {
 	render(HomePage);
@@ -134,8 +138,11 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		first.forEach((c) => c.reply());
 		await settle();
 		const asked = sent(first, '/api/alerts/smart');
-		const link = row('A friendlier shown name');
+		// OLD CODE: const link = row('A friendlier shown name'); (the ×N is the list link now; the rule opens its page)
+		const link = count('A friendlier shown name');
 		expect(link.tagName).toBe('A');
+		expect(rule('A friendlier shown name').getAttribute('href')).toMatch(new RegExp(`^/alerts/rule/${encodeURIComponent(KEY.rule_name!)}\\?`));
+		expect(params(rule('A friendlier shown name'))).toEqual({ from: asked.get('from'), to: asked.get('to'), range: '24h' });
 		// OLD CODE: …toEqual({ signature, src, dst, from, to, range: '24h' }) (section D: the link carries the ×N)
 		expect(params(link)).toEqual({
 			signature: KEY.rule_name, src: KEY.source_ip, dst: KEY.destination_ip,
@@ -146,11 +153,12 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		const { batch, done } = await refresh();
 		batch.filter((c) => c.path !== '/api/alerts/smart').forEach((c) => c.reply());
 		await settle();
-		expect(params(row('A friendlier shown name')).from).toBe(asked.get('from'));
+		// OLD CODE: expect(params(row('A friendlier shown name')).from)… (twice; the ×N is the list link now)
+		expect(params(count('A friendlier shown name')).from).toBe(asked.get('from'));
 
 		batch.find((c) => c.path === '/api/alerts/smart')!.reply();
 		await done;
-		expect(params(row('A friendlier shown name')).from).toBe(sent(batch, '/api/alerts/smart').get('from'));
+		expect(params(count('A friendlier shown name')).from).toBe(sent(batch, '/api/alerts/smart').get('from'));
 	});
 
 	it('an activity group opens the activity list, which is the only list holding it (NET-191)', async () => {
@@ -160,8 +168,12 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		});
 		(await firstLoad()).forEach((c) => c.reply());
 		await settle();
-		expect(params(row('Activity group'))).toMatchObject({ signature: KEY.rule_name, activity: 'true', count: '7' });
-		expect(params(row('Counted group'))).not.toHaveProperty('activity');
+		// OLD CODE: expect(params(row('Activity group')))… and params(row('Counted group'))… (the ×N is the list link now)
+		expect(params(count('Activity group'))).toMatchObject({ signature: KEY.rule_name, activity: 'true', count: '7' });
+		expect(params(count('Counted group'))).not.toHaveProperty('activity');
+		// the rule page opens on the list the group came from
+		expect(params(rule('Activity group'))).toMatchObject({ activity: 'true' });
+		expect(params(rule('Counted group'))).not.toHaveProperty('activity');
 	});
 
 	it('a smart alert with a missing or empty key part is a plain row, not a link', async () => {
@@ -171,11 +183,20 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		});
 		(await firstLoad()).forEach((c) => c.reply());
 		await settle();
+		// OLD CODE START — the tile was the link; its ×N is now
+		// for (const name of ['No destination', 'Empty rule']) {
+		// 	expect(row(name).tagName).toBe('DIV');
+		// 	expect(row(name)).not.toHaveAttribute('href');
+		// 	expect(row(name)).toHaveAttribute('title', "This group has no signature, source or destination recorded, so it can't be listed exactly");
+		// }
+		// OLD CODE END
 		for (const name of ['No destination', 'Empty rule']) {
-			expect(row(name).tagName).toBe('DIV');
-			expect(row(name)).not.toHaveAttribute('href');
-			expect(row(name)).toHaveAttribute('title', "This group has no signature, source or destination recorded, so it can't be listed exactly");
+			expect(count(name)).toBeNull();
+			expect(row(name).querySelector('b.num')).toHaveAttribute('title', "This group has no signature, source or destination recorded, so it can't be listed exactly");
 		}
+		// a rule name still opens its page; an empty one can't
+		expect(rule('No destination').tagName).toBe('A');
+		expect(rule('Empty rule').tagName).toBe('P');
 		expect(screen.getByRole('link', { name: 'View threat intelligence' })).toHaveAttribute('href', '/threats');
 	});
 

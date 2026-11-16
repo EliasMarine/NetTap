@@ -26,7 +26,8 @@
 	import type { RelatedConnectionsResponse } from '$api/traffic';
 	import { getAlerts } from '$api/alerts';
 	import type { Alert } from '$api/alerts';
-	import { alertsHrefForSignature } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (the rule page)
+	import { ruleHref } from '$lib/utils/drilldown';
 	import { lanPolicy } from '$lib/stores/lan';
 	import { packetsHrefFor } from '$lib/utils/connection-ref';
 	import { formatTime } from '$lib/utils/time';
@@ -486,7 +487,8 @@
 							<SeverityPill {level} />
 							<!-- OLD CODE: <span class="threat-sig">{alert.alert?.signature || alert.rule_name || 'Unknown alert'}</span> (slice 2a: not a link) -->
 							{#if alert.alert?.signature}
-								<a class="threat-sig" href={alertsHrefForSignature(alert.alert.signature)}>{alert.alert.signature}</a>
+								<!-- OLD CODE: <a class="threat-sig" href={alertsHrefForSignature(alert.alert.signature)}> (the rule page explains the rule and lists its devices) -->
+								<a class="threat-sig" href={ruleHref(alert.alert.signature)}>{alert.alert.signature}</a>
 							{:else}
 								<span class="threat-sig">{alert.rule_name || 'Unknown alert'}</span>
 							{/if}

@@ -1,9 +1,17 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getAddressSummary, getDomainSummary, getSuricataCategory, HttpError } from './drilldown';
+import { getAddressSummary, getDomainSummary, getSuricataCategory, getSuricataRule, HttpError } from './drilldown';
 import { ADDRESS, ADDRESS_EMPTY, ADDRESS_QUIET, DOMAIN, DOMAIN_EMPTY, DOMAIN_QUIET } from '../../../e2e/visual/fixtures/drilldown';
 import { SURICATA_CATEGORY, SURICATA_CATEGORY_EMPTY } from '../../../e2e/visual/fixtures/suricata-category';
+import { SURICATA_RULE, SURICATA_RULE_EMPTY } from '../../../e2e/visual/fixtures/suricata-rule';
 
 const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body });
+const without = <T extends object>(o: T, path: string): unknown => {
+	const [head, ...rest] = path.split('.');
+	const copy: Record<string, unknown> = { ...(o as Record<string, unknown>) };
+	if (rest.length) copy[head] = without(copy[head] as object, rest.join('.'));
+	else delete copy[head];
+	return copy;
+};
 
 describe('drill-down clients', () => {
 	afterEach(() => vi.unstubAllGlobals());
@@ -52,14 +60,6 @@ describe('drill-down clients', () => {
 		vi.stubGlobal('fetch', vi.fn(async () => reply(503, 'not json')));
 		await expect(getDomainSummary('x', 'a', 'b')).rejects.toThrow('Domain summary failed: HTTP 503');
 	});
-
-	const without = <T extends object>(o: T, path: string): unknown => {
-		const [head, ...rest] = path.split('.');
-		const copy: Record<string, unknown> = { ...(o as Record<string, unknown>) };
-		if (rest.length) copy[head] = without(copy[head] as object, rest.join('.'));
-		else delete copy[head];
-		return copy;
-	};
 
 	// A field the page reads as a figure or a flag that is missing must reach the error state:
 	// no "partial" would show an exact total, no "*_complete" a whole list, no threat_intel "Not checked"
@@ -163,5 +163,47 @@ describe('drill-down clients', () => {
 		const rows = [{ ip: '192.0.2.1' }];
 		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...SURICATA_CATEGORY, sources: { ...SURICATA_CATEGORY.sources, rows } })));
 		await expect(getSuricataCategory('x', 'a', 'b')).rejects.toThrow('malformed');
+	});
+});
+
+describe('getSuricataRule', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('asks for the rule encoded once, "/" included, with the bucket and list only when asked', async () => {
+		for (const body of [SURICATA_RULE, SURICATA_RULE_EMPTY]) {
+			const fetchMock = vi.fn(async (_url: string) => reply(200, body));
+			vi.stubGlobal('fetch', fetchMock);
+			await expect(getSuricataRule('ET INFO A/B & C 50%', 'a', 'b')).resolves.toEqual(body);
+			await getSuricataRule('x', 'a', 'b', '1h', true);
+			expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+				'/api/alerts/rule/ET%20INFO%20A%2FB%20%26%20C%2050%25?from=a&to=b',
+				'/api/alerts/rule/x?from=a&to=b&interval=1h&activity=true',
+			]);
+		}
+	});
+
+	it("throws the daemon's reason for a bad rule name", async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => reply(400, { error: "That isn't a rule name." })));
+		await expect(getSuricataRule(' ', 'a', 'b')).rejects.toThrow("That isn't a rule name.");
+	});
+
+	it.each(['total', 'activity', 'counted_total', 'severity.info', 'timeline', 'rules', 'rules_complete', 'no_sid', 'explanation.family', 'learn_more', 'devices.rows', 'remotes.examined', 'unplaced.complete', 'missing_address'])(
+		'rejects a reply without %s',
+		async (path) => {
+			vi.stubGlobal('fetch', vi.fn(async () => reply(200, without(SURICATA_RULE, path))));
+			await expect(getSuricataRule('x', 'a', 'b')).rejects.toThrow('malformed');
+		},
+	);
+
+	it('rejects a link that is not https, and a SID row without its facts', async () => {
+		const learn_more = [{ label: 'x', url: 'javascript:alert(1)', source: 'x' }];
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...SURICATA_RULE, learn_more })));
+		await expect(getSuricataRule('x', 'a', 'b')).rejects.toThrow('malformed');
+		const rules = [{ ...SURICATA_RULE.rules[0], learn_more }];
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...SURICATA_RULE, rules })));
+		await expect(getSuricataRule('x', 'a', 'b')).rejects.toThrow('malformed');
+		const noCves = [{ ...SURICATA_RULE.rules[0], cves: undefined }];
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...SURICATA_RULE, rules: noCves })));
+		await expect(getSuricataRule('x', 'a', 'b')).rejects.toThrow('malformed');
 	});
 });

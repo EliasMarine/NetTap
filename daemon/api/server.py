@@ -108,6 +108,7 @@ from api.dhcp_timeline import register_dhcp_timeline_routes
 from api.device_compare import register_device_compare_routes
 from api.local_services import register_local_service_routes
 from api.suricata_categories import register_suricata_category_routes
+from api.suricata_rule import register_suricata_rule_routes
 from services.pipeline_health import OVERALL as PIPELINE_OVERALL, PipelineHealth
 from services.tshark_service import TSharkService
 from services.capture_index import CaptureIndex
@@ -1498,6 +1499,8 @@ def create_app(
     register_address_routes(app, drill_client)
     register_domain_routes(app, drill_client)
     register_suricata_category_routes(app, drill_client)
+    # The rule page: one Suricata rule by its exact name, in the same drill-down slots
+    register_suricata_rule_routes(app, drill_client)
     # NET-249: the moment page's top devices, in the same permits. The daemon's exact-terms
     # client (the device list's queries, PartialResultsError on a part reply), without retries
     # as drill_client is, so a request can't outlive its budget

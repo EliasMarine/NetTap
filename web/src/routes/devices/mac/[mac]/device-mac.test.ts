@@ -249,7 +249,8 @@ describe('Device by MAC page — signature links', () => {
 		);
 		const { container } = render(Page);
 		const link = await screen.findByRole('link', { name: 'ET POLICY Ubiquiti check-in' });
-		expect(link).toHaveAttribute('href', '/alerts?signature=ET+POLICY+Ubiquiti+check-in');
+		// OLD CODE: expect(link).toHaveAttribute('href', '/alerts?signature=ET+POLICY+Ubiquiti+check-in'); (the rule page now)
+		expect(link).toHaveAttribute('href', '/alerts/rule/ET%20POLICY%20Ubiquiti%20check-in');
 		expectNoNestedInteractive(container);
 	});
 });

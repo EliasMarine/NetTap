@@ -38,7 +38,7 @@
 	// OLD CODE: import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-1: smart alerts link by their key)
 	// OLD CODE: import { chartTime as timeLabel, DRILL_RANGES, logsHrefForQuery, NO_EXACT_ALERT_LIST, rangeWindow, smartAlertHref, startRange, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: a pick narrows the page)
 	import {
-		bucketFor, chartTime as timeLabel, customRange, DRILL_RANGES, linkedCount, logsHrefForQuery, NO_EXACT_ALERT_LIST, pickedTotal, pickWindow, rangeWindow, smartAlertHref,
+		bucketFor, chartTime as timeLabel, customRange, DRILL_RANGES, linkedCount, logsHrefForQuery, NO_EXACT_ALERT_LIST, pickedTotal, pickWindow, rangeWindow, ruleHref, smartAlertHref,
 		startRange, withCount, type DrillRangeValue, type DrillWindow, type TimeChart,
 	} from '$lib/utils/drilldown';
 	import { bucketWords, DEVICE_IPV6_NOTE, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
@@ -1043,8 +1043,15 @@ OLD CODE END -->
 							<!-- OLD CODE: <div class="sig wrap">{sa.signature}</div> (slice 2a: not a link) -->
 							<!-- OLD CODE: <a class="sig wrap" href={alertsHrefForSignature(sa.signature, smartAlertsWindow ?? undefined, smartAlertsWindow?.ip)}>{sa.signature}</a> (slice 2b-1: the shown name can differ from rule.name, and ip alone listed the device's other pairs) -->
 							<!-- OLD CODE: <a class="sig wrap" href={exact}> (section D: same list as the ×N, so the same figure) -->
+							<!-- OLD CODE START — the name opened the same list as the ×N; it opens the rule page now (the ×N keeps the list)
 							{#if exact}
 								<a class="sig wrap" href={withCount(exact, sa.count)}>{sa.signature}</a>
+							{:else}
+								<div class="sig wrap">{sa.signature}</div>
+							{/if}
+							OLD CODE END -->
+							{#if sa.key?.rule_name && smartAlertsWindow}
+								<a class="sig wrap" href={ruleHref(sa.key.rule_name, smartAlertsWindow, { activity: sa.activity })} title="What this rule means and which devices it involved">{sa.signature}</a>
 							{:else}
 								<div class="sig wrap">{sa.signature}</div>
 							{/if}

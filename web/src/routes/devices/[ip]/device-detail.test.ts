@@ -420,14 +420,17 @@ describe('Device detail — port, signature and connection links', () => {
 		// NET-160 section D: the link carries the port's connection count, the figure clicked
 		expect(port.searchParams.get('count')).toBe('12');
 
+		// OLD CODE START — the signature opened the ×N's list; it opens the rule page now (the ×N keeps the list)
+		// const sig = new URL(screen.getByRole('link', { name: ALERT.signature }).getAttribute('href')!, 'http://x');
+		// expect(sig.pathname).toBe('/alerts');
+		// expect(['signature', 'ip', 'src', 'dst', 'from', 'to', 'range'].map((k) => sig.searchParams.get(k))).toEqual([
+		// 	ALERT.signature, IP, IP, '10.0.0.5', alertsSent.from, alertsSent.to, '24h',
+		// ]);
+		// expect(sig.searchParams.get('count')).toBe(String(ALERT.count));
+		// OLD CODE END
 		const sig = new URL(screen.getByRole('link', { name: ALERT.signature }).getAttribute('href')!, 'http://x');
-		expect(sig.pathname).toBe('/alerts');
-		// OLD CODE: …map over ['signature', 'from', 'to', 'range'] (the count is this device's, so the list is too)
-		// OLD CODE: …map over ['signature', 'ip', 'from', 'to', 'range'] (slice 2b-1: the group's pair too)
-		expect(['signature', 'ip', 'src', 'dst', 'from', 'to', 'range'].map((k) => sig.searchParams.get(k))).toEqual([
-			ALERT.signature, IP, IP, '10.0.0.5', alertsSent.from, alertsSent.to, '24h',
-		]);
-		expect(sig.searchParams.get('count')).toBe(String(ALERT.count));
+		expect(sig.pathname).toBe(`/alerts/rule/${encodeURIComponent(ALERT.key.rule_name)}`);
+		expect(Object.fromEntries(sig.searchParams)).toEqual({ from: alertsSent.from, to: alertsSent.to, range: '24h' });
 	});
 
 	it("links a connection's destination address beside the row's button", async () => {
@@ -455,7 +458,8 @@ describe('Device detail — smart alert ×N links', () => {
 	const countLink = (n: number, signature: string) => screen.getByRole('link', { name: `×${n} alerts: ${signature}` });
 	const params = (a: HTMLElement) => Object.fromEntries(new URL(a.getAttribute('href')!, 'http://x').searchParams);
 
-	it('the ×N is a link to the exact list, the same one the signature opens', async () => {
+	// OLD CODE: it('the ×N is a link to the exact list, the same one the signature opens', async () => { (the signature opens the rule page now)
+	it('the ×N is a link to the exact list, and the signature opens the rule page', async () => {
 		vi.mocked(getSmartAlerts).mockResolvedValueOnce({ alerts: [ALERT], total: 1 } as never);
 		const { container } = render(Page);
 		await flush();
@@ -464,7 +468,8 @@ describe('Device detail — smart alert ×N links', () => {
 		expect(count).toHaveTextContent('×4');
 		// OLD CODE: expect(params(count)).toEqual({ signature: ALERT.key.rule_name, ip: IP, src: IP, dst: '10.0.0.5', from: sent.from, to: sent.to, range: '24h' }); (section D: the link carries the ×N)
 		expect(params(count)).toEqual({ signature: ALERT.key.rule_name, ip: IP, src: IP, dst: '10.0.0.5', from: sent.from, to: sent.to, range: '24h', count: '4' });
-		expect(screen.getByRole('link', { name: ALERT.signature })).toHaveAttribute('href', count.getAttribute('href'));
+		// OLD CODE: expect(screen.getByRole('link', { name: ALERT.signature })).toHaveAttribute('href', count.getAttribute('href')); (the rule page now)
+		expect(new URL(screen.getByRole('link', { name: ALERT.signature }).getAttribute('href')!, 'http://x').pathname).toBe(`/alerts/rule/${encodeURIComponent(ALERT.key.rule_name)}`);
 		expectNoNestedInteractive(container);
 	});
 
@@ -474,7 +479,8 @@ describe('Device detail — smart alert ×N links', () => {
 		render(Page);
 		await flush();
 		expect(params(countLink(4, 'A friendlier shown name')).signature).toBe('ET SCAN The raw rule');
-		expect(params(screen.getByRole('link', { name: 'A friendlier shown name' })).signature).toBe('ET SCAN The raw rule');
+		// OLD CODE: expect(params(screen.getByRole('link', { name: 'A friendlier shown name' })).signature).toBe('ET SCAN The raw rule'); (the rule page, by the key)
+		expect(new URL(screen.getByRole('link', { name: 'A friendlier shown name' }).getAttribute('href')!, 'http://x').pathname).toBe('/alerts/rule/ET%20SCAN%20The%20raw%20rule');
 	});
 
 	it('an activity group links to the activity list (NET-191)', async () => {
@@ -493,8 +499,10 @@ describe('Device detail — smart alert ×N links', () => {
 		vi.mocked(getSmartAlerts).mockResolvedValueOnce({ alerts: groups, total: 2 } as never);
 		render(Page);
 		await flush();
+		// OLD CODE: expect(screen.queryByRole('link', { name })).not.toBeInTheDocument(); (in the loop: a rule name opens its page whatever the pair)
+		expect(screen.getByRole('link', { name: 'No destination' }).getAttribute('href')).toMatch(/^\/alerts\/rule\//);
+		expect(screen.queryByRole('link', { name: 'Empty rule' })).not.toBeInTheDocument();
 		for (const name of ['No destination', 'Empty rule']) {
-			expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
 			expect(screen.queryByRole('link', { name: `×4 alerts: ${name}` })).not.toBeInTheDocument();
 			const item = screen.getByText(name).closest('li')!;
 			expect(within(item).getByText('×4')).toHaveAttribute('title', "This group has no signature, source or destination recorded, so it can't be listed exactly");

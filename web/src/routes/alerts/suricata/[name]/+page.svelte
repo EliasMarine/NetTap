@@ -22,6 +22,7 @@
 		pickedTotal,
 		pickWindow,
 		rangeWindow,
+		ruleHref,
 		startRange,
 		suricataAlertsHref,
 		suricataCategoryHref,
@@ -42,9 +43,9 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	import { CATEGORY_RANGES, listScope, slotWords, type CategoryRange } from './suricata-view';
+	import { LEVELS } from '../../rule/[name]/rule-view';
 
-	type Level = 'high' | 'medium' | 'low' | 'info';
-	const LEVELS: readonly Level[] = ['high', 'medium', 'low', 'info'];
+	// OLD CODE: type Level = 'high' | 'medium' | 'low' | 'info'; const LEVELS: readonly Level[] = [...]; (one copy, in the rule page's view)
 
 	/** The stored value, as given: SvelteKit has decoded the path segment once. */
 	const name = $derived(($page.params as Record<string, string>).name ?? '');
@@ -165,11 +166,20 @@
 </script>
 
 <!-- No rule name: the list can't filter on a missing or empty rule.name, so a link would open the whole category -->
+<!-- OLD CODE START — the name opened the list; it opens the rule page now, and the count opens the list
 {#snippet ruleCell(r: RuleRow)}
 	{#if r.rule_name}<a class="mono" href={listHref({ signature: r.rule_name }, r.count)} title="These alerts with this rule over the same window">{r.rule_name}</a>
 	{:else}<span class="dim">No rule name</span>{/if}
 {/snippet}
 {#snippet ruleCountCell(r: RuleRow)}{fmt(r.count)}{/snippet}
+OLD CODE END -->
+{#snippet ruleCell(r: RuleRow)}
+	{#if r.rule_name}<a class="mono" href={ruleHref(r.rule_name, figuresWindow)} title="What this rule means and which devices it involved">{r.rule_name}</a>
+	{:else}<span class="dim">No rule name</span>{/if}
+{/snippet}
+{#snippet ruleCountCell(r: RuleRow)}
+	{#if r.rule_name}<a href={listHref({ signature: r.rule_name }, r.count)} title="These alerts with this rule over the same window">{fmt(r.count)}</a>{:else}{fmt(r.count)}{/if}
+{/snippet}
 {#snippet ruleSeenCell(r: RuleRow)}<span class="num">{formatWhen(r.last_seen)}</span>{/snippet}
 {#snippet ipCell(r: SuricataAddressRow)}<IPAddress ip={r.ip} />{/snippet}
 {#snippet sourceCountCell(r: SuricataAddressRow)}<a href={listHref({ src: r.ip }, r.count)} title="These alerts from this address over the same window">{fmt(r.count)}</a>{/snippet}
