@@ -297,7 +297,12 @@ class TestDeviceServices(TestCase):
         no_services = _reply(_side({LAPTOP: ({"ssl": 5}, 0)}), _side({}))
         del no_services["aggregations"]["started"]["by_ip"]["buckets"][0]["services"]
         no_side = {"_shards": {"failed": 0}, "aggregations": {"started": _side({})}}
-        for reply in (no_by_ip, no_services, no_side):
+        no_count = _reply(_side({LAPTOP: ({"ssl": 5}, 0)}), _side({}))
+        del no_count["aggregations"]["started"]["by_ip"]["buckets"][0]["doc_count"]
+        text_count = _reply(_side({LAPTOP: ({"ssl": 5}, 0)}), _side({}))
+        ssl = text_count["aggregations"]["started"]["by_ip"]["buckets"][0]["services"]
+        ssl["buckets"][0]["doc_count"] = "5"
+        for reply in (no_by_ip, no_services, no_side, no_count, text_count):
             with self.assertRaises(QueryFailed):
                 _device_services(_client(reply), [], [LAPTOP], "t")
 
@@ -365,17 +370,22 @@ def _transport_error(body, reply):
     return reply
 
 
-def _no_nested_services(body, reply):
-    if not _is_services(body):
-        return reply
-    started = reply["aggregations"]["started"]
-    buckets = [
-        {k: v for k, v in b.items() if k != "services"}
-        for b in started["by_ip"]["buckets"]
-    ]
-    by_ip = {**started["by_ip"], "buckets": buckets}
-    aggs = {**reply["aggregations"], "started": {**started, "by_ip": by_ip}}
-    return {**reply, "aggregations": aggs}
+def _without(name):
+    """A tamper that takes `name` out of every started-side IP bucket of the services reply."""
+
+    def tamper(body, reply):
+        if not _is_services(body):
+            return reply
+        started = reply["aggregations"]["started"]
+        buckets = [
+            {k: v for k, v in b.items() if k != name}
+            for b in started["by_ip"]["buckets"]
+        ]
+        by_ip = {**started["by_ip"], "buckets": buckets}
+        aggs = {**reply["aggregations"], "started": {**started, "by_ip": by_ip}}
+        return {**reply, "aggregations": aggs}
+
+    return tamper
 
 
 class _ServicesFail(ListCase):
@@ -404,7 +414,14 @@ class TestServicesTransportError(_ServicesFail):
 
 
 class TestServicesMalformed(_ServicesFail):
-    tamper = staticmethod(_no_nested_services)
+    tamper = staticmethod(_without("services"))
+
+    async def test_is_200_with_services_unknown(self):
+        await self.check_services_unknown_everywhere()
+
+
+class TestServicesBucketWithoutKey(_ServicesFail):
+    tamper = staticmethod(_without("key"))
 
     async def test_is_200_with_services_unknown(self):
         await self.check_services_unknown_everywhere()

@@ -764,22 +764,29 @@ def _device_services(
     aggs = checked(reply, what, ("started", "answered"))["aggregations"]
     counts: dict[str, Counter] = {}
     cut: set[str] = set()
-    for side, _ in _SERVICE_SIDES:
-        by_ip = aggs[side].get("by_ip") or {}
-        if not isinstance(by_ip.get("buckets"), list):
-            raise QueryFailed(f"{what}: missing aggregation")
-        if by_ip.get("sum_other_doc_count"):
-            raise QueryFailed(f"{what}: the {side} side stopped short")
-        for b in by_ip["buckets"]:
-            services = b.get("services") or {}
-            if not isinstance(services.get("buckets"), list):
+    # A bucket without its key or count fails the read, so the list says "unknown", not 500
+    try:
+        for side, _ in _SERVICE_SIDES:
+            by_ip = aggs[side].get("by_ip") or {}
+            if not isinstance(by_ip.get("buckets"), list):
                 raise QueryFailed(f"{what}: missing aggregation")
-            if services.get("sum_other_doc_count"):
-                cut.add(b["key"])
-            # Both sides' whole counts are added before the top 3 is taken
-            counts.setdefault(b["key"], Counter()).update(
-                {s["key"]: s["doc_count"] for s in services["buckets"]}
-            )
+            if by_ip.get("sum_other_doc_count"):
+                raise QueryFailed(f"{what}: the {side} side stopped short")
+            for b in by_ip["buckets"]:
+                services = b.get("services") or {}
+                if not isinstance(services.get("buckets"), list):
+                    raise QueryFailed(f"{what}: missing aggregation")
+                found = {s["key"]: s["doc_count"] for s in services["buckets"]}
+                if any(
+                    not isinstance(n, int) for n in (b["doc_count"], *found.values())
+                ):
+                    raise QueryFailed(f"{what}: a doc_count that isn't a whole number")
+                if services.get("sum_other_doc_count"):
+                    cut.add(b["key"])
+                # Both sides' whole counts are added before the top 3 is taken
+                counts.setdefault(b["key"], Counter()).update(found)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise QueryFailed(f"{what}: malformed bucket ({exc!r})") from exc
     return {
         ip: None if ip in cut else [p for p, _ in seen.most_common(3)]
         for ip, seen in counts.items()
