@@ -223,7 +223,7 @@ class TestFiguresOpenTheirLists(RuleCase):
         self.assertEqual([r["ip"] for r in page["unplaced"]["rows"]], [V6])
         for group in ("devices", "remotes", "unplaced"):
             self.assertTrue(page[group]["complete"])
-            self.assertEqual(page[group]["picked_by"], "source_plus_destination")
+            # OLD CODE: self.assertEqual(page[group]["picked_by"], "source_plus_destination") (the field went)
             for row in page[group]["rows"]:
                 total, _ = await self.listed(page, signature=DROP, ip=row["ip"])
                 self.assertEqual(total, row["alerts"], (group, row["ip"]))
@@ -260,9 +260,8 @@ class TestFiguresOpenTheirLists(RuleCase):
         devices = page["devices"]
         # L1's 3 self-alerts weigh 6 against L2's 5 ordinary ones: the documented pick, not the busiest
         self.assertEqual([(r["ip"], r["alerts"]) for r in devices["rows"]], [(L1, 3)])
-        self.assertEqual(
-            (devices["distinct"], devices["picked_by"]), (2, "source_plus_destination")
-        )
+        # OLD CODE: …((devices["distinct"], devices["picked_by"]), (2, "source_plus_destination")) (the field went)
+        self.assertEqual(devices["distinct"], 2)
         self.assertEqual((await self.listed(page, signature=CUTOFF, ip=L1))[0], 3)
 
     async def test_the_counted_and_activity_lists(self):

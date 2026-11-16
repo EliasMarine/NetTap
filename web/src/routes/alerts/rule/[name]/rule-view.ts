@@ -6,7 +6,8 @@ import type { RuleAddresses, RuleAddressRow, SuricataRuleFigures } from '$lib/ap
 import { fmt } from '$lib/utils/drilldown';
 
 export type Level = 'high' | 'medium' | 'low' | 'info';
-const LEVELS: readonly Level[] = ['high', 'medium', 'low', 'info'];
+/** The severity tiles, highest first (the Suricata category page's too) */
+export const LEVELS: readonly Level[] = ['high', 'medium', 'low', 'info'];
 
 /** The severity most of these alerts carry (the higher on a tie), or null when there are none. */
 export function dominantLevel(severity: SuricataRuleFigures['severity']): Level | null {

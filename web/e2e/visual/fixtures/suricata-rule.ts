@@ -82,7 +82,6 @@ export const SURICATA_RULE: SuricataRuleFigures = {
 		distinct: 3,
 		examined: 3,
 		complete: true,
-		picked_by: 'source_plus_destination',
 	},
 	remotes: {
 		rows: [
@@ -92,14 +91,12 @@ export const SURICATA_RULE: SuricataRuleFigures = {
 		distinct: null,
 		examined: 5000,
 		complete: false,
-		picked_by: 'source_plus_destination',
 	},
 	unplaced: {
 		rows: [{ ip: '2001:db8::5', as_source: 20, as_target: 0, alerts: 20, first_seen: iso(6 * HOUR), last_seen: iso(3 * HOUR) }],
 		distinct: 1,
 		examined: 1,
 		complete: true,
-		picked_by: 'source_plus_destination',
 	},
 	missing_address: 0,
 };
@@ -121,9 +118,9 @@ export const SURICATA_RULE_EMPTY: SuricataRuleFigures = {
 	no_sid: 0,
 	explanation: SURICATA_RULE.explanation,
 	learn_more: SURICATA_RULE.learn_more,
-	devices: { rows: [], distinct: 0, examined: 0, complete: true, picked_by: 'source_plus_destination' },
-	remotes: { rows: [], distinct: 0, examined: 0, complete: true, picked_by: 'source_plus_destination' },
-	unplaced: { rows: [], distinct: 0, examined: 0, complete: true, picked_by: 'source_plus_destination' },
+	devices: { rows: [], distinct: 0, examined: 0, complete: true },
+	remotes: { rows: [], distinct: 0, examined: 0, complete: true },
+	unplaced: { rows: [], distinct: 0, examined: 0, complete: true },
 	missing_address: 0,
 };
 

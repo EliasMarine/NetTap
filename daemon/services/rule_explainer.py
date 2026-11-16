@@ -20,7 +20,9 @@ from services.alert_enrichment import (
     get_recommendation,
     get_risk_context,
 )
-from services.alert_findings import is_credential_exposure, is_reputation
+
+# OLD CODE: from services.alert_findings import is_credential_exposure, is_reputation (sid_advice went)
+from services.alert_findings import is_reputation
 from services.owner_rules_validator import SID_MAX, SID_MIN
 
 MAX_LINKS = 6
@@ -467,18 +469,20 @@ def credential_advice() -> dict:
     return _texts("credential", CREDENTIAL)
 
 
-def sid_advice(curated: dict | None, name: str, et_ratings: list) -> dict | None:
-    """One SID's own advice: its curated description, else the credential text when ET rates it
-    only Informational/Unknown and its name names a secret in the clear, else None."""
-    if curated:
-        return curated
-    if is_credential_exposure(name, et_ratings):
-        return {
-            "what": CREDENTIAL["what"],
-            "risk": CREDENTIAL["risk"],
-            "todo": CREDENTIAL["todo"],
-        }
-    return None
+# OLD CODE START — over-engineering gate: _sid_facts picks the curated text or CREDENTIAL in one line
+# def sid_advice(curated: dict | None, name: str, et_ratings: list) -> dict | None:
+#     """One SID's own advice: its curated description, else the credential text when ET rates it
+#     only Informational/Unknown and its name names a secret in the clear, else None."""
+#     if curated:
+#         return curated
+#     if is_credential_exposure(name, et_ratings):
+#         return {
+#             "what": CREDENTIAL["what"],
+#             "risk": CREDENTIAL["risk"],
+#             "todo": CREDENTIAL["todo"],
+#         }
+#     return None
+# OLD CODE END
 
 
 def _technique_link(tid: str, name: str | None = None) -> dict:

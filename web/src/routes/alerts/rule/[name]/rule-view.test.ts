@@ -8,7 +8,6 @@ const group = (rows: number, distinct: number | null, complete = true, examined 
 	distinct,
 	examined,
 	complete,
-	picked_by: 'source_plus_destination',
 });
 
 describe('rule page wording', () => {

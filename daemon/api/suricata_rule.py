@@ -20,8 +20,16 @@ from typing import Any, Callable
 
 from aiohttp import web
 
-from api.alerts import _alert_enrichment, activity_param, alert_query, severity_clauses
+from api.alerts import (
+    _alert_enrichment,
+    activity_param,
+    alert_query,
+    rule_categories,
+    severity_clauses,
+    valid_suricata_category,
+)
 from api.drilldown_runner import (
+    LAST_SEEN,
     LIST_CAP,
     chart_interval,
     chart_slots,
@@ -33,6 +41,7 @@ from api.drilldown_runner import (
     run_drilldown,
     timeline,
 )
+from api.suricata_categories import _SEVERITIES
 from api.time_range import parse_time_range
 from services import rule_explainer as rx
 from services.alert_findings import is_credential_exposure
@@ -49,19 +58,16 @@ from storage.snapshot_search import (
 logger = logging.getLogger("nettap.api.suricata_rule")
 
 _DEFAULT_RANGE = timedelta(hours=24)
-_RULE_NAME_MAX = (
-    1_024  # rule.name as the list matches it (valid_suricata_category's limit)
-)
+# OLD CODE START — over-engineering gate: the category page's validator and severity tiles, one copy each
+# _RULE_NAME_MAX = 1_024  # rule.name as the list matches it (valid_suricata_category's limit)
+# PICKED_BY = "source_plus_destination"  (nobody read it)
+# _SEVERITIES = {"high": "1", "medium": "2", "low": "3", "info": "info"}
+# _FIRST_LAST = {"first": {"min": {"field": "@timestamp"}}, "last": {"max": {"field": "@timestamp"}}}
+# OLD CODE END
 _TOP_SIDS = 10
 SHOWN = {"devices": 100, "remotes": 20, "unplaced": 20}
 EXACT_BATCH = 50  # addresses per exact-count search (three filters each)
-PICKED_BY = "source_plus_destination"
-# The page's severity tiles and the list's severity= value each one counts as
-_SEVERITIES = {"high": "1", "medium": "2", "low": "3", "info": "info"}
-_FIRST_LAST = {
-    "first": {"min": {"field": "@timestamp"}},
-    "last": {"max": {"field": "@timestamp"}},
-}
+_FIRST_LAST = {"first": {"min": {"field": "@timestamp"}}, **LAST_SEEN}
 _FACTS = [
     "rule.category",
     "threat.technique.id",
@@ -77,11 +83,15 @@ _DBL_SUFFIX = ".dbl.ipfire.org"
 _SLUG = re.compile(r"[a-z0-9-]{1,40}")
 
 
-def valid_rule_name(raw: object) -> str | None:
-    """A rule name exactly as given, or None: 1–1,024 characters, not only whitespace."""
-    if isinstance(raw, str) and 0 < len(raw) <= _RULE_NAME_MAX and raw.strip():
-        return raw
-    return None
+# OLD CODE START — over-engineering gate: the same rule as a raw Suricata category's
+# def valid_rule_name(raw: object) -> str | None:
+#     """A rule name exactly as given, or None: 1–1,024 characters, not only whitespace."""
+#     if isinstance(raw, str) and 0 < len(raw) <= _RULE_NAME_MAX and raw.strip():
+#         return raw
+#     return None
+# OLD CODE END
+# A rule name exactly as given: 1–1,024 characters (the keyword's ignore_above), not only whitespace
+valid_rule_name = valid_suricata_category
 
 
 # OLD CODE START — review: no caller passed severity=
@@ -154,7 +164,8 @@ def _sid_facts(sid: str, alerts: int, src: dict, name: str) -> dict:
     return {
         "sid": sid,
         "alerts": alerts,
-        "categories": _listed(rule.get("category")),
+        # OLD CODE: "categories": _listed(rule.get("category")), (each links to its category page now)
+        "categories": rule_categories(rule),
         "et_ratings": et_ratings,
         "techniques": techniques,
         "tactics": tactics,
@@ -163,9 +174,9 @@ def _sid_facts(sid: str, alerts: int, src: dict, name: str) -> dict:
         "dbl_lists": dbl,
         "credential": credential,
         # OLD CODE: "advice": rx.sid_advice(_alert_enrichment.sid_text(sid), name, et_ratings), (the curated text must name this rule)
-        "advice": rx.sid_advice(
-            _alert_enrichment.sid_text(sid, name), name, et_ratings
-        ),
+        # OLD CODE: "advice": rx.sid_advice(_alert_enrichment.sid_text(sid, name), name, et_ratings), (gate: no helper)
+        "advice": _alert_enrichment.sid_text(sid, name)
+        or (rx.CREDENTIAL if credential else None),
         "learn_more": rx.sid_links(techniques, tactics, cves, cisa_kev, credential),
     }
 
@@ -265,7 +276,7 @@ def _involved(snap: SnapshotSearch, base: dict, is_lan: Callable[[str], bool]) -
             "distinct": len(candidates[g]) if complete else None,
             "examined": len(candidates[g]),
             "complete": complete,
-            "picked_by": PICKED_BY,
+            # OLD CODE: "picked_by": PICKED_BY, (nobody read it)
         }
         for g, ips in shown.items()
     }

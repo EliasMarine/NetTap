@@ -149,15 +149,16 @@
 		{ value: 'activity', label: data ? `Activity · ${fmt(data.activity_total)}` : 'Activity' },
 	]);
 
-	const addressColumns = (label: string, withRole: boolean): Column<RuleAddressRow>[] => [
+	// OLD CODE: const addressColumns = (label: string, withRole: boolean) … ...(withRole ? [role column] : []), (every table has the role)
+	const addressColumns = (label: string): Column<RuleAddressRow>[] => [
 		{ key: 'ip', label, cell: whoCell, sortValue: (r) => names.get(r.ip) ?? r.ip },
-		...(withRole ? [{ key: 'role', label: 'Role', sortValue: (r: RuleAddressRow) => roleOf(r), cell: roleCell }] : []),
+		{ key: 'role', label: 'Role', sortValue: (r) => roleOf(r), cell: roleCell },
 		{ key: 'alerts', label: 'Alerts', numeric: true, cell: alertsCell },
 		{ key: 'first_seen', label: 'First seen', sortValue: (r) => (r.first_seen ? Date.parse(r.first_seen) || 0 : 0), cell: firstCell },
 		{ key: 'last_seen', label: 'Last seen', sortValue: (r) => (r.last_seen ? Date.parse(r.last_seen) || 0 : 0), cell: lastCell },
 	];
-	const deviceColumns = $derived(addressColumns('Device', true));
-	const remoteColumns = $derived(addressColumns('Address', true));
+	const deviceColumns = $derived(addressColumns('Device'));
+	const remoteColumns = $derived(addressColumns('Address'));
 </script>
 
 {#snippet whoCell(r: RuleAddressRow)}

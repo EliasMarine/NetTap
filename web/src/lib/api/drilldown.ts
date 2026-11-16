@@ -398,14 +398,14 @@ export interface RuleAddressRow {
 
 /**
  * The addresses of one kind. The rows are a bounded selection picked by source + destination
- * count (`picked_by`), not a top list by alerts; `distinct` is null when discovery stopped at its cap.
+ * count, not a top list by alerts; `distinct` is null when discovery stopped at its cap.
  */
 export interface RuleAddresses {
 	rows: RuleAddressRow[];
 	distinct: number | null;
 	examined: number;
 	complete: boolean;
-	picked_by: string;
+	// OLD CODE: picked_by: string; (nobody read it)
 }
 
 export interface SuricataRuleFigures {

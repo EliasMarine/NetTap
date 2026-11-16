@@ -97,32 +97,34 @@ def test_an_unknown_name_falls_back_to_the_generic_texts():
     assert "high priority" in texts["risk"]
 
 
-@pytest.mark.parametrize(
-    "ratings, credential",
-    [
-        (["Informational"], True),
-        (["Unknown"], True),
-        (["Major"], False),
-        (["Informational", "Major"], False),
-        ([], False),
-    ],
-)
-def test_sid_advice_reads_et_rating_lists(ratings, credential):
-    name = "ET POLICY Outgoing Basic Auth Base64 HTTP Password detected unencrypted"
-    advice = rx.sid_advice(None, name, ratings)
-    assert (
-        advice == {k: rx.CREDENTIAL[k] for k in ("what", "risk", "todo")}
-    ) is credential
-    assert (advice is None) is not credential
-
-
-def test_a_curated_description_wins_and_a_plain_rule_has_no_advice():
-    curated = {"what": "w", "risk": "r", "todo": "t"}
-    assert (
-        rx.sid_advice(curated, "ET INFO Cleartext Password", ["Informational"])
-        == curated
-    )
-    assert rx.sid_advice(None, "ET INFO plain", ["Informational"]) is None
+# OLD CODE START — sid_advice went (gate); the rule page tests cover the curated and credential cases
+# @pytest.mark.parametrize(
+#     "ratings, credential",
+#     [
+#         (["Informational"], True),
+#         (["Unknown"], True),
+#         (["Major"], False),
+#         (["Informational", "Major"], False),
+#         ([], False),
+#     ],
+# )
+# def test_sid_advice_reads_et_rating_lists(ratings, credential):
+#     name = "ET POLICY Outgoing Basic Auth Base64 HTTP Password detected unencrypted"
+#     advice = rx.sid_advice(None, name, ratings)
+#     assert (
+#         advice == {k: rx.CREDENTIAL[k] for k in ("what", "risk", "todo")}
+#     ) is credential
+#     assert (advice is None) is not credential
+#
+#
+# def test_a_curated_description_wins_and_a_plain_rule_has_no_advice():
+#     curated = {"what": "w", "risk": "r", "todo": "t"}
+#     assert (
+#         rx.sid_advice(curated, "ET INFO Cleartext Password", ["Informational"])
+#         == curated
+#     )
+#     assert rx.sid_advice(None, "ET INFO plain", ["Informational"]) is None
+# OLD CODE END
 
 
 def test_own_sids_are_the_owner_range_only():

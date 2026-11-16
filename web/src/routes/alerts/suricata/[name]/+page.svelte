@@ -43,9 +43,9 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	import { CATEGORY_RANGES, listScope, slotWords, type CategoryRange } from './suricata-view';
+	import { LEVELS } from '../../rule/[name]/rule-view';
 
-	type Level = 'high' | 'medium' | 'low' | 'info';
-	const LEVELS: readonly Level[] = ['high', 'medium', 'low', 'info'];
+	// OLD CODE: type Level = 'high' | 'medium' | 'low' | 'info'; const LEVELS: readonly Level[] = [...]; (one copy, in the rule page's view)
 
 	/** The stored value, as given: SvelteKit has decoded the path segment once. */
 	const name = $derived(($page.params as Record<string, string>).name ?? '');
