@@ -322,6 +322,32 @@ class TestRuleFacts(RuleCase):
         self.assertEqual(two["techniques"], [{"id": "T1083", "name": None}])
         self.assertEqual(two["cves"], [])
 
+    async def test_a_repeated_attack_id_is_listed_once(self):
+        # two techniques under one tactic: Malcolm repeats the tactic, and the page keys on the id
+        self.os.docs = [
+            *DOCS,
+            _alert(
+                "t1",
+                L1,
+                R1,
+                "ET INFO two techniques",
+                2000040,
+                threat__technique__id=["T1071", "T1572"],
+                threat__technique__name=[
+                    "Application Layer Protocol",
+                    "Protocol Tunneling",
+                ],
+                threat__tactic__id=["TA0011", "TA0011"],
+                threat__tactic__name=["Command and Control", "Command and Control"],
+            ),
+        ]
+        page = await self.page("ET INFO two techniques")
+        rule = page["rules"][0]
+        self.assertEqual(
+            rule["tactics"], [{"id": "TA0011", "name": "Command and Control"}]
+        )
+        self.assertEqual([t["id"] for t in rule["techniques"]], ["T1071", "T1572"])
+
     async def test_one_curated_sid_explains_the_page(self):
         page = await self.page(EMOTET)
         self.assertEqual(page["rules"][0]["sid"], "2024792")

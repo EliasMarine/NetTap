@@ -105,13 +105,15 @@ def _listed(value: Any) -> list[str]:
 
 
 def _paired(ids: list[str], names: list[str], pattern: re.Pattern) -> list[dict]:
-    """ATT&CK ids with their names (Malcolm writes parallel lists), invalid ids dropped."""
+    """ATT&CK ids with their names (Malcolm writes parallel lists), invalid ids dropped, each
+    id once (two techniques under one tactic repeat the tactic, and the page keys on the id)."""
     lined_up = len(ids) == len(names)
-    return [
+    paired = [
         {"id": tid, "name": names[i] if lined_up else None}
         for i, tid in enumerate(ids)
         if pattern.fullmatch(tid)
     ]
+    return list({t["id"]: t for t in paired}.values())
 
 
 def _sid_facts(sid: str, alerts: int, src: dict, name: str) -> dict:
