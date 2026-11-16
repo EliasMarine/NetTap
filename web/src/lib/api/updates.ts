@@ -62,6 +62,18 @@ export interface UpdateResult {
 	rollback_available: boolean;
 }
 
+/** One update run as the daemon keeps it in its history: what it was asked to update and each result. */
+export interface UpdateBatch {
+	results: UpdateResult[];
+	components: string[];
+	success: boolean;
+	started_at: string;
+	completed_at: string;
+}
+
+/** A history row: one result, with a key unique in the list (a batch can repeat a component). */
+export type UpdateHistoryRow = UpdateResult & { key: string };
+
 export interface AutoUpdateConfig {
 	suricata_rules_daily: boolean;
 	geoip_weekly: boolean;
@@ -220,25 +232,44 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
 }
 
 /**
- * Get the history of past update operations.
+ * The daemon's update history as it sends it: one batch per update run, newest first.
  */
-export async function getUpdateHistory(): Promise<UpdateResult[]> {
+export async function getUpdateHistoryBatches(): Promise<UpdateBatch[]> {
 	const res = await fetch('/api/system/updates/history');
-
-	// OLD CODE START — the daemon replies {history, count}, so this object never read as a list and
-	// the history never showed; a failure also read as "no past updates"
-	// if (!res.ok) {
-	// 	return [];
-	// }
-	//
-	// return res.json();
-	// OLD CODE END
 	if (!res.ok) {
 		throw new Error(`Update history request failed: HTTP ${res.status}`);
 	}
-
-	const body: { history: UpdateResult[]; count: number } = await res.json();
+	const body: { history: UpdateBatch[]; count: number } = await res.json();
 	return body.history;
+}
+
+/**
+ * The history of past updates, one row per component result, newest batch first.
+ */
+// OLD CODE START — returned the daemon's batches as if each were one component's result, so every
+// history row read "undefined → undefined" with no component
+// export async function getUpdateHistory(): Promise<UpdateResult[]> {
+// 	const res = await fetch('/api/system/updates/history');
+//
+// 	// OLD CODE START — the daemon replies {history, count}, so this object never read as a list and
+// 	// the history never showed; a failure also read as "no past updates"
+// 	// if (!res.ok) {
+// 	// 	return [];
+// 	// }
+// 	//
+// 	// return res.json();
+// 	// OLD CODE END
+// 	if (!res.ok) {
+// 		throw new Error(`Update history request failed: HTTP ${res.status}`);
+// 	}
+//
+// 	const body: { history: UpdateResult[]; count: number } = await res.json();
+// 	return body.history;
+// }
+// OLD CODE END
+export async function getUpdateHistory(): Promise<UpdateHistoryRow[]> {
+	const batches = await getUpdateHistoryBatches();
+	return batches.flatMap((batch, b) => (batch.results ?? []).map((result, r) => ({ ...result, key: `${b}:${r}` })));
 }
 
 /**

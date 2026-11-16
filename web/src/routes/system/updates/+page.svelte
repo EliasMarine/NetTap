@@ -13,6 +13,7 @@
 		AvailableUpdate,
 		UpdateStatus,
 		UpdateResult,
+		UpdateHistoryRow,
 	} from '$api/updates.js';
 	import { onDestroy, onMount } from 'svelte';
 	import Collapsible from '$lib/components/Collapsible.svelte';
@@ -35,7 +36,8 @@
 	let availableUpdates = $state<AvailableUpdate[]>([]);
 	let lastCheck = $state('');
 	let updateStatus = $state<UpdateStatus | null>(null);
-	let updateHistory = $state<UpdateResult[]>([]);
+	// OLD CODE: let updateHistory = $state<UpdateResult[]>([]); (each row now carries a unique key)
+	let updateHistory = $state<UpdateHistoryRow[]>([]);
 	let loading = $state(true);
 	let checking = $state(false);
 	let applying = $state(false);
@@ -122,7 +124,8 @@
 		{ key: 'action', label: 'Action', sortValue: (e) => { const u = updatesMap.get(e.key); return u ? (u.applies_with ? 1 : 2) : 0; }, cell: actionCell, class: 'vtcol-action' },
 	];
 
-	const historyColumns: Column<UpdateResult>[] = [
+	// OLD CODE: const historyColumns: Column<UpdateResult>[] = [
+	const historyColumns: Column<UpdateHistoryRow>[] = [
 		{ key: 'success', label: 'Result', sortValue: (r) => (r.success ? 1 : 0), cell: historyResultCell },
 		{ key: 'component', label: 'Component' },
 		{ key: 'version', label: 'Version', sortValue: (r) => r.new_version, cell: historyVersionCell },
@@ -753,7 +756,8 @@
 					{/if}
 				</div>
 				<ul class="rows">
-					{#each updateStatus.results as result (result.component)}
+					<!-- OLD CODE: {#each updateStatus.results as result (result.component)} (a batch shown from the history can repeat a component) -->
+					{#each updateStatus.results as result, i (i)}
 						<li class="row">
 							<span class={['row-ic', result.success ? 'is-ok' : 'is-bad']}>
 								<Icon name={result.success ? 'check' : 'close'} label={result.success ? 'Succeeded' : 'Failed'} />
@@ -926,11 +930,12 @@
 			{#if historyFailed}
 				<div class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('the update history', true)}</div>
 			{/if}
+			<!-- OLD CODE: rowKey={(r) => `${r.component}-${r.started_at}-${r.completed_at}`} (two results for one component in a batch collided) -->
 			<DataTable
 				columns={historyColumns}
 				rows={updateHistory}
 				ariaLabel="Update history"
-				rowKey={(r) => `${r.component}-${r.started_at}-${r.completed_at}`}
+				rowKey={(r) => r.key}
 				initialSort={{ key: 'completed_at', dir: 'desc' }}
 			/>
 		</Card>

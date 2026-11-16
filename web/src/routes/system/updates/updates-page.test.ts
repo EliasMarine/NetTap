@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
+import type { UpdateResult } from '$api/updates.js';
 import UpdatesPage from './+page.svelte';
 
 const VERSIONS = {
@@ -232,22 +233,67 @@ describe('Software Updates page — update history', () => {
 		vi.unstubAllGlobals();
 	});
 
+	// OLD CODE START — a flat result; the daemon's history items are batches of results (batch() below)
+	// const PAST = {
+	// 	component: 'suricata', success: false, old_version: '7.0.2', new_version: '7.0.3',
+	// 	started_at: '2026-02-20T10:00:00Z', completed_at: '2026-02-20T10:01:30Z', error: 'pull failed', rollback_available: false,
+	// };
+	// OLD CODE END
 	const PAST = {
-		component: 'suricata', success: false, old_version: '7.0.2', new_version: '7.0.3',
+		component: 'suricata-rules', success: false, old_version: '2026-11-01', new_version: '2026-11-01',
 		started_at: '2026-02-20T10:00:00Z', completed_at: '2026-02-20T10:01:30Z', error: 'pull failed', rollback_available: false,
 	};
+	const batch = (results: UpdateResult[], started_at = '2026-02-20T10:00:00Z') => ({
+		results, components: results.map((r) => r.component), success: results.every((r) => r.success),
+		total: results.length, succeeded: results.filter((r) => r.success).length, failed: results.filter((r) => !r.success).length,
+		started_at, completed_at: '2026-02-20T10:01:30Z',
+	});
 
 	it('shows past updates from the daemon reply', async () => {
 		stubFetch({
 			'/api/system/versions': VERSIONS,
 			'/api/system/updates/available': { updates: [], last_check: '' },
-			'/api/system/updates/history': { history: [PAST], count: 1 },
+			'/api/system/updates/history': { history: [batch([PAST])], count: 1 },
 		});
 
 		render(UpdatesPage);
 
 		expect(await screen.findByText('Update history')).toBeInTheDocument();
 		expect(screen.getByText('1 past update')).toBeInTheDocument();
+	});
+
+	// the rows read "undefined → undefined" with no component: each daemon item is a batch
+	it('shows each result’s component, versions and error from a batch', async () => {
+		const malcolm = { ...PAST, component: 'malcolm', success: true, old_version: '26.02.0', new_version: '26.10.0', error: null };
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: '' },
+			'/api/system/updates/history': { history: [batch([malcolm, PAST])], count: 1 },
+		});
+
+		render(UpdatesPage);
+
+		const table = await screen.findByRole('table', { name: 'Update history' });
+		expect(within(table).getByText('malcolm')).toBeInTheDocument();
+		expect(within(table).getByText('26.02.0 → 26.10.0')).toBeInTheDocument();
+		expect(within(table).getByText('pull failed')).toBeInTheDocument();
+		expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+		// What's new lists the successful one
+		expect(screen.getByText("What's new")).toBeInTheDocument();
+	});
+
+	it('renders two results for one component with no timestamps', async () => {
+		const bare = { ...PAST, component: 'malcolm', started_at: '', completed_at: '' };
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: '' },
+			'/api/system/updates/history': { history: [{ ...batch([bare, bare]), started_at: '', completed_at: '' }], count: 1 },
+		});
+
+		render(UpdatesPage);
+
+		const table = await screen.findByRole('table', { name: 'Update history' });
+		expect(within(table).getAllByText('malcolm')).toHaveLength(2);
 	});
 
 	it('shows no history section and no error when there are no past updates', async () => {

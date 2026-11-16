@@ -7,6 +7,7 @@ import {
 	applyUpdates,
 	getUpdateStatus,
 	getUpdateHistory,
+	getUpdateHistoryBatches,
 	rollbackComponent,
 } from './updates';
 
@@ -98,16 +99,42 @@ const sampleUpdateStatus = {
 	],
 };
 
+// OLD CODE START — one flat result per item; the daemon sends batches (sampleHistory below)
+// const sampleHistory = [
+// 	{
+// 		component: 'suricata',
+// 		success: true,
+// 		old_version: '7.0.2',
+// 		new_version: '7.0.3',
+// 		started_at: '2026-02-20T10:00:00Z',
+// 		completed_at: '2026-02-20T10:01:30Z',
+// 		error: null,
+// 		rollback_available: false,
+// 	},
+// ];
+// OLD CODE END
+const sampleResult = {
+	component: 'suricata',
+	success: true,
+	old_version: '7.0.2',
+	new_version: '7.0.3',
+	started_at: '2026-02-20T10:00:00Z',
+	completed_at: '2026-02-20T10:01:30Z',
+	error: null,
+	rollback_available: false,
+};
+
+/** One batch per update run, as daemon/services/update_executor.py keeps them (newest first). */
 const sampleHistory = [
 	{
-		component: 'suricata',
+		results: [sampleResult],
 		success: true,
-		old_version: '7.0.2',
-		new_version: '7.0.3',
+		total: 1,
+		succeeded: 1,
+		failed: 0,
+		components: ['suricata'],
 		started_at: '2026-02-20T10:00:00Z',
 		completed_at: '2026-02-20T10:01:30Z',
-		error: null,
-		rollback_available: false,
 	},
 ];
 
@@ -324,6 +351,55 @@ describe('updates API client', () => {
 			mockFetchSuccess({ history: [], count: 0 });
 
 			expect(await getUpdateHistory()).toEqual([]);
+		});
+
+		// each daemon item is a batch; reading one as a result gave "undefined → undefined" rows
+		it('gives one row per result, with versions, across batches', async () => {
+			const malcolm = { ...sampleResult, component: 'malcolm', old_version: '26.02.0', new_version: '26.10.0' };
+			mockFetchSuccess({
+				history: [
+					{ ...sampleHistory[0], results: [malcolm, sampleResult], components: ['malcolm', 'suricata'] },
+					sampleHistory[0],
+				],
+				count: 2,
+			});
+
+			const rows = await getUpdateHistory();
+
+			expect(rows.map((r) => [r.component, r.old_version, r.new_version])).toEqual([
+				['malcolm', '26.02.0', '26.10.0'],
+				['suricata', '7.0.2', '7.0.3'],
+				['suricata', '7.0.2', '7.0.3'],
+			]);
+		});
+
+		it('keys every row uniquely, also for a repeated component with no timestamps', async () => {
+			const bare = { ...sampleResult, component: 'malcolm', started_at: '', completed_at: '' };
+			mockFetchSuccess({
+				history: [{ ...sampleHistory[0], results: [bare, bare], started_at: '', completed_at: '' }],
+				count: 1,
+			});
+
+			const rows = await getUpdateHistory();
+
+			expect(new Set(rows.map((r) => r.key)).size).toBe(2);
+		});
+	});
+
+	describe('getUpdateHistoryBatches', () => {
+		it('returns the batches as the daemon sends them', async () => {
+			mockFetchSuccess({ history: sampleHistory, count: 1 });
+
+			const batches = await getUpdateHistoryBatches();
+
+			expect(batches[0].started_at).toBe('2026-02-20T10:00:00Z');
+			expect(batches[0].results[0].component).toBe('suricata');
+		});
+
+		it('throws on HTTP error', async () => {
+			mockFetchFailure(502);
+
+			await expect(getUpdateHistoryBatches()).rejects.toThrow('HTTP 502');
 		});
 
 		it('throws on HTTP error instead of reporting no past updates', async () => {
