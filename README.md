@@ -156,6 +156,12 @@ cd web && npx vitest run && npx svelte-check
 
 See the [developer guide](https://eliasmarine.github.io/NetTap/developer-guide/dev-setup/) and the [full docs](https://eliasmarine.github.io/NetTap/).
 
+## AI-assisted development
+
+NetTap is a one-person project, written with heavy help from AI coding tools (Claude Code). The design and architecture decisions are the maintainer's, and NetTap runs on the maintainer's own network. Changes reach `main` only through pull requests, and CI runs linting and the daemon and web test suites on each one.
+
+The packet capture, intrusion detection and traffic analysis come from the established projects listed under [Acknowledgements](#acknowledgements). NetTap's own code is the installer, setup wizard, dashboard and storage management around them. The `.claude/` folder holds the Claude Code settings, hooks and repo rules used during development.
+
 ## Roadmap
 
 - [x] Core infrastructure, storage management and onboarding

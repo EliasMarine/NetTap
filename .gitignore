@@ -50,8 +50,8 @@ Thumbs.db
 # GeoIP databases (downloaded at runtime)
 config/malcolm/GeoLite2-*.mmdb
 
-# Tool artifacts (Claude Code worktrees, Playwright MCP, Playwright test output)
-.claude/worktrees/
+# Tool artifacts (Claude Code config and worktrees, Playwright MCP, Playwright test output)
+.claude/
 .playwright-mcp/
 web/test-results/
 # Codex plan-review transcripts and per-session handoff notes (the vault keeps the curated record)
