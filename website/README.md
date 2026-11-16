@@ -14,4 +14,10 @@ website/deploy.sh                                # publish
 website/deploy.sh --rollback                     # undo the last publish
 ```
 
-The certificate is Let's Encrypt via the webroot method (`/var/www/letsencrypt`), renewed by certbot.timer, which reloads nginx. Cloudflare DNS for nettap.dev is DNS-only.
+The certificate is Let's Encrypt via the webroot method (`/var/www/letsencrypt`), renewed by certbot.timer, which reloads nginx. The challenge is served over both http and https, so renewal also works behind the Cloudflare proxy.
+
+Cloudflare, when proxied:
+- SSL/TLS mode must be **Full (strict)**. "Flexible" loops, because the server redirects http to https.
+- Keep Rocket Loader, Web Analytics auto-injection and email obfuscation off. They inject scripts the CSP blocks.
+- nginx logs the visitor's real address via `snippets/cloudflare-realip.conf`.
+- Images and fonts are cached for 30 days, so purge the Cloudflare cache after a deploy that replaces one under the same name.
