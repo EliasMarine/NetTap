@@ -959,6 +959,8 @@
 			<Card title={cat.name} sub={cat.sub} class="c-4 category-card">
 				{#snippet actions()}
 					<span class="chip {cat.statusClass}">{cat.status}</span>
+					<!-- Stretched over the card, so a click anywhere opens the category's page; one tab stop -->
+					<a class="link card-link" href="/compliance/{cat.slug}" aria-label="{cat.name}: what drives the score and how to improve">How to improve</a>
 				{/snippet}
 
 				<div class="stack">
@@ -1076,5 +1078,32 @@
 	/* Keep the status chip beside the title when the subtitle wraps */
 	.posture > :global(.category-card > .card-head) {
 		flex-wrap: nowrap;
+	}
+
+	/* The whole card is the link (the card is position: relative); its focus ring is the card's */
+	.card-link::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: var(--r-lg);
+	}
+
+	.card-link:focus-visible {
+		outline: none;
+	}
+
+	.card-link:focus-visible::after {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
+	}
+
+	.posture > :global(.category-card:hover) {
+		border-color: var(--line-strong);
+	}
+
+	/* View findings stays usable above the card's link */
+	.posture > :global(.category-card) :global(.collapsible) {
+		position: relative;
+		z-index: 1;
 	}
 </style>

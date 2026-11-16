@@ -14,6 +14,7 @@ import type {
 	TrafficCategory,
 	TrafficSummary,
 } from '../../../src/lib/api/traffic.ts';
+import type { DnsDetail, EncryptionDetail, PatchDetail } from '../../../src/lib/api/posture.ts';
 import type { FixtureRoute } from './types.ts';
 import { CONN_TEMPLATES, connections } from './net-connections.ts';
 import {
@@ -322,7 +323,118 @@ const related = (): RelatedConnectionsResponse => {
 	};
 };
 
+// --- Security posture category pages (GET /api/posture/{slug}) ---
+
+/** The query daemon/api/posture.py's logs_query writes for each risky bucket (shortened: the page only passes it on). */
+const riskyQuery = (clause: string) => `${clause} AND NOT network.transport:("icmp" OR "icmp6" OR "ipv6-icmp")`;
+const RISKY_NONE = {
+	telnet: { count: 0, logs_query: riskyQuery('(network.protocol:("telnet") OR destination.port:(23))') },
+	ftp: { count: 0, logs_query: riskyQuery('(network.protocol:("ftp") OR destination.port:(21))') },
+	http: { count: 0, logs_query: riskyQuery('network.protocol:("http")') },
+};
+
+export const POSTURE_ENCRYPTION_EMPTY = {
+	category: 'encryption',
+	...WINDOW,
+	excluded_ips: [],
+	eligible: 0,
+	encrypted: 0,
+	unencrypted: { total: 0, payload_both: 0, private_local: 0, services: [], services_other: 0, risky: RISKY_NONE },
+	devices: { lan: 0, other: 0, rows: [] },
+} satisfies EncryptionDetail;
+
+/** Shaped like the G11 (2026-11-16): one device makes most unencrypted connections, on BitTorrent ports. */
+export const POSTURE_ENCRYPTION = {
+	...POSTURE_ENCRYPTION_EMPTY,
+	eligible: 21300,
+	encrypted: 19800,
+	unencrypted: {
+		total: 1500,
+		payload_both: 260,
+		private_local: 180,
+		services: [
+			{ name: 'unknown', count: 1240 },
+			{ name: 'http', count: 250 },
+			{ name: 'telnet', count: 10 },
+		],
+		services_other: 0,
+		risky: { ...RISKY_NONE, telnet: { ...RISKY_NONE.telnet, count: 10 }, http: { ...RISKY_NONE.http, count: 250 } },
+	},
+	devices: {
+		lan: 1500,
+		other: 0,
+		rows: [
+			{ ip: '192.168.1.20', connections: 1100, payload_both: 40, private_local: 0, services: [{ name: 'unknown', count: 1100 }], ports: [{ port: 6881, count: 700 }, { port: 51413, count: 300 }] },
+			{ ip: '192.168.1.50', connections: 390, payload_both: 210, private_local: 170, services: [{ name: 'http', count: 250 }, { name: 'unknown', count: 140 }], ports: [{ port: 80, count: 250 }, { port: 554, count: 140 }] },
+			{ ip: '192.168.1.31', connections: 10, payload_both: 10, private_local: 10, services: [{ name: 'telnet', count: 10 }], ports: [{ port: 23, count: 10 }] },
+		],
+	},
+} satisfies EncryptionDetail;
+
+export const POSTURE_DNS_EMPTY = {
+	category: 'dns-security',
+	...WINDOW,
+	excluded_ips: [],
+	plain: 0,
+	over_tls: 0,
+	plain_scope: { private_local: 0, unknown: 0, public: 0 },
+	resolvers: { plain: [], over_tls: [] },
+	public_devices: { lan: 0, other: 0, rows: [] },
+} satisfies DnsDetail;
+
+/** A local resolver that forwards over DoT, and two devices that send plain lookups straight to public resolvers. */
+export const POSTURE_DNS = {
+	...POSTURE_DNS_EMPTY,
+	plain: 5400,
+	over_tls: 60,
+	plain_scope: { private_local: 4200, unknown: 0, public: 1200 },
+	resolvers: {
+		plain: [
+			{ ip: '192.168.1.2', count: 4200, org: null, scope: 'private_local', upstream: { plain_public: 0, dot: 60 } },
+			{ ip: '198.51.100.53', count: 1000, org: 'AS64500 Example DNS', scope: 'public', upstream: null },
+			{ ip: '203.0.113.53', count: 200, org: 'AS64501 Example Resolver', scope: 'public', upstream: null },
+		],
+		over_tls: [{ ip: '198.51.100.153', count: 60, org: 'AS64500 Example DNS', scope: 'public' }],
+	},
+	public_devices: {
+		lan: 1200,
+		other: 0,
+		rows: [
+			{ ip: '192.168.1.22', count: 1000, resolvers: [{ ip: '198.51.100.53', count: 1000, org: 'AS64500 Example DNS' }] },
+			{ ip: '192.168.1.31', count: 200, resolvers: [{ ip: '203.0.113.53', count: 200, org: 'AS64501 Example Resolver' }] },
+		],
+	},
+} satisfies DnsDetail;
+
+export const POSTURE_PATCH_EMPTY = {
+	category: 'patch-currency',
+	...WINDOW,
+	excluded_ips: [],
+	unique_connections: 0,
+	protocols: [],
+} satisfies PatchDetail;
+
+export const POSTURE_PATCH = {
+	...POSTURE_PATCH_EMPTY,
+	unique_connections: 260,
+	protocols: [
+		{
+			name: 'http',
+			count: 250,
+			devices: { lan: 250, other: 0, rows: [{ ip: '192.168.1.50', connections: 250, ports: [{ port: 80, count: 250 }], destinations: [{ ip: '198.51.100.80', count: 250 }] }] },
+		},
+		{
+			name: 'telnet',
+			count: 10,
+			devices: { lan: 10, other: 0, rows: [{ ip: '192.168.1.31', connections: 10, ports: [{ port: 23, count: 10 }], destinations: [{ ip: '192.168.1.1', count: 10 }] }] },
+		},
+	],
+} satisfies PatchDetail;
+
 export const TRAFFIC_ROUTES: FixtureRoute[] = [
+	{ path: '/api/posture/encryption', empty: POSTURE_ENCRYPTION_EMPTY, populated: POSTURE_ENCRYPTION },
+	{ path: '/api/posture/dns-security', empty: POSTURE_DNS_EMPTY, populated: POSTURE_DNS },
+	{ path: '/api/posture/patch-currency', empty: POSTURE_PATCH_EMPTY, populated: POSTURE_PATCH },
 	{
 		path: '/api/traffic/summary',
 		empty: emptySummary,

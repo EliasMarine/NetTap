@@ -430,9 +430,12 @@ export function smartAlertHref(key: SmartAlertKey | undefined, win: DrillWindow 
 /**
  * Log Explorer's conn records over a traffic summary's own window, leaving out the sources the
  * summary left out, so the list holds its connection count (Home's Connections and Bandwidth).
+ * `query` narrows it to one predicate (the posture pages' risky buckets send the daemon's own).
  */
-export function connLogsHref(summary: DrillWindow & { excluded_ips?: string[] }, range: string): string {
+// OLD CODE: export function connLogsHref(summary: DrillWindow & { excluded_ips?: string[] }, range: string): string { (posture pages: an optional query)
+export function connLogsHref(summary: DrillWindow & { excluded_ips?: string[] }, range: string, query?: string): string {
 	const q = new URLSearchParams({ type: 'zeek.conn' });
+	if (query) q.set('query', query);
 	if (summary.excluded_ips?.length) q.set('exclude_src', summary.excluded_ips.join(','));
 	return `/logs?${q.toString()}&${windowQuery(summary, range)}`;
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, within } from '@testing-library/svelte';
+import { render, screen, within, fireEvent } from '@testing-library/svelte';
 import CompliancePage from './+page.svelte';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 // #81: the page read riskScores.scores, but /api/risk/scores sends `devices`, so it crashed on
 // `.length` and stayed on "Calculating security posture..." for good. It also compared counts
@@ -118,6 +119,44 @@ describe('Security Posture page', () => {
 		const dns = categoryCard('DNS security');
 		expect(within(dns).getByText('10%')).toBeInTheDocument();
 		expect(within(dns).getByText('10 DNS-over-TLS connections')).toBeInTheDocument();
+	});
+});
+
+// Posture category pages: each card opens its category's page, from anywhere on the card
+describe('Security Posture category cards', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('link to their category page with a name that says where they go, and View findings still opens', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const body = DAEMON_REPLIES[url.split('?')[0]];
+				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+		const { container } = render(CompliancePage);
+		await vi.waitFor(() => expect(heading('Encryption')).toBeInTheDocument());
+
+		const expected: Record<string, string> = {
+			Encryption: '/compliance/encryption',
+			'DNS security': '/compliance/dns-security',
+			'Network segmentation': '/compliance/network-segmentation',
+			'Patch currency': '/compliance/patch-currency',
+			'Alert response': '/compliance/alert-response',
+			'Monitoring coverage': '/compliance/monitoring-coverage',
+		};
+		for (const [name, href] of Object.entries(expected)) {
+			const link = within(categoryCard(name)).getByRole('link', { name: `${name}: what drives the score and how to improve` });
+			expect(link).toHaveAttribute('href', href);
+		}
+
+		const findings = within(categoryCard('Encryption')).getByRole('button', { name: /View findings/ });
+		expect(findings).toHaveAttribute('aria-expanded', 'false');
+		await fireEvent.click(findings);
+		expect(findings).toHaveAttribute('aria-expanded', 'true');
+		expectNoNestedInteractive(container);
 	});
 });
 

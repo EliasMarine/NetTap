@@ -134,6 +134,16 @@ describe('exact-window links', () => {
 		expect(params(connLogsHref({ ...win, excluded_ips: [] }, '24h')).has('exclude_src')).toBe(false);
 	});
 
+	it('keeps two-argument links exactly as they were, and adds a query only when given (posture pages)', () => {
+		const summary = { ...win, excluded_ips: ['192.168.1.199'] };
+		const before = `/logs?type=zeek.conn&exclude_src=192.168.1.199&${windowQuery(win, '24h')}`;
+		expect(connLogsHref(summary, '24h')).toBe(before);
+		expect(connLogsHref(summary, '24h', '')).toBe(before);
+		const query = '(network.protocol:("telnet") OR destination.port:(23)) AND NOT network.transport:("icmp")';
+		const href = connLogsHref(summary, '24h', query);
+		expect(Object.fromEntries(params(href))).toEqual({ type: 'zeek.conn', query, exclude_src: '192.168.1.199', ...win, range: '24h' });
+	});
+
 	it('joins query clauses with AND and carries the exact window', () => {
 		const href = logsHrefForQuery(['event.provider:zeek', 'destination.ip:"2001:db8::1"', 'destination.port:443'], win, '30d');
 		expect(new URL(href, 'http://x').pathname).toBe('/logs');
