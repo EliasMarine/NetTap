@@ -44,6 +44,7 @@ describe('toDevicesCsv', () => {
 		// none identified exports blank too, as does an older daemon's row without the fields
 		expect(lines([{ ...sparse, services: [] }], () => '—')[1]).toBe(lines([sparse], () => '—')[1]);
 		expect(lines([{ ...sparse, services: undefined, known_since: undefined }], () => '—')[1]).toBe(lines([sparse], () => '—')[1]);
+		expect(lines([{ ...sparse, known_since: '' }], () => '—')[1]).toBe(lines([sparse], () => '—')[1]);
 	});
 
 	it('marks a private MAC', () => {

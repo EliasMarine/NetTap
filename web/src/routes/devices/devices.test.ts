@@ -450,10 +450,37 @@ describe('Devices — All devices table', () => {
 			expect(within(rowOf('192.168.1.8')).queryByText('New')).not.toBeInTheDocument();
 		});
 
-		it('says when the protocols could not be read, and shows "—" for them', async () => {
+		it('says when the protocols could not be read, apart from none identified', async () => {
 			const table = await show([{ services: null }, { services: null }, { services: null }]);
-			expect(column(table, 'Protocols')).toEqual(['—', '—', '—']);
+			expect(column(table, 'Protocols')).toEqual(['Unknown', 'Unknown', 'Unknown']);
 			expect(screen.getByText("Protocols couldn't be read for this period.")).toBeInTheDocument();
+		});
+
+		// review: null is per device (one side cut), so the note counts them instead of blaming the period
+		it('counts the devices whose protocols could not be read', async () => {
+			const table = await show([{ services: null }, {}, {}]);
+			expect(column(table, 'Protocols')).toEqual(['Unknown', 'HTTP', '—']);
+			expect(screen.getByText("Protocols couldn't be read for 1 of 3 devices.")).toBeInTheDocument();
+		});
+
+		it('reads an older daemon without the fields as none, with no note and no New chip', async () => {
+			const old = { services: undefined, known_since: undefined };
+			const table = await show([old, old, old]);
+			expect(column(table, 'Protocols')).toEqual(['—', '—', '—']);
+			expect(column(table, 'First seen')).toEqual(['—', '—', '—']);
+			expect(within(table).queryByText('New')).not.toBeInTheDocument();
+			expect(screen.queryByText(/Protocols couldn't be read/)).not.toBeInTheDocument();
+		});
+
+		it("shows '—' for a first seen it can't read, never 'NaNd ago'", async () => {
+			const table = await show([{ known_since: 'not a date' }, {}, {}]);
+			expect(column(table, 'First seen')[0]).toBe('—');
+		});
+
+		it('keeps the New chip beside a UniFi name, not under it', async () => {
+			const table = await show([{ unifi_name: 'Kitchen iPad' }, {}, {}]);
+			const chip = within(table).getByText('New');
+			expect(chip.parentElement).toHaveTextContent(/^Kitchen iPad UniFi New$/);
 		});
 	});
 
@@ -477,8 +504,9 @@ describe('Devices — All devices table', () => {
 		expect(within(guess).getByText('from web traffic')).toBeInTheDocument();
 		expect(within(unknown).getByText('Unknown')).toBeInTheDocument();
 		expect(within(unknown).queryByText(/^from /)).not.toBeInTheDocument();
+		// OLD CODE: screen.getByText('Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.') (NET-317: + IPv4-only Protocols)
 		expect(
-			screen.getByText('Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.'),
+			screen.getByText('Traffic and connections count both directions and include IPv6, matched to each device by its MAC address. Protocols count IPv4 connections only.'),
 		).toBeInTheDocument();
 		expect(ipv6Notes()).toHaveLength(0);
 	});

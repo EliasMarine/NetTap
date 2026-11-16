@@ -610,7 +610,13 @@
 	const servicesText = (d: Device) => (d.services?.length ? d.services.map(serviceLabel).join(' · ') : null);
 	/** The registry first saw it in the last 24 h: the banner's and the KPI's rule. */
 	const isNew = (d: Device) => !!d.known_since && isNewDevice({ first_seen: d.known_since });
-	const protocolsFailed = $derived(devices.some((d) => d.services === null));
+	// OLD CODE: const protocolsFailed = $derived(devices.some((d) => d.services === null)); (review: null is per device)
+	const unreadProtocols = $derived(devices.filter((d) => d.services === null).length);
+	const unreadProtocolsNote = $derived(
+		unreadProtocols === devices.length
+			? "Protocols couldn't be read for this period."
+			: `Protocols couldn't be read for ${unreadProtocols} of ${devices.length} devices.`,
+	);
 
 	// Every column sorts (design system); the snippets are at the top of the markup
 	const columns: Column<Device>[] = [
@@ -678,15 +684,16 @@
 {#snippet macCell(d: Device)}{#if d.mac}<MacAddress mac={d.mac} />{:else}—{/if}{/snippet}
 {#snippet nameCell(d: Device)}
 	<!-- NET-200: the owner's name is in hostname already; the UniFi tag only when the UniFi name is the one shown -->
+	<!-- NET-317: the New chip inside each branch; after .two (a column) it dropped under a UniFi name -->
 	{#if d.custom_name}
-		{d.custom_name}
+		{d.custom_name} {@render newChip(d)}
 	{:else if d.unifi_name}
-		<span class="two"><span>{d.unifi_name} <span class="tag">UniFi</span></span><span class="mono">{d.hostname ?? '—'}</span></span>
+		<span class="two"><span>{d.unifi_name} <span class="tag">UniFi</span> {@render newChip(d)}</span><span class="mono">{d.hostname ?? '—'}</span></span>
 	{:else}
-		{d.hostname ?? '—'}
+		{d.hostname ?? '—'} {@render newChip(d)}
 	{/if}
-	{#if isNew(d)}<span class="chip is-ok">New</span>{/if}
 {/snippet}
+{#snippet newChip(d: Device)}{#if isNew(d)}<span class="chip is-ok">New</span>{/if}{/snippet}
 {#snippet statusCell(d: Device)}
 	{@const s = status(d)}
 	<span class={['res', s.rank === 2 && 'is-live']}>{s.label}</span>
@@ -712,9 +719,9 @@ OLD CODE END -->
 {#snippet uploadCell(d: Device)}{d.upload_bytes == null ? '—' : formatBytes(d.upload_bytes)}{/snippet}
 {#snippet downloadCell(d: Device)}{d.download_bytes == null ? '—' : formatBytes(d.download_bytes)}{/snippet}
 {#snippet connCell(d: Device)}{formatNumber(d.connection_count)}{/snippet}
-{#snippet servicesCell(d: Device)}{servicesText(d) ?? '—'}{/snippet}
+{#snippet servicesCell(d: Device)}{#if d.services === null}<span class="dim">Unknown</span>{:else}{servicesText(d) ?? '—'}{/if}{/snippet}
 {#snippet alertCell(d: Device)}{formatNumber(d.alert_count)}{/snippet}
-{#snippet knownCell(d: Device)}{d.known_since ? timeAgo(d.known_since) : '—'}{/snippet}
+{#snippet knownCell(d: Device)}{d.known_since && Number.isFinite(Date.parse(d.known_since)) ? timeAgo(d.known_since) : '—'}{/snippet}
 {#snippet seenCell(d: Device)}{timeAgo(d.last_seen)}{/snippet}
 
 <!-- OLD CODE START — NET-296: By type's row cells (inner comments written <! - - … - - >)
@@ -991,9 +998,10 @@ OLD CODE END -->
 						{columns}
 					/>
 				{/if}
-				<p class="note table-note">Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.</p>
-				{#if protocolsFailed}
-					<p class="notice is-warn table-note" role="note"><Icon name="warn" /><span>Protocols couldn't be read for this period.</span></p>
+				<!-- OLD CODE: <p class="note table-note">Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.</p> (NET-317: Protocols are IPv4 only) -->
+				<p class="note table-note">Traffic and connections count both directions and include IPv6, matched to each device by its MAC address. Protocols count IPv4 connections only.</p>
+				{#if unreadProtocols > 0}
+					<p class="notice is-warn table-note" role="note"><Icon name="warn" /><span>{unreadProtocolsNote}</span></p>
 				{/if}
 				{#each ipv6ListNotes(devices) as note (note)}
 					<p class="notice is-warn table-note" role="note"><Icon name="warn" /><span>{note}</span></p>

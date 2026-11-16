@@ -33,7 +33,7 @@ const COLUMNS: readonly CsvColumn[] = [
 	['Alerts', (d) => d.alert_count],
 	// NET-317: raw keys (ssl, not TLS), so a spreadsheet can filter on them; blank when unknown
 	['Protocols', (d) => d.services?.join(' ') || null],
-	['First seen', (d) => d.known_since ?? null],
+	['First seen', (d) => d.known_since || null],
 	['Last seen', (d) => d.last_seen || null],
 ];
 
