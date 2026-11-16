@@ -71,8 +71,9 @@ PAGE=$(sudo docker exec nettap-web sh -c 'ls /app/build/server/chunks/entries/pa
 if [ -n "$PAGE" ]; then rc=0; else rc=1; fi
 check "built Devices page found" "$rc" "${PAGE:-missing}"
 if [ -n "$PAGE" ]; then
-    # the column's own definition, as NET-314's check: plain words could match older builds
-    if sudo docker exec nettap-web grep -qE 'key: ?"upload_bytes", ?label: ?"Upload"' "$PAGE"; then rc=0; else rc=1; fi
+    # the column's own key (NET-317 fix: esbuild writes this object over several lines, so
+    # key and label never share one; "upload_bytes" alone also sits in the cell, never after key:)
+    if sudo docker exec nettap-web grep -qE 'key: ?"upload_bytes"' "$PAGE"; then rc=0; else rc=1; fi
     check "Upload column built" "$rc" "$([ "$rc" -eq 0 ] && echo found || echo missing)"
     if sudo docker exec nettap-web grep -qF "Export CSV" "$PAGE"; then rc=0; else rc=1; fi
     check "Export CSV built" "$rc" "$([ "$rc" -eq 0 ] && echo found || echo missing)"

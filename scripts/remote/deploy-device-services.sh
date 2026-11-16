@@ -137,7 +137,13 @@ echo "→ Step 7: The running app carries the Devices page..."
 PAGE=$(sudo docker exec nettap-web sh -c 'ls /app/build/server/chunks/entries/pages/devices/_page.svelte.js-*.js 2>/dev/null | grep -v "\.map$" | head -n 1')
 if [ -n "$PAGE" ]; then rc=0; else rc=1; fi
 check "built Devices page found" "$rc" "${PAGE:-missing}"
-# TODO: the Protocols and First seen column checks come with the web half of PR B
+if [ -n "$PAGE" ]; then
+    # one key per line: esbuild writes a long column object over several lines (NET-316's false ✗)
+    for KEY in services known_since; do
+        if sudo docker exec nettap-web grep -qE "key: ?\"$KEY\"" "$PAGE"; then rc=0; else rc=1; fi
+        check "$KEY column built" "$rc" "$([ "$rc" -eq 0 ] && echo found || echo missing)"
+    done
+fi
 echo ""
 
 echo "→ Step 8: The page answers, without a session, through nginx..."
