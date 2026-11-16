@@ -194,6 +194,12 @@
 		const trendQuery = { from: tw.from, to: tw.to, interval: tw.interval };
 		const since = localMidnight(new Date());
 		loading = true;
+		// settle never rejects: a failed protocols request still lets the chart draw
+		const protocolsDone = settle(guard, g, 'protocols', getProtocolDistribution(win), (v) => {
+			protocols = v.protocols;
+			services = v.services;
+			unidentified = v.unidentified ?? null;
+		});
 
 		const results = await Promise.all([
 			settle(guard, g, 'summary', getTrafficSummary(win), (v) => (trafficSummary = v)),
@@ -203,14 +209,22 @@
 				trendWin = tw;
 			}, () => (trendTraffic = null)),
 			// OLD CODE: settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: '1h' }), (v) => (bandwidthData = v.series)), (NET-249)
-			settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: bucket }), (v) => {
+			// OLD CODE START — chart resize: written as soon as it came, the chart drew at 300 px, then grew when the
+			// taller protocols card beside it settled (later on the G11 at every range) and stretched their row
+			// settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: bucket }), (v) => {
+			// 	bandwidth = { series: v.series, from: v.from, to: v.to, step: bucketMs };
+			// }),
+			// settle(guard, g, 'protocols', getProtocolDistribution(win), (v) => {
+			// 	protocols = v.protocols;
+			// 	services = v.services;
+			// 	unidentified = v.unidentified ?? null;
+			// }),
+			// OLD CODE END
+			// both requests start now; the chart is written once its row neighbour has settled, so it draws once, at the row's final height
+			settle(guard, g, 'bandwidth', Promise.all([getBandwidthTimeSeries({ ...win, interval: bucket }), protocolsDone]).then(([v]) => v), (v) => {
 				bandwidth = { series: v.series, from: v.from, to: v.to, step: bucketMs };
 			}),
-			settle(guard, g, 'protocols', getProtocolDistribution(win), (v) => {
-				protocols = v.protocols;
-				services = v.services;
-				unidentified = v.unidentified ?? null;
-			}),
+			protocolsDone,
 			settle(guard, g, 'categories', getTrafficCategories(win), (v) => (categories = v.categories)),
 			// OLD CODE: settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCount = v.count)), (slice 2b-3: the card links to the reply's window)
 			settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCountReply = v)),

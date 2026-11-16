@@ -95,15 +95,28 @@
 					throw e;
 				},
 			);
+		const protocolsDone = settle('protocols', getProtocolDistribution(q), (v) => (protocols = v));
 		const results = await Promise.allSettled([
 			settle('summary', getTrafficSummary(q), (v) => (summary = v)),
 			settle('alertCount', getAlertCount(q), (v) => (alertCount = v)),
 			settle('deviceCount', getDeviceCount(q), (v) => (deviceCount = v)),
-			settle('chart', getBandwidthTimeSeries({ ...q, interval: bucket.bucket }), (v) => {
-				chart = { series: v.series, from: v.from, to: v.to, step: bucket.bucketMs, words: bucket.bucketWords };
-			}),
+			// OLD CODE START — chart resize: written as soon as it came, the chart grew when the taller Protocols card beside it settled
+			// settle('chart', getBandwidthTimeSeries({ ...q, interval: bucket.bucket }), (v) => {
+			// 	chart = { series: v.series, from: v.from, to: v.to, step: bucket.bucketMs, words: bucket.bucketWords };
+			// }),
+			// settle('devices', getMomentDevices(q), (v) => (devices = v)),
+			// settle('protocols', getProtocolDistribution(q), (v) => (protocols = v)),
+			// OLD CODE END
+			// both requests start now; the chart is written once its row neighbour has settled (or failed), so it draws once at the row's height
+			settle(
+				'chart',
+				Promise.all([getBandwidthTimeSeries({ ...q, interval: bucket.bucket }), protocolsDone.catch(() => null)]).then(([v]) => v),
+				(v) => {
+					chart = { series: v.series, from: v.from, to: v.to, step: bucket.bucketMs, words: bucket.bucketWords };
+				},
+			),
 			settle('devices', getMomentDevices(q), (v) => (devices = v)),
-			settle('protocols', getProtocolDistribution(q), (v) => (protocols = v)),
+			protocolsDone,
 			settle('categories', getTrafficCategories(q), (v) => (categories = v.categories)),
 			settle('alerts', getAlerts({ ...q, size: 10, sort: 'severity', order: 'desc' }), (v) => (alerts = v)),
 			settle('joined', getChangelogEvents({ ...q, type: 'device_joined', limit: NEW_DEVICES }), (v) => (joined = v.events)),

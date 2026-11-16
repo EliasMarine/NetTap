@@ -466,6 +466,31 @@ describe('Moment page', () => {
 		});
 	});
 
+	// chart resize: the chart is written once the Protocols card beside it has settled, so it draws once at the row's height
+	it('draws the chart only once the Protocols card beside it has settled', async () => {
+		at();
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		let release!: (v: unknown) => void;
+		const held = new Promise((resolve) => (release = resolve));
+		// the protocols reply's body is held back: its json() waits for release()
+		stubDaemon({ ...FULL, '/api/traffic/protocols': held });
+		render(Page);
+		await loaded();
+		await new Promise((r) => setTimeout(r, 20));
+		expect(screen.queryByRole('group', { name: /^Bandwidth / })).not.toBeInTheDocument();
+		release((FULL['/api/traffic/protocols'] as (u: URL) => unknown)(new URL(`http://localhost/api/traffic/protocols?from=${FROM}&to=${TO}`)));
+		expect(await screen.findByRole('group', { name: /^Bandwidth / })).toBeInTheDocument();
+	});
+
+	it('draws the chart when the protocols request fails', async () => {
+		at();
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		const { ['/api/traffic/protocols']: _, ...noProtocols } = FULL;
+		stubDaemon(noProtocols);
+		render(Page);
+		expect(await screen.findByRole('group', { name: /^Bandwidth / })).toBeInTheDocument();
+	});
+
 	// chart gaps: a slot with no connection record is "No data", and a window with none at all is the empty state
 	it('draws a slot with no record as a "No data" band, and a window with no record as the empty state', async () => {
 		at();
