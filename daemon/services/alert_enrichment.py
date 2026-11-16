@@ -345,6 +345,17 @@ class AlertEnrichment:
                 exc,
             )
 
+    def sid_text(self, sid: str) -> dict | None:
+        """The curated {what, risk, todo} for one SID, or None when it has none (rule page)."""
+        info = self._sid_descriptions.get(str(sid))
+        if not info:
+            return None
+        return {
+            "what": info.get("description", ""),
+            "risk": info.get("risk_context", ""),
+            "todo": info.get("recommendation", ""),
+        }
+
     def enrich_alert(self, alert: dict) -> dict:
         """Add plain_description, risk_context, and recommendation to an alert.
 
