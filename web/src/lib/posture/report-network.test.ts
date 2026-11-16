@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { EMPTY_DATA, scoreCategories, type PostureInputs, type PostureSlug } from './score';
 import type { ExtraKey, PostureExtras, ReportData } from './report';
-import { alertReport, monitoringReport, postureRuleHref, segmentationReport, MIRROR_NOTE } from './report-network';
+import { alertReport, monitoringReport, segmentationReport, MIRROR_NOTE } from './report-network';
 import { BRIDGE_NO_DEVICES, type CaptureStatsResponse } from '$api/capture';
 import type { NetworkIsolation } from '$api/iot';
 import type { SystemHealth } from '$api/system';
@@ -69,14 +69,21 @@ describe('segmentationReport', () => {
 	});
 });
 
-describe('postureRuleHref', () => {
-	it('opens the rule page over the snapshot window, and the Alerts list for rows with no rule name (R2-4)', () => {
-		const href = postureRuleHref('ET INFO Spotify P2P Client', WIN);
-		expect(href.startsWith('/alerts/rule/ET%20INFO%20Spotify%20P2P%20Client?')).toBe(true);
-		expect(Object.fromEntries(new URL(href, 'http://x').searchParams)).toEqual({ ...WIN, range: '24h' });
-		expect(postureRuleHref('a/b?c', WIN)).toMatch(/^\/alerts\/rule\/a%2Fb%3Fc\?/);
-		expect(postureRuleHref(null, WIN)).toMatch(/^\/alerts\?no_rule_name=true&/);
-		expect(postureRuleHref('', WIN)).toMatch(/^\/alerts\?signature=&/);
+describe('rule links', () => {
+	it("open main's rule page over the snapshot window, and the Alerts list for rows with no rule name (R2-4)", () => {
+		const sigs = { from: WIN.from, to: WIN.to, complete: true, examined: 4, signatures: [
+			{ signature: 'ET INFO Spotify P2P Client', count: 5, severity: 3 },
+			{ signature: 'a/b?c', count: 4, severity: 2 },
+			{ signature: null, count: 3, severity: 2 },
+			{ signature: '', count: 2, severity: 2 },
+		] };
+		const r = alertReport(reportData('alert-response', { inputs: { alertCounts: { from: '', to: '', counts: { total: 14, high: 0, medium: 9, low: 5 } } }, extras: { signatures: sigs } }));
+		const [spotify, slash, none, empty] = r.findings.filter((f) => f.key.startsWith('rule-')).sort((a, b) => b.count! - a.count!).map((f) => f.href!);
+		expect(spotify.startsWith('/alerts/rule/ET%20INFO%20Spotify%20P2P%20Client?')).toBe(true);
+		expect(Object.fromEntries(new URL(spotify, 'http://x').searchParams)).toEqual({ ...WIN, range: '24h' });
+		expect(slash).toMatch(/^\/alerts\/rule\/a%2Fb%3Fc\?/);
+		expect(none).toMatch(/^\/alerts\?no_rule_name=true&/);
+		expect(empty).toMatch(/^\/alerts\?signature=&/);
 	});
 });
 

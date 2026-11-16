@@ -4,10 +4,9 @@
  * its own, so one that saw nothing or failed leaves the others' findings in place.
  */
 import { BRIDGE_NO_DEVICES, lossWords } from '$api/capture';
-import { pipelineStage } from '$api/system';
-import { alertsHrefForSignature, fmt, windowQuery } from '$lib/utils/drilldown';
+import { listWords, pipelineStage } from '$api/system';
+import { alertsHrefForSignature, fmt, ruleHref } from '$lib/utils/drilldown';
 import { suricataLevel, type SeverityLevel } from '$lib/utils/severity';
-import { listWords } from '$api/system';
 import { device, deviceWords, failedSource, notMeasured, scoreKpi, unloaded, type Finding, type Kpi, type Report, type ReportData, type Source, type Step } from './report';
 
 /** Devices with a baseline: the score's own figures (min() as the score takes it). */
@@ -109,14 +108,16 @@ export function segmentationReport(data: ReportData): Report {
 
 // --- Alert response ---
 
-/**
- * A rule's page over the snapshot's window. Rules with no name (null or "") have no page, so they
- * open the Alerts list for exactly that row. One helper holds the path, so it can follow the rule page.
- */
-export function postureRuleHref(name: string | null, win: { from: string; to: string }): string {
-	if (!name) return alertsHrefForSignature(name, { ...win, range: '24h' });
-	return `/alerts/rule/${encodeURIComponent(name)}?${windowQuery(win, '24h')}`;
-}
+// OLD CODE START — main's ruleHref (NET-303, #311) builds the rule page link; the findings call it directly
+// /**
+//  * A rule's page over the snapshot's window. Rules with no name (null or "") have no page, so they
+//  * open the Alerts list for exactly that row. One helper holds the path, so it can follow the rule page.
+//  */
+// export function postureRuleHref(name: string | null, win: { from: string; to: string }): string {
+// 	if (!name) return alertsHrefForSignature(name, { ...win, range: '24h' });
+// 	return `/alerts/rule/${encodeURIComponent(name)}?${windowQuery(win, '24h')}`;
+// }
+// OLD CODE END
 
 /** ET's informational and policy rules: often expected activity, so they get review wording. */
 const INFORMATIONAL = /^ET (INFO|POLICY)\b/;
@@ -162,7 +163,8 @@ export function alertReport(data: ReportData): Report {
 				devices: [],
 				count: s.count,
 				fix: informational ? ALERT_FIX.info : ALERT_FIX[level],
-				href: postureRuleHref(s.signature, window),
+				// rules with no name (null or "") have no page: the Alerts list for exactly that row
+				href: s.signature ? ruleHref(s.signature, { ...window, range: '24h' }) : alertsHrefForSignature(s.signature, { ...window, range: '24h' }),
 			});
 		});
 	}

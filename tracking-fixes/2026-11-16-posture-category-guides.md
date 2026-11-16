@@ -69,6 +69,6 @@ that tied the Encryption, DNS or Patch figures to devices.
 
 ## Next steps
 
-- The rule links use `/alerts/rule/<name>` from the dns-rules branch (`postureRuleHref` holds the path).
-  Until both merge, they 404.
+- Rule links use main's `ruleHref` (NET-303, #311) over the snapshot window; rules with no name open the
+  Alerts list for that row.
 - Follow-up issue for the five scoring limits.
