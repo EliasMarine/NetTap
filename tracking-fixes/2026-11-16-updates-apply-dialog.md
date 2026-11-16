@@ -20,9 +20,9 @@ that opened to a single sentence.
 | # | Root cause | Fix |
 |---|---|---|
 | 1 | The banner's `Review` button was always shown, and `openUpdatePanel` had no guard. Only `Update all` checked whether anything could be applied. Both G11 updates carry `applies_with`, so Review opened a picker with nothing to pick. | `Review` and `Update all` show only when an update can be applied. Otherwise the banner lists the updates as information: each update's versions, changelog line and how it arrives. A new `panelShown` value keeps the picker off screen whenever nothing on the list can be applied, whatever route led there. |
-| 2 | The updates NetTap can't apply got a `disabled` checkbox. `forms.css` has no disabled style for checkboxes, so it looked live and ignored clicks. | The picker lists only updates NetTap can apply, with working checkboxes. The rest sit below under "Can't be updated from here", with no checkbox. |
-| 3 | The OS row's `update_type` printed `unknown`. The "Changelog" accordion hid a one-sentence status, and its subtitle repeated `latest_version`. | The tag is hidden when the type is `unknown`. A one-line changelog (no line break, under 160 characters) shows inline. The accordion stays only for multi-line release notes (Malcolm's). |
-| 4 | A refresh while the picker was open could leave picks no longer listed, still counted and sent. While the start request was pending, the page fell back to the editable picker (Codex round 1). | The count and the request use only ticked updates still listed. A "Starting the update…" view replaces the picker until the start request answers. The progress list is built from `updateStatus.components`, which is what the daemon started. |
+| 2 | The updates NetTap can't apply got a `disabled` checkbox. `forms.css` had no disabled style for checkboxes, so it looked live and ignored clicks. | The picker lists only updates NetTap can apply, with working checkboxes. The rest sit below under "Can't be updated from here", with no checkbox. `forms.css` now dims a disabled checkbox or radio the way it dims other disabled controls (`opacity: 0.5`, `not-allowed`). |
+| 3 | The OS row's `update_type` printed `unknown`. The "Changelog" accordion hid a one-sentence status, and its subtitle repeated `latest_version`. | The tag is hidden when the type is `unknown`. A one-line changelog (no line break, under 160 characters) shows inline. The accordion stays only for multi-line release notes (Malcolm's, or a NetTap release's). The same rule applies in the banner and in the "Can't be updated from here" list. |
+| 4 | A refresh while the picker was open could leave picks no longer listed, still counted and sent. While the start request was pending, the page fell back to the editable picker (Codex round 1). | The count and the request use only ticked updates still listed. A "Starting the update…" view replaces the picker until the start request answers. The progress list is built from `updateStatus.components`, which is what the daemon started. When a refresh hides the picker, the page closes it and drops the picks, so a later refresh can't reopen it unasked. |
 
 The real checkboxes always worked (`checked=` with `onchange` assigning a new Set). A test now proves it.
 
@@ -30,11 +30,12 @@ The real checkboxes always worked (`checked=` with `onchange` assigning a new Se
 
 - `web/src/routes/system/updates/+page.svelte`
 - `web/src/routes/system/updates/updates-page.test.ts`
+- `web/src/lib/styles/forms.css` (the disabled rule)
 
 ## Test results
 
-- Updates page tests: 59 passed. Against the old page, 9 of the new and changed tests fail, so they test the fix.
-- Web full suite: 419 files, 5622 tests passed.
+- Updates page tests: 61 passed. Against the old page, 9 of the new and changed tests fail. The 2 tests added at the review gate fail against the first commit, so they test the fix.
+- Web full suite: 419 files, 5624 tests passed.
 - `svelte-check --threshold error`: 0 errors. The 2 warnings were already there, in the drawer components.
 - `check:colors`: clean.
 - `test:visual` was left to the lead. Its fixture has one update that can be applied, so the banner looks the same.
@@ -51,5 +52,5 @@ The real checkboxes always worked (`checked=` with `onchange` assigning a new Se
 
 - Deploy the web container to the G11 and open System › Software updates. With today's geoip-db and os updates, there
   should be no Review button and no picker, and the banner should list both updates with how each arrives.
-- `forms.css` still has no disabled style for checkboxes. No checkbox on this page is disabled any more. Check other pages
-  if a disabled checkbox turns up.
+- The `forms.css` disabled rule also applies to the disabled checkboxes and radios on other pages (Settings tabs, Setup, PCAP,
+  Connections, DHCP go-live). Those are now dimmed, so a visual baseline that shows one may need to be re-taken.

@@ -189,6 +189,10 @@
 	const selectedCount = $derived(pickedComponents.length);
 	// the picker never shows with nothing to pick (Review used to open it so, NET-311); a start, a run or a result always shows
 	const panelShown = $derived(showUpdatePanel && (updateInProgress || updateCompleted || applicableCount > 0));
+	// a refresh hid the picker: close it and drop the picks, so a later refresh can't reopen it unasked
+	$effect(() => {
+		if (showUpdatePanel && !panelShown) closeUpdatePanel();
+	});
 
 	// polling can stop before the daemon says the batch finished: that isn't "complete"
 	// a finished batch whose Malcolm update rolled back is "completed" too: its results decide
@@ -406,19 +410,28 @@
 		}
 	}
 
-	function openUpdatePanel(selectAll = true) {
+	// OLD CODE START — every caller passed selectAll = true, and applicableUpdates is that filter
+	// function openUpdatePanel(selectAll = true) {
+	// 	showUpdatePanel = true;
+	// 	updateInProgress = false;
+	// 	updateCompleted = false;
+	// 	updateStatus = null;
+	// 	if (selectAll) {
+	// 		// OLD CODE START — selected updates NetTap can't apply (applies_with)
+	// 		// selectedComponents = new Set(availableUpdates.map((u) => u.component));
+	// 		// OLD CODE END
+	// 		selectedComponents = new Set(
+	// 			availableUpdates.filter((u) => !u.applies_with).map((u) => u.component),
+	// 		);
+	// 	}
+	// }
+	// OLD CODE END
+	function openUpdatePanel() {
 		showUpdatePanel = true;
 		updateInProgress = false;
 		updateCompleted = false;
 		updateStatus = null;
-		if (selectAll) {
-			// OLD CODE START — selected updates NetTap can't apply (applies_with)
-			// selectedComponents = new Set(availableUpdates.map((u) => u.component));
-			// OLD CODE END
-			selectedComponents = new Set(
-				availableUpdates.filter((u) => !u.applies_with).map((u) => u.component),
-			);
-		}
+		selectedComponents = new Set(applicableUpdates.map((u) => u.component));
 	}
 
 	function openSingleUpdate(component: string) {
@@ -622,7 +635,7 @@
 		updateCompleted = false;
 		updateInProgress = true;
 		updateStatus = status;
-		selectedComponents = new Set(status.components);
+		// OLD CODE: selectedComponents = new Set(status.components); (the progress list reads updateStatus.components now)
 		// OLD CODE: await pollUpdateStatus();
 		await pollUpdateStatus(status.started_at);
 	}
@@ -734,8 +747,14 @@
 		{#each updates as update (update.component)}
 			<li>
 				<span class="pick-head"><b>{update.component}</b><span class="mono dim">{update.current_version} → {update.latest_version}</span></span>
-				{#if update.changelog}<span class="dim">{update.changelog}</span>{/if}
+				{#if update.changelog && changelogInline(update.changelog)}<span class="dim">{update.changelog}</span>{/if}
 				<span>{update.applies_with}</span>
+				<!-- a NetTap release's notes are multi-line markdown: the same accordion as the picker -->
+				{#if update.changelog && !changelogInline(update.changelog)}
+					<Collapsible title="Changelog" subtitle={update.latest_version}>
+						<pre class="changelog">{update.changelog}</pre>
+					</Collapsible>
+				{/if}
 			</li>
 		{/each}
 	</ul>
@@ -823,9 +842,9 @@
 				<!-- OLD CODE: Review sat outside this #if: with nothing applicable it opened "Apply updates" with nothing to pick (NET-311) -->
 				{#if applicableCount > 0}
 					<div class="actions">
-						<button class="btn" type="button" onclick={() => openUpdatePanel(true)}>Review</button>
+						<button class="btn" type="button" onclick={() => openUpdatePanel()}>Review</button>
 						<!-- was always shown: with nothing applicable it opened a panel with nothing to pick -->
-						<button class="btn primary" type="button" onclick={() => openUpdatePanel(true)}>Update all</button>
+						<button class="btn primary" type="button" onclick={() => openUpdatePanel()}>Update all</button>
 					</div>
 				{/if}
 			{/snippet}

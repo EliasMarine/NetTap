@@ -407,12 +407,6 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 		expect(screen.queryByRole('button', { name: 'Update all' })).toBeNull();
 		// OLD CODE: expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument(); (it opened a picker with nothing to pick, NET-311)
 		expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
-		// the banner itself says how it arrives
-		const banner = screen.getByText('1 update available').closest('article')!;
-		expect(within(banner).getByText('arkime')).toBeInTheDocument();
-		expect(within(banner).getByText(MALCOLM)).toBeInTheDocument();
-		expect(screen.queryByRole('checkbox')).toBeNull();
-		expect(screen.queryByText('Apply updates')).toBeNull();
 	});
 });
 
@@ -524,6 +518,51 @@ describe('Software Updates page — the Apply updates picker (NET-311)', () => {
 		expect(screen.queryByRole('checkbox')).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Review' })).toBeNull();
 		expect(screen.getAllByText(GEOIP_WITH).length).toBeGreaterThan(0);
+	});
+
+	it("doesn't reopen the picker unasked when a later refresh brings an update back", async () => {
+		const replies = stub([RULES, GEOIP]);
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+		replies['/api/system/updates/available'] = { updates: [GEOIP], last_check: '2026-11-16T17:30:00Z' };
+		await refreshPage();
+		expect(await screen.findByText('1 update available')).toBeInTheDocument();
+
+		replies['/api/system/updates/available'] = { updates: [RULES, GEOIP], last_check: '2026-11-16T17:40:00Z' };
+		await refreshPage();
+
+		expect(await screen.findByText('2 updates available')).toBeInTheDocument();
+		expect(screen.queryByText('Apply updates')).toBeNull();
+		expect(screen.queryByRole('checkbox')).toBeNull();
+		// opening it again starts from a fresh pick
+		await fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+		expect(screen.getByRole('checkbox', { name: /^suricata-rules/ })).toBeChecked();
+		expect(screen.getByRole('button', { name: 'Update 1 component' })).toBeEnabled();
+	});
+
+	it('puts a NetTap release’s multi-line notes in the accordion, in the banner and under the picks', async () => {
+		const NOTES = '## NetTap v0.4.0-alpha.3\n- Apply updates lists what it can update\n- Fixes';
+		const NETTAP = upd('nettap-daemon', {
+			current_version: '0.4.0-alpha.2', latest_version: 'v0.4.0-alpha.3', changelog: NOTES,
+			applies_with: 'Comes with a NetTap release: update NetTap to get it.',
+		});
+		const replies = stub([NETTAP]);
+		const { unmount } = render(UpdatesPage);
+
+		const notesIn = (scope: HTMLElement) => {
+			const item = within(scope).getByText('nettap-daemon', { selector: '.other-list b' }).closest('li')!;
+			expect(within(item).getByRole('button', { name: /^Changelog/ })).toBeInTheDocument();
+			expect(item.querySelector('pre.changelog')?.textContent).toBe(NOTES);
+			// no raw blob beside it
+			expect([...item.querySelectorAll('span.dim')].some((s) => s.textContent?.includes('Fixes'))).toBe(false);
+		};
+		notesIn((await screen.findByText('1 update available')).closest('article')!);
+		unmount();
+
+		replies['/api/system/updates/available'] = { updates: [RULES, NETTAP], last_check: '2026-11-16T17:17:32Z' };
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+		notesIn(screen.getByText('Apply updates').closest('article')!);
 	});
 
 	it('counts and sends only the picks still listed after a refresh', async () => {

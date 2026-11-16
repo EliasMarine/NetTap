@@ -52,7 +52,9 @@ input[type="checkbox"]:not(.switch), input[type="radio"] { width: 16px; height: 
 .switch:checked::after { transform: translateX(16px); background: var(--on-accent); }
 .switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
+/* checkbox and radio too: without them a disabled one looked live (NET-311) */
 .input:disabled, .select:disabled, .textarea:disabled, .switch:disabled,
+input[type="checkbox"]:disabled, input[type="radio"]:disabled,
 .btn:disabled, .icon-btn:disabled, .pill:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Notices: inline feedback for an action or a status (Setup, Go Live, bridge, analysis).
