@@ -129,7 +129,7 @@ describe('Failed lookups page', () => {
 
 	it("says when the page's window doesn't meet the check's rule", async () => {
 		goTo();
-		stubDaemon({ ...FAILED_LOOKUPS, lookups: 40, failed: 30, timeline: [] });
+		stubDaemon({ ...FAILED_LOOKUPS, lookups: 40, failed: 30, timeline: [], meets_rule: false });
 		render(Page);
 		await vi.waitFor(() => expect(card('Why NetTap lists this device')).toHaveTextContent("In this window that isn't met, so the check wouldn't list this device for it."));
 	});

@@ -115,8 +115,7 @@ export interface DomainAsker {
  */
 export interface DomainFinding {
 	name: string;
-	/** The DNS figures count every device, excluded ones too, as the check does. */
-	excluded_counted: boolean;
+	// OLD CODE: excluded_counted: boolean; (always true and never read: finding mode always counts excluded devices)
 	dga: { label: string; length: number; entropy: number; threshold: number; min_length: number } | null;
 	tunnel: { subdomain: string; length: number; labels: string[]; threshold: number } | null;
 }
@@ -222,7 +221,7 @@ const isThreatIntel = (v: unknown) => v === null || (isObject(v) && isBoolean(v.
 const isFinding = (v: unknown, asked: string | undefined) =>
 	asked === undefined
 		? v === undefined
-		: isObject(v) && isString(v.name) && isBoolean(v.excluded_counted) && isNullable(v.dga, isObject) && isNullable(v.tunnel, isObject);
+		: isObject(v) && isString(v.name) && isNullable(v.dga, isObject) && isNullable(v.tunnel, isObject);
 
 /** A bucket for a chart's slots (NET-249), when the caller asks for one: `&interval=…`, else nothing. */
 const intervalQuery = (interval?: string) => (interval ? `&${new URLSearchParams({ interval }).toString()}` : '');

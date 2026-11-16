@@ -3,12 +3,10 @@
  * Text only: every number comes from the reply, and the scan's rule stays in the daemon. Context
  * (a network owner, a name) is described as context; nothing here tells the user a pair is cleared.
  */
-import type { ThreatIntel } from '$lib/api/drilldown';
 import type { BeaconPair } from '$lib/api/threats';
 import { fmt } from './drilldown';
 
-/** Fewer calls or occupied slots than this and the scan doesn't judge a schedule (BEACONING_MIN_CONNECTIONS). */
-const MIN_CALLS = 10;
+// OLD CODE: const MIN_CALLS = 10; (the reply's timing.min_calls is the scan's own threshold)
 
 /** The drill-down page for one pair, opening on `range`. */
 export function beaconHref(device: string, server: string, port: number, range: string): string {
@@ -25,7 +23,8 @@ export function intervalWords(seconds: number): string {
 	return `${Math.round((seconds / 3600) * 10) / 10} hours`;
 }
 
-const pct = (ratio: number) => `${(ratio * 100).toFixed(1)}%`;
+/** "2.6%": a ratio as the page shows jitter. */
+export const pct = (ratio: number): string => `${(ratio * 100).toFixed(1)}%`;
 const times = (n: number) => `${fmt(n)} ${n === 1 ? 'time' : 'times'}`;
 const listed = (names: readonly string[]) =>
 	names.length <= 2 ? names.join(' and ') : `${names.slice(0, 2).join(', ')} and ${fmt(names.length - 2)} more`;
@@ -42,33 +41,7 @@ export function serviceWords(pair: Pick<BeaconPair, 'port' | 'transports' | 'ser
 	return `connections to port ${pair.port}${service ? ` (${service.toUpperCase()})` : ''}`;
 }
 
-export interface BlocklistWords {
-	tone: 'bad' | 'ok' | 'unknown';
-	chip: string;
-	note: string;
-}
-
-/** The address page's four blocklist states (address/[ip]/+page.svelte), in the same words. */
-export function blocklistWords(ti: ThreatIntel | null): BlocklistWords {
-	if (ti === null) return { tone: 'unknown', chip: 'Not checked', note: "This window's alerts couldn't all be checked" };
-	if (ti.matched) {
-		const note =
-			ti.in_window === true
-				? 'A Suricata blocklist rule named it in this window'
-				: ti.in_window === false
-					? "Named on an earlier Threats scan; NetTap doesn't keep the date"
-					: ti.in_window === null
-						? "Named on an earlier Threats scan; this window's alerts couldn't all be checked"
-						: '';
-		return { tone: 'bad', chip: `On a threat list: ${ti.feeds.map((f) => f.label).join(', ')}`, note };
-	}
-	const n = ti.indicators;
-	return {
-		tone: 'ok',
-		chip: 'Not on a threat list',
-		note: n > 0 ? `Checked this window's alerts and ${fmt(n)} cached ${n === 1 ? 'indicator' : 'indicators'}` : "Checked this window's alerts",
-	};
-}
+// OLD CODE: BlocklistWords and blocklistWords lived here; moved to utils/drilldown.ts so the address page renders the same words
 
 export interface BeaconContext {
 	/** The window in words: "last 24 hours". */
@@ -87,16 +60,18 @@ const named = (pair: BeaconPair) => [...new Set([...pair.dns_names.map((n) => n.
 function timingLine(pair: BeaconPair, ctx: BeaconContext): string {
 	const t = pair.timing;
 	const lead = `${who(pair, ctx)} contacted ${hostPort(pair.server, pair.port)}`;
-	if (t.status === 'periodic' && t.beacon) {
-		return `${lead} about every ${intervalWords(t.beacon.interval_seconds)}, ${times(pair.connections)} in the ${ctx.words}; the gaps between calls typically varied by only ${pct(t.beacon.jitter_coefficient)}.`;
+	// OLD CODE: if (t.status === 'periodic' && t.beacon) { … t.beacon.interval_seconds … t.beacon.jitter_coefficient … } (the same figures as mean_gap_seconds and jitter)
+	if (t.status === 'periodic' && t.mean_gap_seconds !== null && t.jitter !== null) {
+		return `${lead} about every ${intervalWords(t.mean_gap_seconds)}, ${times(pair.connections)} in the ${ctx.words}; the gaps between calls typically varied by only ${pct(t.jitter)}.`;
 	}
 	if (t.status === 'irregular' && t.mean_gap_seconds !== null && t.jitter !== null) {
-		return `${lead} ${times(pair.connections)} in the ${ctx.words}, on average every ${intervalWords(t.mean_gap_seconds)}, but the gaps varied by ${pct(t.jitter)}. That's too uneven for NetTap's check, which lists pairs whose gaps vary by less than 15%, so it wouldn't list this pair for this window.`;
+		return `${lead} ${times(pair.connections)} in the ${ctx.words}, on average every ${intervalWords(t.mean_gap_seconds)}, but the gaps varied by ${pct(t.jitter)}. That's too uneven for NetTap's check, which lists pairs whose gaps vary by less than ${Math.round(t.max_jitter * 100)}%, so it wouldn't list this pair for this window.`;
 	}
 	if (t.status === 'too_few') {
-		return pair.connections < MIN_CALLS
-			? `${lead} ${times(pair.connections)} in the ${ctx.words}; NetTap needs at least ${MIN_CALLS} calls to judge a schedule.`
-			: `${lead} ${times(pair.connections)} in the ${ctx.words}, but the calls fell in only ${fmt(t.slots)} distinct 10-second intervals; NetTap needs ${MIN_CALLS} occupied intervals to judge the timing.`;
+		// which of the two quantities fell short, named with the scan's own threshold
+		return pair.connections < t.min_calls
+			? `${lead} ${times(pair.connections)} in the ${ctx.words}; NetTap needs at least ${t.min_calls} calls to judge a schedule.`
+			: `${lead} ${times(pair.connections)} in the ${ctx.words}, but the calls fell in only ${fmt(t.slots)} distinct 10-second intervals; NetTap needs ${t.min_calls} occupied intervals to judge the timing.`;
 	}
 	return `${lead} ${times(pair.connections)} in the ${ctx.words}: too many calls to time them all at once, so this page can't say whether they keep a schedule. Choose a shorter range.`;
 }

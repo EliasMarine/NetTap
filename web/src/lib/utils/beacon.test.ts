@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BeaconPair, BeaconTiming } from '$lib/api/threats';
-import { beaconHref, beaconStory, beaconTodo, blocklistWords, CONFIDENCE_HOW, hostPort, intervalWords, serviceWords, type BeaconContext } from './beacon';
+import { beaconHref, beaconStory, beaconTodo, CONFIDENCE_HOW, hostPort, intervalWords, pct, serviceWords, type BeaconContext } from './beacon';
 
 const UNLISTED = { matched: false, feeds: [], indicators: 0, in_window: false };
 const LISTED = { matched: true, feeds: [{ feed: 'et_compromised', label: 'Suricata blocklist rules', indicator: '203.0.113.9', type: 'ip' }], indicators: 3, in_window: true };
@@ -20,7 +20,7 @@ function pair(timing: Partial<BeaconTiming>, over: Partial<BeaconPair> = {}): Be
 		timeline: [],
 		transports: [{ name: 'tcp', connections: 1453 }],
 		services: [{ name: 'ssl', connections: 1453 }],
-		timing: { status: 'periodic', slots: 1453, mean_gap_seconds: 60, jitter: 0.026, beacon: { interval_seconds: 60, jitter_coefficient: 0.026, confidence: 100 }, gaps: [], ...timing },
+		timing: { status: 'periodic', slots: 1453, mean_gap_seconds: 60, jitter: 0.026, confidence: 100, min_calls: 10, max_jitter: 0.15, gaps: [], ...timing },
 		tls_names: [{ name: 'www.google.com', sessions: 4 }],
 		tls_complete: true,
 		dns_names: [{ name: 'www.google.com', lookups: 2 }],
@@ -62,15 +62,11 @@ describe('serviceWords', () => {
 	});
 });
 
-describe('blocklistWords', () => {
-	it("mirrors the address page's four states", () => {
-		expect(blocklistWords(null)).toEqual({ tone: 'unknown', chip: 'Not checked', note: "This window's alerts couldn't all be checked" });
-		expect(blocklistWords(LISTED).note).toBe('A Suricata blocklist rule named it in this window');
-		expect(blocklistWords({ ...LISTED, in_window: false }).note).toMatch(/doesn't keep the date/);
-		expect(blocklistWords({ ...LISTED, in_window: null }).note).toMatch(/couldn't all be checked/);
-		expect(blocklistWords(LISTED).chip).toBe('On a threat list: Suricata blocklist rules');
-		expect(blocklistWords(UNLISTED).note).toBe("Checked this window's alerts");
-		expect(blocklistWords({ ...UNLISTED, indicators: 1 }).note).toBe("Checked this window's alerts and 1 cached indicator");
+// OLD CODE: describe('blocklistWords', …) moved to utils/drilldown.test.ts with the function
+
+describe('pct', () => {
+	it('shows a ratio to one decimal place', () => {
+		expect(pct(0.026)).toBe('2.6%');
 	});
 });
 
@@ -84,23 +80,25 @@ describe('beaconStory', () => {
 	});
 
 	it('names the calls that fell short when there are too few', () => {
-		const few = beaconStory(pair({ status: 'too_few', slots: 9, beacon: null }, { connections: 9 }), CTX)[0];
+		const few = beaconStory(pair({ status: 'too_few', slots: 9, confidence: null }, { connections: 9 }), CTX)[0];
 		expect(few).toMatch(/9 times in the last 24 hours; NetTap needs at least 10 calls/);
+		// the threshold is the scan's, from the reply
+		expect(beaconStory(pair({ status: 'too_few', slots: 9, confidence: null, min_calls: 12 }, { connections: 11 }), CTX)[0]).toMatch(/needs at least 12 calls/);
 	});
 
 	it('names the occupied intervals that fell short when the calls bunch up', () => {
-		const bunched = beaconStory(pair({ status: 'too_few', slots: 9, beacon: null }, { connections: 100 }), CTX)[0];
+		const bunched = beaconStory(pair({ status: 'too_few', slots: 9, confidence: null }, { connections: 100 }), CTX)[0];
 		expect(bunched).toMatch(/100 times .* only 9 distinct 10-second intervals; NetTap needs 10 occupied intervals/);
 	});
 
 	it('says an irregular pair would not be listed, with its jitter', () => {
-		const line = beaconStory(pair({ status: 'irregular', mean_gap_seconds: 169.1, jitter: 0.8, beacon: null }, { connections: 12 }), CTX)[0];
+		const line = beaconStory(pair({ status: 'irregular', mean_gap_seconds: 169.1, jitter: 0.8, confidence: null }, { connections: 12 }), CTX)[0];
 		expect(line).toMatch(/on average every 3 minutes/);
-		expect(line).toMatch(/varied by 80\.0%.*wouldn't list this pair/);
+		expect(line).toMatch(/varied by 80\.0%.*less than 15%.*wouldn't list this pair/);
 	});
 
 	it('claims no schedule when capped', () => {
-		const line = beaconStory(pair({ status: 'capped', beacon: null, mean_gap_seconds: null, jitter: null }), CTX)[0];
+		const line = beaconStory(pair({ status: 'capped', confidence: null, mean_gap_seconds: null, jitter: null }), CTX)[0];
 		expect(line).toMatch(/can't say whether they keep a schedule/);
 	});
 
@@ -129,7 +127,7 @@ describe('beaconTodo', () => {
 	});
 
 	it('adds the next step for an unchecked list, a capped read and a nameless pair', () => {
-		const todo = beaconTodo(pair({ status: 'capped', beacon: null }, { threat_intel: null, tls_names: [], dns_names: [] }), CTX).join(' ');
+		const todo = beaconTodo(pair({ status: 'capped', confidence: null }, { threat_intel: null, tls_names: [], dns_names: [] }), CTX).join(' ');
 		expect(todo).toMatch(/blocklist alerts can all be read/);
 		expect(todo).toMatch(/calls can be timed/);
 		expect(todo).toMatch(/other connections/);

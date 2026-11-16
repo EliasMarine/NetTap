@@ -325,8 +325,13 @@ export interface BeaconTiming {
 	mean_gap_seconds: number | null;
 	/** Standard deviation of the gaps over their mean; null below 3 slots or when capped. */
 	jitter: number | null;
-	/** The scan's own finding, present only for `periodic`. */
-	beacon: { interval_seconds: number; jitter_coefficient: number; confidence: number } | null;
+	// OLD CODE: beacon: { interval_seconds; jitter_coefficient; confidence } | null; (the first two are mean_gap_seconds and jitter)
+	/** The scan's confidence (0-100), present only for `periodic`. */
+	confidence: number | null;
+	/** The scan's thresholds: fewer calls or occupied slots than this are too few to judge. */
+	min_calls: number;
+	/** Gaps varying by this share of their mean or more are irregular. */
+	max_jitter: number;
 	/** The most common gaps, to the nearest 10 seconds. */
 	gaps: { seconds: number; count: number }[];
 }
@@ -378,6 +383,10 @@ export interface FailedLookups {
 	/** Over every name read, not only those listed. */
 	kinds: { kind: FailedNameKind; names: number; lookups: number }[];
 	generated_names: number;
+	/** Whether this window meets the NXDOMAIN check's rule (`rule`), which can differ from the scan's window. */
+	meets_rule: boolean;
+	/** More than `min_share` of more than `min_lookups` lookups failed. */
+	rule: { min_lookups: number; min_share: number };
 }
 
 const TIMING_STATUSES: readonly string[] = ['periodic', 'irregular', 'too_few', 'capped'] satisfies BeaconTimingStatus[];
@@ -405,7 +414,8 @@ export async function getBeaconPair(
 		TIMING_STATUSES.includes(String(timing.status)) &&
 		isNumber(timing.slots) &&
 		[timing.mean_gap_seconds, timing.jitter].every(isNullableNumber) &&
-		(timing.beacon === null || isObject(timing.beacon)) &&
+		isNullableNumber(timing.confidence) &&
+		[timing.min_calls, timing.max_jitter].every(isNumber) &&
 		Array.isArray(timing.gaps) &&
 		(body.threat_intel === null || (isObject(body.threat_intel) && isBoolean(body.threat_intel.matched) && Array.isArray(body.threat_intel.feeds)));
 	if (!ok) throw new Error('Beaconing pair failed: the reply was malformed');
@@ -420,7 +430,9 @@ export async function getFailedLookups(ip: string, from: string, to: string, int
 		isObject(body) &&
 		[body.ip, body.from, body.to].every(isString) &&
 		[body.lookups, body.failed, body.failed_names_read, body.generated_names].every(isNumber) &&
-		[body.excluded, body.failed_names_complete].every(isBoolean) &&
+		[body.excluded, body.failed_names_complete, body.meets_rule].every(isBoolean) &&
+		isObject(body.rule) &&
+		[body.rule.min_lookups, body.rule.min_share].every(isNumber) &&
 		[body.timeline, body.rcodes, body.failed_names, body.kinds].every(Array.isArray) &&
 		(body.failed_names as unknown[]).every((r) => isObject(r) && isString(r.name) && isNumber(r.lookups) && isString(r.kind));
 	if (!ok) throw new Error('Failed lookups failed: the reply was malformed');

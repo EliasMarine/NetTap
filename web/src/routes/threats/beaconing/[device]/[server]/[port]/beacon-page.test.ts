@@ -128,7 +128,7 @@ describe('Beaconing pair page', () => {
 
 	it('says when the device is excluded in Settings and when the calls are too many to time', async () => {
 		goTo();
-		stubDaemon({ ...BEACON_PAIR, device_excluded: true, timing: { ...BEACON_PAIR.timing, status: 'capped', beacon: null, mean_gap_seconds: null, jitter: null, gaps: [] } });
+		stubDaemon({ ...BEACON_PAIR, device_excluded: true, timing: { ...BEACON_PAIR.timing, status: 'capped', confidence: null, mean_gap_seconds: null, jitter: null, gaps: [] } });
 		render(Page);
 		await vi.waitFor(() => expect(screen.getByText(/This device is excluded in Settings/)).toBeInTheDocument());
 		expect(within(card('Gaps between calls')).getByText('Too many calls to time')).toBeInTheDocument();

@@ -15,7 +15,7 @@
 	import { bucketWords } from '$lib/utils/narrow-page';
 	import { namesByIp } from '$lib/utils/device-names';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { failedTodo, failedWhy, findingHref, KIND_WORDS } from '$lib/utils/dns-anomaly';
+	import { failedTodo, failedWhy, findingHref, KIND_WORDS, ruleWords } from '$lib/utils/dns-anomaly';
 	import BarList from '$lib/components/ui/BarList.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -157,7 +157,7 @@
 	{/if}
 	<KpiCard class="c-3" label="Lookups" icon="dns" value={data ? fmt(data.lookups) : '—'} sub={data ? `in the ${words}` : undefined} />
 	<KpiCard class="c-3" label="Failed" icon="warn" value={data ? fmt(data.failed) : '—'} sub={data ? '“no such name”' : undefined} />
-	<KpiCard class="c-3" label="Share failed" icon="bandwidth" value={data ? share(data.failed, data.lookups) : '—'} sub={data ? 'listed above 40%' : undefined} />
+	<KpiCard class="c-3" label="Share failed" icon="bandwidth" value={data ? share(data.failed, data.lookups) : '—'} sub={data ? `listed above ${Math.round(data.rule.min_share * 100)}%` : undefined} />
 	<KpiCard
 		class="c-3"
 		label="Names that failed"
@@ -204,7 +204,7 @@
 		{#if !data}
 			{@render lookupState('the explanation')}
 		{:else if data.lookups === 0}
-			<CardState state="empty" icon="dns" title="No lookups from {ip} in the {words}" message="NetTap lists a device when more than 40% of more than 50 lookups fail. Try a longer range." />
+			<CardState state="empty" icon="dns" title="No lookups from {ip} in the {words}" message="{ruleWords(data.rule)} Try a longer range." />
 		{:else}
 			<div class="story">
 				{#each why as line, i (i)}<p>{line}</p>{/each}

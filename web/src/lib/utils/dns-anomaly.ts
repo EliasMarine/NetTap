@@ -117,15 +117,18 @@ function namesLine(f: FailedLookups): string[] {
 	];
 }
 
-/** The NXDOMAIN check's rule (threat_detection.py analyze_dns_anomalies): more than 40% of more than 50 lookups failed. */
-const meetsRule = (f: FailedLookups) => f.lookups > 50 && f.failed / f.lookups > 0.4;
+// OLD CODE: const meetsRule = (f) => f.lookups > 50 && f.failed / f.lookups > 0.4; (the daemon's meets_rule, from the detector's own rule)
+
+/** The NXDOMAIN check's rule in words, with the daemon's thresholds. */
+export const ruleWords = (rule: FailedLookups['rule']): string =>
+	`NetTap lists a device when more than ${Math.round(rule.min_share * 100)}% of more than ${fmt(rule.min_lookups)} lookups fail.`;
 
 /** Why the NXDOMAIN check listed the device, stating only what was measured. */
 export function failedWhy(f: FailedLookups, who: string, words: string): string[] {
 	return [
-		`${who} made ${lookupsWord(f.lookups)} in the ${words}; ${fmt(f.failed)} of them${f.lookups > 0 ? ` (${pct(f.failed, f.lookups)})` : ''} came back as “no such name” (NXDOMAIN). NetTap lists a device when more than 40% of more than 50 lookups fail.`,
+		`${who} made ${lookupsWord(f.lookups)} in the ${words}; ${fmt(f.failed)} of them${f.lookups > 0 ? ` (${pct(f.failed, f.lookups)})` : ''} came back as “no such name” (NXDOMAIN). ${ruleWords(f.rule)}`,
 		// the page's window can differ from the Threats scan that listed it
-		...(meetsRule(f) ? [] : ["In this window that isn't met, so the check wouldn't list this device for it."]),
+		...(f.meets_rule ? [] : ["In this window that isn't met, so the check wouldn't list this device for it."]),
 		...namesLine(f),
 	];
 }

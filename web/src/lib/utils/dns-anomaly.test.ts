@@ -43,6 +43,8 @@ function failures(over: Partial<FailedLookups> = {}): FailedLookups {
 		failed_names_complete: true,
 		kinds: [{ kind: 'service_discovery', names: 1, lookups: 364 }],
 		generated_names: 0,
+		meets_rule: true,
+		rule: { min_lookups: 50, min_share: 0.4 },
 		...over,
 	};
 }
@@ -108,11 +110,11 @@ describe('tunnelWhy', () => {
 
 describe('findingTodo', () => {
 	it('adds the tunnelling check for a tunnel finding and the malware check for a DGA one', () => {
-		const tunnel = findingTodo({ name: TUNNEL_NAME, excluded_counted: true, dga: null, tunnel: TUNNEL }, TUNNEL_NAME);
+		const tunnel = findingTodo({ name: TUNNEL_NAME, dga: null, tunnel: TUNNEL }, TUNNEL_NAME);
 		expect(tunnel[0]).toMatch(/Check the devices listed below/);
 		expect(tunnel.join(' ')).toMatch(/other lookups under dc-telemetry\.net/);
 		expect(tunnel.join(' ')).not.toMatch(/malware/);
-		const dga = findingTodo({ name: 'x', excluded_counted: true, dga: DGA, tunnel: null }, 'x');
+		const dga = findingTodo({ name: 'x', dga: DGA, tunnel: null }, 'x');
 		expect(dga.join(' ')).toMatch(/check that device for malware/);
 	});
 });
@@ -129,10 +131,14 @@ describe('failedWhy', () => {
 	it("says when this window doesn't meet the rule the Threats scan listed it by", () => {
 		const NOT_MET = "In this window that isn't met, so the check wouldn't list this device for it.";
 		expect(failedWhy(failures(), 'x', 'w')).not.toContain(NOT_MET);
-		// too few lookups, and too small a share
-		expect(failedWhy(failures({ lookups: 50, failed: 40 }), 'x', 'w')[1]).toBe(NOT_MET);
-		expect(failedWhy(failures({ lookups: 827, failed: 300 }), 'x', 'w')[1]).toBe(NOT_MET);
-		expect(failedWhy(failures({ lookups: 0, failed: 0 }), 'x', 'w')[1]).toBe(NOT_MET);
+		// OLD CODE START — the page computed the rule; it reads the daemon's meets_rule now
+		// expect(failedWhy(failures({ lookups: 50, failed: 40 }), 'x', 'w')[1]).toBe(NOT_MET);
+		// expect(failedWhy(failures({ lookups: 827, failed: 300 }), 'x', 'w')[1]).toBe(NOT_MET);
+		// expect(failedWhy(failures({ lookups: 0, failed: 0 }), 'x', 'w')[1]).toBe(NOT_MET);
+		// OLD CODE END
+		expect(failedWhy(failures({ lookups: 50, failed: 40, meets_rule: false }), 'x', 'w')[1]).toBe(NOT_MET);
+		// the rule's numbers are the daemon's
+		expect(failedWhy(failures({ rule: { min_lookups: 100, min_share: 0.5 } }), 'x', 'w')[0]).toMatch(/more than 50% of more than 100 lookups fail\.$/);
 	});
 
 	it('makes no claim about every name when the read was capped', () => {

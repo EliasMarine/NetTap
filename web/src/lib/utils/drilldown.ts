@@ -2,7 +2,8 @@
  * Shared wording for the address and domain pages (NET-160): their windows, and figures that
  * say when they are partial or not measured instead of showing a number the data can't back.
  */
-import type { ByteTotal } from '$lib/api/drilldown';
+// OLD CODE: import type { ByteTotal } from '$lib/api/drilldown'; (blocklistWords)
+import type { ByteTotal, ThreatIntel } from '$lib/api/drilldown';
 import type { SmartAlertKey } from '$lib/api/alerts';
 import { formatBytes, formatCompactNumber } from '$lib/api/logs';
 import type { BandwidthPoint, ProtocolEntry, ProtocolsResponse } from '$lib/api/traffic';
@@ -115,6 +116,36 @@ export function rangeWindow(hours: number, now: Date = new Date()): { from: stri
 }
 
 export const fmt = (n: number): string => n.toLocaleString('en-GB');
+
+export interface BlocklistWords {
+	tone: 'bad' | 'ok' | 'unknown';
+	chip: string;
+	/** '' when an older daemon doesn't say when it was listed. */
+	note: string;
+}
+
+/** An address's blocklist state in words (NET-228), shared by the address page and the beaconing pair page. */
+export function blocklistWords(ti: ThreatIntel | null): BlocklistWords {
+	// only when nothing matched and some of the window's alerts couldn't be read
+	if (ti === null) return { tone: 'unknown', chip: 'Not checked', note: "This window's alerts couldn't all be checked" };
+	if (ti.matched) {
+		const note =
+			ti.in_window === true
+				? 'A Suricata blocklist rule named it in this window'
+				: ti.in_window === false
+					? "Named on an earlier Threats scan; NetTap doesn't keep the date"
+					: ti.in_window === null
+						? "Named on an earlier Threats scan; this window's alerts couldn't all be checked"
+						: '';
+		return { tone: 'bad', chip: `On a threat list: ${ti.feeds.map((f) => f.label).join(', ')}`, note };
+	}
+	const n = ti.indicators;
+	return {
+		tone: 'ok',
+		chip: 'Not on a threat list',
+		note: n > 0 ? `Checked this window's alerts and ${fmt(n)} cached ${n === 1 ? 'indicator' : 'indicators'}` : "Checked this window's alerts",
+	};
+}
 /** Where one daemon scan stops (mirrors daemon/storage/all_buckets.py MAX_BUCKETS); a capped detection says so (NET-238). */
 export const SCAN_CAP = 500_000;
 

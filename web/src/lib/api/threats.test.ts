@@ -87,12 +87,18 @@ describe('drill-down clients', () => {
 			{ ...BEACON_PAIR, timing: { ...BEACON_PAIR.timing, status: 'maybe' } },
 			{ ...BEACON_PAIR, threat_intel: undefined },
 			{ ...BEACON_PAIR, port: '8080' },
+			// the scan's thresholds are what the words name, so a reply without them is malformed
+			{ ...BEACON_PAIR, timing: { ...BEACON_PAIR.timing, min_calls: undefined } },
 		]) {
 			vi.stubGlobal('fetch', vi.fn(async () => reply(200, bad)));
 			await expect(getBeaconPair('x', 'y', 1, 'a', 'b')).rejects.toThrow('malformed');
 		}
 		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...FAILED_LOOKUPS, failed_names: [{ name: 'x' }] })));
 		await expect(getFailedLookups('x', 'a', 'b')).rejects.toThrow('malformed');
+		for (const bad of [{ ...FAILED_LOOKUPS, meets_rule: undefined }, { ...FAILED_LOOKUPS, rule: { min_lookups: 50 } }]) {
+			vi.stubGlobal('fetch', vi.fn(async () => reply(200, bad)));
+			await expect(getFailedLookups('x', 'a', 'b')).rejects.toThrow('malformed');
+		}
 		vi.stubGlobal('fetch', vi.fn(async () => reply(400, { error: 'Invalid IP address: x' })));
 		await expect(getFailedLookups('x', 'a', 'b')).rejects.toThrow('Invalid IP address: x');
 	});

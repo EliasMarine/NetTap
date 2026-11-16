@@ -13,11 +13,12 @@
 	import { getRegistryDevices } from '$lib/api/devices-registry';
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { ipHref } from '$lib/stores/lan';
-	import { chartTime, DRILL_RANGES, fmt, formatWhen, logsHrefForQuery, rangeWindow, startRange, type DrillRange } from '$lib/utils/drilldown';
+	import { blocklistWords, chartTime, DRILL_RANGES, fmt, formatWhen, logsHrefForQuery, rangeWindow, startRange, type DrillRange } from '$lib/utils/drilldown';
 	import { bucketWords } from '$lib/utils/narrow-page';
 	import { namesByIp } from '$lib/utils/device-names';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { beaconStory, beaconTodo, blocklistWords, CONFIDENCE_HOW, hostPort, intervalWords, type BeaconContext } from '$lib/utils/beacon';
+	// OLD CODE: import { beaconStory, beaconTodo, blocklistWords, CONFIDENCE_HOW, hostPort, intervalWords, type BeaconContext } from '$lib/utils/beacon'; (blocklistWords moved; pct shared)
+	import { beaconStory, beaconTodo, CONFIDENCE_HOW, hostPort, intervalWords, pct, type BeaconContext } from '$lib/utils/beacon';
 	import IPAddress from '$components/IPAddress.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -97,11 +98,18 @@
 	// --- Figures ---
 
 	const timing = $derived(data?.timing ?? null);
-	const beacon = $derived(timing?.beacon ?? null);
-	const pct = (ratio: number) => `${(ratio * 100).toFixed(1)}%`;
-	const intervalValue = $derived(beacon ? intervalWords(beacon.interval_seconds) : timing?.mean_gap_seconds != null ? `~${intervalWords(timing.mean_gap_seconds)}` : '—');
+	// OLD CODE START — the reply's beacon object repeated mean_gap_seconds and jitter; it carries confidence alone now
+	// const beacon = $derived(timing?.beacon ?? null);
+	// const pct = (ratio: number) => `${(ratio * 100).toFixed(1)}%`;
+	// const intervalValue = $derived(beacon ? intervalWords(beacon.interval_seconds) : timing?.mean_gap_seconds != null ? `~${intervalWords(timing.mean_gap_seconds)}` : '—');
+	// const jitter = $derived(beacon ? beacon.jitter_coefficient : (timing?.jitter ?? null));
+	// OLD CODE END
+	const confidence = $derived(timing?.confidence ?? null);
+	const meanGap = $derived(timing?.mean_gap_seconds ?? null);
+	// a steady schedule's interval; otherwise only an average
+	const intervalValue = $derived(meanGap === null ? '—' : timing?.status === 'periodic' ? intervalWords(meanGap) : `~${intervalWords(meanGap)}`);
 	const intervalSub = $derived(!timing ? undefined : timing.status === 'periodic' ? 'between calls' : `average gap · ${STATUS_WORDS[timing.status]}`);
-	const jitter = $derived(beacon ? beacon.jitter_coefficient : (timing?.jitter ?? null));
+	const jitter = $derived(timing?.jitter ?? null);
 	const owner = $derived(geo?.organization ? `${geo.organization}${geo.asn ? ` (AS${geo.asn})` : ''}` : null);
 	const ctx = $derived<BeaconContext>({ words, deviceName, owner, anycast: geo?.anycast ?? false });
 	const story = $derived(data ? beaconStory(data, ctx) : []);
@@ -159,7 +167,8 @@
 	{/if}
 	<KpiCard class="c-3" label="Interval" icon="changelog" value={intervalValue} sub={intervalSub} />
 	<KpiCard class="c-3" label="Jitter" icon="bandwidth" value={jitter === null ? '—' : pct(jitter)} sub={data ? 'how much the gaps vary' : undefined} />
-	<KpiCard class="c-3" label="Confidence" icon="threats" value={beacon ? String(Math.round(beacon.confidence)) : '—'} unit={beacon ? '/ 100' : undefined} sub={data && !beacon ? 'only for a steady schedule' : undefined}>
+	<!-- OLD CODE: value={beacon ? String(Math.round(beacon.confidence)) : '—'} unit={beacon ? '/ 100' : undefined} sub={data && !beacon ? … } (timing.confidence) -->
+	<KpiCard class="c-3" label="Confidence" icon="threats" value={confidence === null ? '—' : String(Math.round(confidence))} unit={confidence === null ? undefined : '/ 100'} sub={data && confidence === null ? 'only for a steady schedule' : undefined}>
 		{#snippet foot()}
 			<details class="how">
 				<summary>How it's scored</summary>
@@ -207,7 +216,7 @@
 		{#if !data}
 			{@render pairState('the explanation')}
 		{:else if data.connections === 0}
-			<CardState state="empty" icon="connections" title={emptyTitle} message="NetTap needs at least 10 calls to judge a schedule. Try a longer range." />
+			<CardState state="empty" icon="connections" title={emptyTitle} message="NetTap needs at least {data.timing.min_calls} calls to judge a schedule. Try a longer range." />
 		{:else}
 			<div class="story">
 				{#each story as line, i (i)}<p>{line}</p>{/each}

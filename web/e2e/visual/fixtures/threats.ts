@@ -156,7 +156,9 @@ export const BEACON_PAIR = {
 		slots: 142,
 		mean_gap_seconds: 300.4,
 		jitter: 0.04,
-		beacon: { interval_seconds: 300.4, jitter_coefficient: 0.04, confidence: 100 },
+		confidence: 100,
+		min_calls: 10,
+		max_jitter: 0.15,
 		gaps: [
 			{ seconds: 300, count: 131 },
 			{ seconds: 290, count: 6 },
@@ -178,7 +180,7 @@ export const BEACON_PAIR_EMPTY = {
 	timeline: [],
 	transports: [],
 	services: [],
-	timing: { status: 'too_few', slots: 0, mean_gap_seconds: null, jitter: null, beacon: null, gaps: [] },
+	timing: { status: 'too_few', slots: 0, mean_gap_seconds: null, jitter: null, confidence: null, min_calls: 10, max_jitter: 0.15, gaps: [] },
 	dns_names: [],
 	threat_intel: { matched: false, feeds: [], indicators: 0, in_window: false },
 } satisfies BeaconPair;
@@ -214,6 +216,8 @@ export const FAILED_LOOKUPS = {
 		{ kind: 'generated', names: 1, lookups: 20 },
 	],
 	generated_names: 1,
+	meets_rule: true,
+	rule: { min_lookups: 50, min_share: 0.4 },
 } satisfies FailedLookups;
 
 export const FAILED_LOOKUPS_EMPTY = {
@@ -226,6 +230,7 @@ export const FAILED_LOOKUPS_EMPTY = {
 	failed_names_read: 0,
 	kinds: [],
 	generated_names: 0,
+	meets_rule: false,
 } satisfies FailedLookups;
 
 const DGA_NAME = REPORT.dns_anomalies.dga_suspects[0].domain;
@@ -249,7 +254,6 @@ export const DOMAIN_FINDING = {
 	},
 	finding: {
 		name: DGA_NAME,
-		excluded_counted: true,
 		dga: { label: 'kq3z8wxv1m7tbn5r6yhp', length: 20, entropy: 4.322, threshold: 3.8, min_length: 9 },
 		tunnel: null,
 	},
