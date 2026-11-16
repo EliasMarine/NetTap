@@ -98,6 +98,13 @@ function kpiValue(label: string): string | null | undefined {
 	return screen.getByText(label).closest('.kpi')?.querySelector('.kpi-num')?.textContent;
 }
 
+/** An exported Blob's text (jsdom's Blob has no text()). */
+const readBlob = (b: Blob) => new Promise<string>((resolve) => {
+	const r = new FileReader();
+	r.onload = () => resolve(String(r.result));
+	r.readAsText(b);
+});
+
 /** A device list reply: the rows plus the reading's four fields (NET-160 slice 2b-3). */
 function listReply(devices: unknown[], extra: Record<string, unknown> = {}) {
 	return {
@@ -245,7 +252,8 @@ describe('Devices — All devices table', () => {
 
 		const headers = within(table).getAllByRole('columnheader');
 		// OLD CODE: expect(headers).toHaveLength(10); (NET-314: MAC address column)
-		expect(headers).toHaveLength(11);
+		// OLD CODE: expect(headers).toHaveLength(11); (NET-316: Upload and Download)
+		expect(headers).toHaveLength(13);
 		for (const th of headers) expect(within(th).getByRole('button')).toBeInTheDocument();
 		// busiest first
 		expect(within(table).getAllByRole('row')[1]).toHaveTextContent('192.168.1.10');
@@ -297,7 +305,11 @@ describe('Devices — All devices table', () => {
 		stubDaemon({ '/api/capture/mode': BRIDGE, '/api/devices': macs, '/api/devices/count': { count: 3 } });
 		render(Page);
 		const table = await screen.findByRole('table', { name: 'All devices' });
-		const macColumn = () => within(table).getAllByRole('row').slice(1).map((r) => r.querySelectorAll('td')[1]?.textContent);
+		// OLD CODE: … .map((r) => r.querySelectorAll('td')[1]?.textContent); (NET-316: the cell also holds the Private tag and Copy)
+		const macColumn = () => within(table).getAllByRole('row').slice(1).map((r) => {
+			const cell = r.querySelectorAll('td')[1];
+			return cell?.querySelector('.mono')?.textContent ?? cell?.textContent;
+		});
 
 		expect(within(table).getByRole('columnheader', { name: /MAC address/ })).toBeInTheDocument();
 		const sortByMac = within(within(table).getByRole('columnheader', { name: /MAC address/ })).getByRole('button');
@@ -312,6 +324,76 @@ describe('Devices — All devices table', () => {
 		await fireEvent.input(screen.getByLabelText('Search devices'), { target: { value: 'AA:00' } });
 		expect(within(table).getAllByRole('row')).toHaveLength(2);
 		expect(within(table).getAllByRole('row')[1]).toHaveTextContent('192.168.1.8');
+	});
+
+	// NET-316: the Private tag, Copy (which never opens the row), Upload and Download, and the export
+	describe('NET-316 additions', () => {
+		const rows = listReply([
+			{ ...DEVICE, ip: '192.168.1.10', mac: 'da:a1:19:00:00:01', hostname: 'phone', total_bytes: 5000, upload_bytes: 4000, download_bytes: 1000 },
+			{ ...DEVICE, ip: '192.168.1.9', mac: 'bc:24:11:00:00:02', hostname: 'nas', total_bytes: 3000, upload_bytes: 500, download_bytes: 2500 },
+			{ ...DEVICE, ip: '192.168.1.8', mac: null, hostname: 'old', total_bytes: 100 },
+		], { from: LIST_FROM });
+		const render3 = async () => {
+			stubDaemon({ '/api/capture/mode': BRIDGE, '/api/devices': rows, '/api/devices/count': { count: 3 } });
+			render(Page);
+			return screen.findByRole('table', { name: 'All devices' });
+		};
+		const rowOf = (table: HTMLElement, ip: string) => within(table).getAllByRole('row').find((r) => r.textContent?.includes(ip))!;
+		const column = (table: HTMLElement, label: string) => {
+			const index = within(table).getAllByRole('columnheader').findIndex((th) => th.textContent?.includes(label));
+			return within(table).getAllByRole('row').slice(1).map((r) => r.querySelectorAll('td')[index]?.textContent?.trim());
+		};
+
+		it('tags only a made-up MAC as Private', async () => {
+			const table = await render3();
+			expect(within(rowOf(table, '192.168.1.10')).getByText('Private')).toBeInTheDocument();
+			expect(within(rowOf(table, '192.168.1.9')).queryByText('Private')).not.toBeInTheDocument();
+			expect(within(rowOf(table, '192.168.1.8')).queryByRole('button', { name: 'Copy MAC address' })).not.toBeInTheDocument();
+		});
+
+		it('copies a MAC without opening the device', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+			const table = await render3();
+			await fireEvent.click(within(rowOf(table, '192.168.1.9')).getByRole('button', { name: 'Copy MAC address' }));
+			expect(writeText).toHaveBeenCalledWith('bc:24:11:00:00:02');
+			expect(goto).not.toHaveBeenCalled();
+		});
+
+		it('shows Upload and Download, sorting a missing figure last both ways', async () => {
+			const table = await render3();
+			expect(column(table, 'Upload')).toEqual(['4.0 KB', '500 B', '—']);
+			const sortBy = within(within(table).getAllByRole('columnheader').find((th) => th.textContent?.includes('Download'))!).getByRole('button');
+			await fireEvent.click(sortBy);
+			const first = column(table, 'Download');
+			await fireEvent.click(sortBy);
+			const second = column(table, 'Download');
+			expect([first, second]).toContainEqual(['2.5 KB', '1.0 KB', '—']);
+			expect([first, second]).toContainEqual(['1.0 KB', '2.5 KB', '—']);
+		});
+
+		it('exports the rows the filters show, with the Status word', async () => {
+			const blobs: Blob[] = [];
+			vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: (b: Blob) => (blobs.push(b), 'blob:x'), revokeObjectURL: () => {} }));
+			const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+			await render3();
+			await fireEvent.input(screen.getByLabelText('Search devices'), { target: { value: 'nas' } });
+			await fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+			// a UTF-8 BOM first, for Excel
+			const bytes = await new Promise<Uint8Array>((resolve) => {
+				const r = new FileReader();
+				r.onload = () => resolve(new Uint8Array(r.result as ArrayBuffer));
+				r.readAsArrayBuffer(blobs[0]);
+			});
+			expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+			const lines = (await readBlob(blobs[0])).split('\n');
+			expect(lines[0]).toContain('"IP address","MAC address","Private MAC"');
+			expect(lines).toHaveLength(2);
+			expect(lines[1]).toContain('"192.168.1.9","bc:24:11:00:00:02","no","nas"');
+			expect(lines[1]).toContain('"Offline"');
+			expect((click.mock.contexts[0] as HTMLAnchorElement).download).toMatch(/^nettap-devices-\d{4}-\d{2}-\d{2}\.csv$/);
+			click.mockRestore();
+		});
 	});
 
 	// the IPv6 notes only: in bridge mode NET-225 also shows its own note about devices behind NAT
@@ -616,6 +698,20 @@ describe('Devices — the URL window and one reading', () => {
 		expect(sub('Online now')).toBe('This window ended before the last 5 minutes');
 		// PR #191 review: the rows can't say Online, Idle or Offline for a window that ended either
 		expect(await statusOf(DEVICE.ip)).toBe('—');
+	});
+
+	// NET-316: the export's Status is the table's word, so a past window exports '—', never a guess
+	it("exports '—' as the Status for a window that ended", async () => {
+		const blobs: Blob[] = [];
+		vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: (b: Blob) => (blobs.push(b), 'blob:x'), revokeObjectURL: () => {} }));
+		const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+		goTo(`?from=${FROM}&to=${TO}`);
+		stub((url) => reading(url, [DEVICE], { online_total: 0 }));
+		render(Page);
+		expect(await statusOf(DEVICE.ip)).toBe('—');
+		await fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+		expect((await readBlob(blobs[0])).split('\n')[1]).toContain(',"—",');
+		click.mockRestore();
 	});
 
 	// PR #191 review: back to the last good window after a failed one kept the failed one's error

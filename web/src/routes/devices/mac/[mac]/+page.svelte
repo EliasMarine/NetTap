@@ -24,6 +24,7 @@
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
+	import MacAddress from '$lib/components/ui/MacAddress.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
@@ -311,7 +312,8 @@
 		<!-- keyed: another device's page starts with its panels closed -->
 		{#key device.mac}<DeviceCustomise {device} onsave={customise} />{/key}
 		<dl class="ident-meta">
-			<div><dt class="meta-k">MAC address</dt><dd class="meta-v mono">{device.mac}</dd></div>
+			<!-- OLD CODE: <div><dt class="meta-k">MAC address</dt><dd class="meta-v mono">{device.mac}</dd></div> (NET-316: the Private tag and Copy) -->
+			<div><dt class="meta-k">MAC address</dt><dd class="meta-v"><MacAddress mac={device.mac} /></dd></div>
 			<div><dt class="meta-k">IP addresses</dt><dd class="meta-v mono">{device.ips.length > 0 ? device.ips.join(', ') : '—'}</dd></div>
 			<!-- NET-269: the same link as devices/[ip] -->
 			<div><dt class="meta-k">Leases</dt><dd class="meta-v"><a href="/tools/dhcp-timeline?mac={encodeURIComponent(device.mac.toLowerCase())}">DHCP history</a></dd></div>

@@ -44,6 +44,8 @@
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	// OLD CODE: import DeviceTile from '$lib/components/ui/DeviceTile.svelte'; (NET-201: only the Cards layout used it)
 	import Bytes from '$lib/components/ui/Bytes.svelte';
+	import MacAddress from '$lib/components/ui/MacAddress.svelte';
+	import { toDevicesCsv } from './devices-csv';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import { deviceIcon } from '$lib/components/ui/device-icon';
@@ -611,6 +613,9 @@
 		{ key: 'os_hint', label: 'OS', cell: osCell },
 		{ key: 'manufacturer', label: 'Manufacturer', cell: vendorCell },
 		{ key: 'total_bytes', label: 'Bandwidth', numeric: true, cell: bytesCell },
+		// NET-316: each direction apart; a missing figure (an older daemon) sorts last both ways
+		{ key: 'upload_bytes', label: 'Upload', numeric: true, cell: uploadCell },
+		{ key: 'download_bytes', label: 'Download', numeric: true, cell: downloadCell },
 		{ key: 'connection_count', label: 'Connections', numeric: true, cell: connCell },
 		{ key: 'alert_count', label: 'Alerts', numeric: true, cell: alertCell },
 		{ key: 'last_seen', label: 'Last seen', cell: seenCell, sortValue: (d) => (d.last_seen ? Date.parse(d.last_seen) : null) },
@@ -636,10 +641,23 @@
 		searchQuery = '';
 		categoryFilter = 'all';
 	}
+
+	/** NET-316: the rows the filters show, busiest first, as the changelog saves its export. */
+	function exportCsv() {
+		const csv = toDevicesCsv(filteredDevices, (d) => status(d).label);
+		// the BOM tells Excel it is UTF-8; without it "Elias’s iPhone" opens as "Eliasâ€™s iPhone"
+		const url = URL.createObjectURL(new Blob(['﻿', csv], { type: 'text/csv' }));
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `nettap-devices-${new Date().toISOString().slice(0, 10)}.csv`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 </script>
 
 {#snippet ipCell(d: Device)}<span class="mono">{d.ip}</span>{/snippet}
-{#snippet macCell(d: Device)}<span class="mono">{d.mac ?? '—'}</span>{/snippet}
+<!-- OLD CODE: {#snippet macCell(d: Device)}<span class="mono">{d.mac ?? '—'}</span>{/snippet} (NET-316: the Private tag and Copy) -->
+{#snippet macCell(d: Device)}{#if d.mac}<MacAddress mac={d.mac} />{:else}—{/if}{/snippet}
 {#snippet nameCell(d: Device)}
 	<!-- NET-200: the owner's name is in hostname already; the UniFi tag only when the UniFi name is the one shown -->
 	{#if d.custom_name}
@@ -672,6 +690,8 @@ OLD CODE END -->
 {/snippet}
 {#snippet vendorCell(d: Device)}{d.manufacturer ?? '—'}{/snippet}
 {#snippet bytesCell(d: Device)}<Bytes value={d.total_bytes} max={maxBytes} display={formatBytes(d.total_bytes)} />{/snippet}
+{#snippet uploadCell(d: Device)}{d.upload_bytes == null ? '—' : formatBytes(d.upload_bytes)}{/snippet}
+{#snippet downloadCell(d: Device)}{d.download_bytes == null ? '—' : formatBytes(d.download_bytes)}{/snippet}
 {#snippet connCell(d: Device)}{formatNumber(d.connection_count)}{/snippet}
 {#snippet alertCell(d: Device)}{formatNumber(d.alert_count)}{/snippet}
 {#snippet seenCell(d: Device)}{timeAgo(d.last_seen)}{/snippet}
@@ -933,7 +953,9 @@ OLD CODE END -->
 					{#if listIsPartial}
 						<span class="dim">counts for the {devices.length} busiest devices</span>
 					{/if}
-					<SearchField id="device-search" label="Search devices" placeholder="Search by IP, hostname or vendor" size="toolbar" bind:value={searchQuery} />
+					<!-- OLD CODE: placeholder="Search by IP, hostname or vendor" (NET-316: MAC search since NET-314; "hostname" became "name" to fit) -->
+					<SearchField id="device-search" label="Search devices" placeholder="Search by IP, MAC, name or vendor" size="toolbar" bind:value={searchQuery} />
+					<button class="btn" type="button" onclick={exportCsv} disabled={filteredDevices.length === 0}><Icon name="download" />Export CSV</button>
 				</div>
 				{#if filteredDevices.length === 0}
 					<CardState state="empty" icon="filter" title="No devices match these filters" actionLabel="Reset filters" onaction={resetFilters} />
