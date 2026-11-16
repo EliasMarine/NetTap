@@ -7,13 +7,13 @@
 import type { SeverityLevel } from '$lib/utils/severity';
 import type { DnsDetail, EncryptionDetail, NamedCount, PatchDetail, PortCount } from '$api/posture';
 import { connLogsHref, fmt, serviceLabel, serviceLogsHref } from '$lib/utils/drilldown';
+import { listWords } from '$api/system';
 import { legacyCounts } from './score';
 import {
 	device,
 	deviceWords,
 	failedSource,
 	listSource,
-	listWords,
 	pct,
 	scoreKpi,
 	SEVERITY_RANK,
@@ -228,7 +228,7 @@ export function encryptionReport(data: ReportData): Report {
 			{ key: 'both', label: 'Payload both ways', icon: 'connections', value: u ? fmt(u.payload_both) : '—', sub: u ? `of ${fmt(u.total)} unencrypted connections` : "Couldn't load" },
 		],
 		drivers: {
-			formula: `${fmt(enc.encrypted)} encrypted ÷ ${fmt(enc.eligible)} connections that can be encrypted = ${pct(enc.encrypted, enc.eligible)}%`,
+			formula: `${fmt(enc.encrypted)} encrypted ÷ ${fmt(enc.eligible)} connections that can be encrypted = ${category.score ?? '—'}%`,
 			counts: [
 				'Counted as encrypted: HTTPS and other TLS, QUIC, SSH, VPNs (WireGuard, OpenVPN, IPsec), and ports 443, 853, 8443 and 8883.',
 				'Left out: DNS, DHCP, NTP, local discovery (mDNS, LLMNR, SSDP, NetBIOS), pings, multicast, broadcast and STUN, which are never encrypted.',
@@ -328,7 +328,7 @@ export function dnsReport(data: ReportData): Report {
 			{ key: 'public', label: 'Plain lookups to public addresses', icon: 'warn', value: scope ? fmt(scope.public) : '—', sub: scope ? 'sent straight to resolvers on the internet' : "Couldn't load" },
 		],
 		drivers: {
-			formula: `${fmt(dns.over_tls)} DNS-over-TLS ÷ (${fmt(dns.plain)} plain + ${fmt(dns.over_tls)} DNS-over-TLS) = ${pct(dns.over_tls, dns.plain + dns.over_tls)}%`,
+			formula: `${fmt(dns.over_tls)} DNS-over-TLS ÷ (${fmt(dns.plain)} plain + ${fmt(dns.over_tls)} DNS-over-TLS) = ${category.score ?? '—'}%`,
 			counts: ["Plain: lookups NetTap identified as DNS, leaving out local discovery (mDNS on 5353, LLMNR on 5355).", 'DNS-over-TLS: connections to port 853.'],
 			limits: [
 				"DNS-over-HTTPS (DoH) looks like any other HTTPS, so NetTap can't count it; a device using it is in neither figure.",
@@ -401,7 +401,7 @@ export function patchReport(data: ReportData): Report {
 			unloaded({ key: 'telnet-ftp', label: 'Telnet or FTP connections', icon: 'threats', value: fmt(telnetFtp), sub: 'send passwords in plain text' }, inputs.failed.includes('protocols')),
 		],
 		drivers: {
-			formula: `100 − (${fmt(counts.legacy)} old-protocol labels ÷ ${fmt(counts.total)} labels × 100) = ${counts.total > 0 ? Math.round(100 - (counts.legacy / counts.total) * 100) : 100}`,
+			formula: `100 − (${fmt(counts.legacy)} old-protocol labels ÷ ${fmt(counts.total)} labels × 100) = ${category.score ?? '—'}`,
 			counts: [
 				'Old protocols: plain HTTP, FTP, Telnet, POP3 and IMAP.',
 				...(detail ? [`Connections with an old-protocol label, each counted once: ${fmt(detail.unique_connections)}.`] : []),

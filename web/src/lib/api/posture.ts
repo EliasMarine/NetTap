@@ -101,7 +101,6 @@ export interface PostureDetails {
 	'patch-currency': PatchDetail;
 }
 export type TrafficSlug = keyof PostureDetails;
-export const TRAFFIC_SLUGS: readonly TrafficSlug[] = ['encryption', 'dns-security', 'patch-currency'];
 
 // --- Shape checks ---
 

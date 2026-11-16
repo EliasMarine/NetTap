@@ -7,7 +7,8 @@ import { BRIDGE_NO_DEVICES, lossWords } from '$api/capture';
 import { pipelineStage } from '$api/system';
 import { alertsHrefForSignature, fmt, windowQuery } from '$lib/utils/drilldown';
 import { suricataLevel, type SeverityLevel } from '$lib/utils/severity';
-import { device, deviceWords, failedSource, listWords, notMeasured, pct, scoreKpi, unloaded, type Finding, type Kpi, type Report, type ReportData, type Source, type Step } from './report';
+import { listWords } from '$api/system';
+import { device, deviceWords, failedSource, notMeasured, scoreKpi, unloaded, type Finding, type Kpi, type Report, type ReportData, type Source, type Step } from './report';
 
 /** Devices with a baseline: the score's own figures (min() as the score takes it). */
 function baselineCounts(data: ReportData): { total: number; scored: number; unscored: number } {
@@ -88,7 +89,7 @@ export function segmentationReport(data: ReportData): Report {
 	return {
 		kpis: [scoreKpi(category), unloaded({ key: 'baseline', label: 'Devices with a baseline', icon: 'devices', value: `${fmt(b.scored)} of ${fmt(b.total)}`, sub: 'seen in the last 24 hours' }, sources[0].state === 'failed'), isoKpi],
 		drivers: {
-			formula: `100 − 10 × ${fmt(b.unscored)} device(s) without a baseline = ${Math.max(0, 100 - b.unscored * 10)}`,
+			formula: `100 − 10 × ${fmt(b.unscored)} device(s) without a baseline = ${category.score ?? '—'}`,
 			counts: [
 				`Devices seen in the last 24 hours: ${fmt(b.total)}; with a baseline (a risk score): ${fmt(b.scored)}.`,
 				...(isoMeasured ? [`Also checked, not scored: smart-device isolation ${iso.segmentation_score}/100 (grade ${iso.segmentation_grade ?? '—'}). ${iso.recommendation}`.trim()] : []),
@@ -194,7 +195,7 @@ export function alertReport(data: ReportData): Report {
 			? 'No counted alerts in the last 24 hours, so there is nothing to score.'
 			: inv.total === 0
 				? `${fmt(counts.total)} alerts and no investigations, so the score is 0.`
-				: `${fmt(done)} resolved or closed ÷ ${fmt(inv.total)} investigations = ${Math.min(100, pct(done, inv.total))}%`;
+				: `${fmt(done)} resolved or closed ÷ ${fmt(inv.total)} investigations = ${category.score ?? '—'}%`;
 
 	return {
 		kpis: [
@@ -264,7 +265,7 @@ export function monitoringReport(data: ReportData): Report {
 			{ key: 'pipeline', label: 'Data pipeline', icon: 'system', value: stage ? (stage.status === 'ok' ? 'Running' : stage.status === 'failing' ? 'Failing' : 'Check') : '—', sub: stage?.detail ?? "Couldn't check" },
 		],
 		drivers: {
-			formula: `${fmt(b.scored)} devices with a risk score ÷ ${fmt(b.total)} devices seen = ${b.total ? pct(b.scored, b.total) : 100}%`,
+			formula: `${fmt(b.scored)} devices with a risk score ÷ ${fmt(b.total)} devices seen = ${category.score ?? '—'}%`,
 			counts: [
 				`Also checked: data pipeline: ${stage?.detail ?? "couldn't check"}.`,
 				`Recent packet loss: ${loss?.detail ?? "couldn't load"}.`,

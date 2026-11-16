@@ -76,7 +76,7 @@ describe('encryptionReport', () => {
 
 	it('says how many more connections the devices past the busiest ten made (R1-3)', () => {
 		const detail = { ...POSTURE_ENCRYPTION, devices: { ...POSTURE_ENCRYPTION.devices, other: 420 } };
-		expect(enc(detail).notes).toEqual([{ text: 'Showing the 10 busiest devices. Other devices on your network made 420 more of these connections.' }]);
+		expect(enc(detail).notes).toEqual([{ text: 'Showing the 3 busiest devices. Other devices on your network made 420 more of these connections.' }]);
 		expect(enc(POSTURE_ENCRYPTION).notes).toEqual([]);
 	});
 
@@ -205,7 +205,7 @@ describe('patchReport', () => {
 	it('links a protocol’s truncation note to Log Explorer for that label', () => {
 		const detail: PatchDetail = { ...POSTURE_PATCH, protocols: [{ ...POSTURE_PATCH.protocols[0], devices: { ...POSTURE_PATCH.protocols[0].devices, other: 40 } }] };
 		const [note] = patch(detail).notes;
-		expect(note.text).toMatch(/^HTTP: Showing the 10 busiest devices/);
+		expect(note.text).toMatch(/^HTTP: Showing the 1 busiest devices/);
 		expect(params(note.href!).get('query')).toBe('network.protocol:"http"');
 	});
 });

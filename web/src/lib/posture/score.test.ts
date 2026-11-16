@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { EMPTY_DATA, POSTURE_SLUGS, isPostureSlug, legacyCounts, scoreCategories, type PostureInputs } from './score';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { EMPTY_DATA, LEGACY_PROTOCOLS, POSTURE_SLUGS, isPostureSlug, legacyCounts, scoreCategories, type PostureInputs } from './score';
 
 // The overview's scoring, moved here so the category pages score exactly as the overview does
 
@@ -83,6 +85,15 @@ describe('legacyCounts', () => {
 		const { legacy, total } = legacyCounts(services);
 		expect(patch.score).toBe(Math.round(100 - (legacy / total) * 100));
 		expect(patch.score).toBe(98);
+	});
+});
+
+// The Patch page's device lists (daemon) must count the same protocols as the score (here)
+describe('LEGACY_PROTOCOLS', () => {
+	it("matches daemon/api/posture.py's list", () => {
+		const source = readFileSync(resolve(__dirname, '../../../../daemon/api/posture.py'), 'utf-8');
+		const daemon = JSON.parse(source.match(/^LEGACY_PROTOCOLS = (\[.*\])$/m)![1]);
+		expect([...LEGACY_PROTOCOLS]).toEqual(daemon);
 	});
 });
 

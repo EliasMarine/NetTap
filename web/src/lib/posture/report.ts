@@ -134,9 +134,6 @@ export interface Report {
 export const UNATTRIBUTED =
 	"NetTap saw this traffic but couldn't tie it to devices on your network; in inline bridge mode your router hides them.";
 
-/** The device lists hold the busiest ten (daemon/api/posture.py DEVICE_ROWS). */
-export const DEVICE_ROWS = 10;
-
 /** "12%": a share of a whole, 0 when the whole is 0. */
 export const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 
@@ -147,11 +144,6 @@ export const device = (ip: string, names: ReadonlyMap<string, string>): FindingD
 
 /** A device by name, else by address, for a sentence. */
 export const deviceWords = (ip: string, names: ReadonlyMap<string, string>): string => names.get(ip) ?? ip;
-
-/** "6881, 51413 and 6882" */
-export function listWords(words: readonly string[]): string {
-	return words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-}
 
 export const failedSource = (key: string, label: string): Source => ({ key, label, state: 'failed', note: loadFailed(label.toLowerCase()) });
 
@@ -176,7 +168,7 @@ export function listSource(
 /** The line under a list that holds only the busiest devices. */
 export function truncationNote(list: DeviceList<unknown>, href?: string): Note | null {
 	if (list.other <= 0) return null;
-	const text = `Showing the ${DEVICE_ROWS} busiest devices. Other devices on your network made ${fmt(list.other)} more of these connections.`;
+	const text = `Showing the ${list.rows.length} busiest devices. Other devices on your network made ${fmt(list.other)} more of these connections.`;
 	return href ? { text, href } : { text };
 }
 
@@ -190,7 +182,6 @@ export function scoreKpi(category: CategoryScore): Kpi {
 }
 
 export const SEVERITY_RANK: Record<SeverityLevel, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-const STEP_RANK: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 
 /** The category's report: most severe findings and highest-priority steps first. */
 export function buildReport(slug: PostureSlug, data: ReportData): Report {
@@ -205,7 +196,9 @@ export function buildReport(slug: PostureSlug, data: ReportData): Report {
 	const report = build(data);
 	return {
 		...report,
+		// an empty category's score is a stand-in 100, so there is no sum to show
+		drivers: data.category.empty ? { ...report.drivers, formula: 'Nothing to score in the last 24 hours.' } : report.drivers,
 		findings: [...report.findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || (b.count ?? 0) - (a.count ?? 0)),
-		steps: [...report.steps].sort((a, b) => STEP_RANK[a.priority] - STEP_RANK[b.priority]),
+		steps: [...report.steps].sort((a, b) => SEVERITY_RANK[a.priority] - SEVERITY_RANK[b.priority]),
 	};
 }
