@@ -83,7 +83,8 @@ describe('Software Updates page when a request fails (#96)', () => {
 		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 component' }));
 
-		expect(await screen.findByText("Couldn't start the update: the request failed.")).toBeInTheDocument();
+		// OLD CODE: expect(await screen.findByText("Couldn't start the update: the request failed.")).toBeInTheDocument(); (now with the status)
+		expect(await screen.findByText("Couldn't start the update: the request failed (HTTP 500).")).toBeInTheDocument();
 		expect(screen.queryByText('Update complete')).not.toBeInTheDocument();
 	});
 
@@ -571,6 +572,133 @@ describe('Software Updates page — a long-running update', () => {
 		const callsWhenStopped = statusCalls();
 		await vi.advanceTimersByTimeAsync(30_000);
 		expect(statusCalls()).toBe(callsWhenStopped);
+	});
+
+	// Batch A finished and another tab started B between two polls: B's progress isn't A's
+	const B_STARTED = '2026-11-02T20:20:00Z';
+	const finishedA = {
+		results: [{ component: 'zeek', success: true, old_version: '6.0.4', new_version: '6.0.5', started_at: '', completed_at: '', error: null, rollback_available: false }],
+		components: ['zeek'], success: true, total: 1, succeeded: 1, failed: 0,
+		started_at: '2026-11-02T20:00:00Z', completed_at: '2026-11-02T20:10:00Z',
+	};
+
+	it("shows the followed update's result from the history when another one is running", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const replies = stub(running(['zeek']));
+
+		render(UpdatesPage);
+		expect(await screen.findByText('45% complete')).toBeInTheDocument();
+		replies[STATUS] = { ...running(['malcolm'], 'Backing up OpenSearch'), progress_percent: 70, started_at: B_STARTED };
+		replies['/api/system/updates/history'] = { history: [finishedA], count: 1 };
+		await vi.advanceTimersByTimeAsync(3000);
+
+		expect(await screen.findByText('Update complete')).toBeInTheDocument();
+		expect(screen.getByText('1 succeeded')).toBeInTheDocument();
+		expect(screen.queryByText('70% complete')).not.toBeInTheDocument();
+		expect(screen.queryByText('Backing up OpenSearch')).not.toBeInTheDocument();
+		const callsWhenSettled = statusCalls();
+		await vi.advanceTimersByTimeAsync(9000);
+		expect(statusCalls()).toBe(callsWhenSettled); // it doesn't adopt B
+	});
+
+	it('says the outcome is not confirmed when the history lacks the followed update', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const replies = stub(running(['zeek']));
+
+		render(UpdatesPage);
+		expect(await screen.findByText('45% complete')).toBeInTheDocument();
+		// after a restart: an older batch is the daemon's last, and the followed one was never recorded
+		replies[STATUS] = { ...IDLE, state: 'completed', progress_percent: 100, started_at: '2026-11-01T08:00:00Z', results: finishedA.results };
+		await vi.advanceTimersByTimeAsync(3000);
+
+		expect(await screen.findByText(/NetTap lost track of it, for example after a restart/)).toBeInTheDocument();
+		expect(screen.getByText('Update not confirmed', { selector: '.card-title' })).toBeInTheDocument();
+		expect(screen.queryByText('Update complete')).not.toBeInTheDocument();
+	});
+
+	it("shows the daemon's reason when it refuses to start an update", async () => {
+		const replies = stub(IDLE, { '/api/system/updates/apply': 400 });
+		replies['/api/system/updates/apply'] = { error: 'components must be names NetTap can update' };
+
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 component' }));
+
+		expect(await screen.findByText("Couldn't start the update: components must be names NetTap can update")).toBeInTheDocument();
+	});
+
+	it('only mentions Malcolm in the progress note when Malcolm is updating', async () => {
+		stub(running(['suricata-rules'], 'Updating the Suricata rules'));
+		render(UpdatesPage);
+		expect(await screen.findByText('You can leave this page and come back')).toBeInTheDocument();
+		expect(screen.queryByText(/A Malcolm update takes/)).not.toBeInTheDocument();
+	});
+});
+
+// The daemon reports when its update list is older than 6 hours, or empty since a restart
+describe('Software Updates page — checks on its own when the list is stale', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const checkCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === '/api/system/updates/check').length;
+
+	it.each([
+		[true, 1],
+		[false, 0],
+		[undefined, 0],
+	])('stale: %s runs %i check(s)', async (stale, checks) => {
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: stale ? null : '2026-11-02T21:00:00Z', stale },
+			'/api/system/updates/history': { history: [], count: 0 },
+			'/api/system/updates/check': { updates: [], last_check: '2026-11-16T07:00:00Z', failed_checks: [], checked: ['Zeek'] },
+		});
+
+		render(UpdatesPage);
+		await screen.findByText('Zeek');
+		await vi.waitFor(() => expect(checkCalls()).toBe(checks));
+		if (checks) expect(await screen.findByText('Up to date')).toBeInTheDocument();
+	});
+});
+
+// The client read a {result} the daemon never sends, so its reason never reached the page
+describe('Software Updates page — rolling back', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const RULES = {
+		component: 'suricata-rules', success: true, old_version: '2026-11-01', new_version: '2026-11-02',
+		started_at: '2026-11-02T20:00:00Z', completed_at: '2026-11-02T20:01:00Z', error: null, rollback_available: true,
+	};
+
+	async function rollBack(reply: unknown, code: number) {
+		stubFetch(
+			{
+				'/api/system/versions': VERSIONS,
+				'/api/system/updates/available': { updates: [], last_check: '2026-11-02T21:00:00Z' },
+				'/api/system/updates/history': {
+					history: [{ results: [RULES], components: ['suricata-rules'], success: true, started_at: RULES.started_at, completed_at: RULES.completed_at }],
+					count: 1,
+				},
+				'/api/system/updates/rollback': reply,
+			},
+			{ '/api/system/updates/rollback': code },
+		);
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Roll back' }));
+	}
+
+	it('says what the rollback did', async () => {
+		await rollBack({ success: true, component: 'suricata-rules', message: 'Restored the rules from backup 20261102' }, 200);
+		expect(await screen.findByText('Restored the rules from backup 20261102')).toBeInTheDocument();
+	});
+
+	it("shows the daemon's reason when there is nothing to restore", async () => {
+		await rollBack({ success: false, component: 'suricata-rules', message: 'No backup available for component: suricata-rules' }, 404);
+		expect(await screen.findByText("Couldn't roll back suricata-rules: No backup available for component: suricata-rules")).toBeInTheDocument();
+	});
+
+	it('shows the proxy’s reason when the daemon is down', async () => {
+		await rollBack({ error: 'Daemon unreachable', daemonAvailable: false }, 502);
+		expect(await screen.findByText("Couldn't roll back suricata-rules: Daemon unreachable")).toBeInTheDocument();
 	});
 });
 

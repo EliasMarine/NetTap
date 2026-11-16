@@ -251,14 +251,21 @@ describe('updates API client', () => {
 			expect(result.progress_percent).toBe(100);
 		});
 
-		it('returns error status on HTTP failure', async () => {
+		// OLD CODE START — a failure returned an empty 'error' status, which dropped the daemon's reason
+		// it('returns error status on HTTP failure', async () => {
+		// 	mockFetchFailure(500);
+		//
+		// 	const result = await applyUpdates(['zeek']);
+		//
+		// 	expect(result.state).toBe('error');
+		// 	expect(result.progress_percent).toBe(0);
+		// 	expect(result.results).toEqual([]);
+		// });
+		// OLD CODE END
+		it('throws with the HTTP status when a failure has no body', async () => {
 			mockFetchFailure(500);
 
-			const result = await applyUpdates(['zeek']);
-
-			expect(result.state).toBe('error');
-			expect(result.progress_percent).toBe(0);
-			expect(result.results).toEqual([]);
+			await expect(applyUpdates(['zeek'])).rejects.toThrow('the request failed (HTTP 500).');
 		});
 
 		// the daemon now starts the work in the background and answers at once
@@ -288,14 +295,21 @@ describe('updates API client', () => {
 			expect(result.current_step).toBe("Downloading Malcolm 26.10.0's images");
 		});
 
-		it('still returns an empty error status on a 400', async () => {
-			mockFetchSuccess({ error: 'components array is required and must not be empty' }, 400);
+		// OLD CODE START — the 400's reason was dropped
+		// it('still returns an empty error status on a 400', async () => {
+		// 	mockFetchSuccess({ error: 'components array is required and must not be empty' }, 400);
+		//
+		// 	const result = await applyUpdates([]);
+		//
+		// 	expect(result.state).toBe('error');
+		// 	expect(result.results).toEqual([]);
+		// 	expect(result.already_running).toBeUndefined();
+		// });
+		// OLD CODE END
+		it("throws the daemon's reason on a 400", async () => {
+			mockFetchSuccess({ error: 'components must be names NetTap can update' }, 400);
 
-			const result = await applyUpdates([]);
-
-			expect(result.state).toBe('error');
-			expect(result.results).toEqual([]);
-			expect(result.already_running).toBeUndefined();
+			await expect(applyUpdates(['x'])).rejects.toThrow('components must be names NetTap can update');
 		});
 
 		it('sends a single component correctly', async () => {
@@ -411,26 +425,50 @@ describe('updates API client', () => {
 
 	// -- rollbackComponent ----------------------------------------------------
 
+	// The daemon answers {success, component, message}, {error} on a 500, and the proxy {error} on a 502;
+	// the client read a {result} nothing sends
 	describe('rollbackComponent', () => {
-		it('sends component name and returns result', async () => {
-			mockFetchSuccess({ result: 'ok' });
+		// OLD CODE START — expected {result}
+		// it('sends component name and returns result', async () => {
+		// 	mockFetchSuccess({ result: 'ok' });
+		// 	...
+		// 	expect(result.result).toBe('ok');
+		// });
+		//
+		// it('returns error result on HTTP failure', async () => {
+		// 	mockFetchFailure(500);
+		// 	const result = await rollbackComponent('zeek');
+		// 	expect(result.result).toBe('error');
+		// });
+		// OLD CODE END
+		it('sends the component and returns the daemon’s success and message', async () => {
+			mockFetchSuccess({ success: true, component: 'suricata-rules', message: 'Restored from backup 20261116' });
 
-			const result = await rollbackComponent('zeek');
+			const result = await rollbackComponent('suricata-rules');
 
 			expect(fetch).toHaveBeenCalledWith('/api/system/updates/rollback', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ component: 'zeek' }),
+				body: JSON.stringify({ component: 'suricata-rules' }),
 			});
-			expect(result.result).toBe('ok');
+			expect(result).toEqual({ success: true, message: 'Restored from backup 20261116' });
 		});
 
-		it('returns error result on HTTP failure', async () => {
+		it.each([
+			[404, { success: false, component: 'geoip-db', message: 'No backup available for component: geoip-db' }, 'No backup available for component: geoip-db'],
+			[500, { error: 'Rollback failed: disk full' }, 'Rollback failed: disk full'],
+			[502, { error: 'Daemon unreachable', daemonAvailable: false }, 'Daemon unreachable'],
+			[200, { success: false, message: '' }, 'the request failed (HTTP 200).'],
+		])('turns a %i reply into {success: false, message}', async (status, body, message) => {
+			mockFetchSuccess(body, status);
+
+			expect(await rollbackComponent('geoip-db')).toEqual({ success: false, message });
+		});
+
+		it('uses the HTTP status when the reply is not JSON', async () => {
 			mockFetchFailure(500);
 
-			const result = await rollbackComponent('zeek');
-
-			expect(result.result).toBe('error');
+			expect(await rollbackComponent('geoip-db')).toEqual({ success: false, message: 'the request failed (HTTP 500).' });
 		});
 	});
 });
