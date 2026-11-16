@@ -104,6 +104,21 @@ export interface DomainAsker {
 	lan: boolean;
 	lookups: number;
 	last_seen: string;
+	/** Finding mode only: Settings excludes this device (most pages leave it out; the DNS check counts it). */
+	excluded?: boolean;
+}
+
+/**
+ * The Threats page's DNS check on the name exactly as it read it (finding mode,
+ * daemon/services/threat_detection.py dns_name_evidence). Each part is present only when that
+ * check fires.
+ */
+export interface DomainFinding {
+	name: string;
+	/** The DNS figures count every device, excluded ones too, as the check does. */
+	excluded_counted: boolean;
+	dga: { label: string; length: number; entropy: number; threshold: number; min_length: number } | null;
+	tunnel: { subdomain: string; length: number; labels: string[]; threshold: number } | null;
 }
 
 export interface DomainAnswer {
@@ -156,6 +171,8 @@ export interface DomainSummary {
 		alerts_in_window: number;
 		with_host_field: number;
 	};
+	/** Present when the page asked with `finding` (a Threats DNS row). */
+	finding?: DomainFinding;
 }
 
 /** A failed request, with its HTTP status (a 400 is the caller's input, not the network data). */
@@ -187,7 +204,7 @@ export const isObject = (v: unknown): v is Record<string, unknown> => !!v && typ
 // const isByteTotal = (v: unknown) => isObject(v) && ['total', 'measured', 'connections'].every((k) => typeof v[k] === 'number');
 // OLD CODE END
 export const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
+export const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
 const isByteTotal = (v: unknown) => isObject(v) && ['total', 'measured', 'connections'].every((k) => isNumber(v[k])) && isBoolean(v.partial);
 /** null (no indicators loaded) or a checked result; a missing field is malformed, not "not checked" */
 export const isNullable = (v: unknown, test: (x: unknown) => boolean) => v === null || test(v);
@@ -200,6 +217,12 @@ const isPort = (v: unknown) =>
 	v.services.every(isString) &&
 	isNumber(v.connections);
 const isThreatIntel = (v: unknown) => v === null || (isObject(v) && isBoolean(v.matched) && Array.isArray(v.feeds) && isNumber(v.indicators));
+
+/** Finding mode's part: present (with both evidence keys) exactly when the page asked with `finding`. */
+const isFinding = (v: unknown, asked: string | undefined) =>
+	asked === undefined
+		? v === undefined
+		: isObject(v) && isString(v.name) && isBoolean(v.excluded_counted) && isNullable(v.dga, isObject) && isNullable(v.tunnel, isObject);
 
 /** A bucket for a chart's slots (NET-249), when the caller asks for one: `&interval=…`, else nothing. */
 const intervalQuery = (interval?: string) => (interval ? `&${new URLSearchParams({ interval }).toString()}` : '');
@@ -233,12 +256,18 @@ export async function getAddressSummary(ip: string, from: string, to: string, in
 	return body as unknown as AddressSummary;
 }
 
-/** Everything the domain page shows for `name` in the window; `interval` is the timeline's bucket (NET-249). */
+/**
+ * Everything the domain page shows for `name` in the window; `interval` is the timeline's bucket (NET-249).
+ * `finding` (a Threats DNS row's raw name) asks for the DNS check's evidence and counts excluded devices.
+ */
 // OLD CODE: export async function getDomainSummary(name: string, from: string, to: string): Promise<DomainSummary> { (NET-249: the bucket)
-export async function getDomainSummary(name: string, from: string, to: string, interval?: string): Promise<DomainSummary> {
+// OLD CODE: export async function getDomainSummary(name: string, from: string, to: string, interval?: string): Promise<DomainSummary> { (finding mode)
+export async function getDomainSummary(name: string, from: string, to: string, interval?: string, finding?: string): Promise<DomainSummary> {
 	// OLD CODE: const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Domain summary'); (NET-249)
 	// OLD CODE: …${interval ? `&interval=${encodeURIComponent(interval)}` : ''}… (slice 2 merge: the file's own intervalQuery)
-	const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}${intervalQuery(interval)}`, 'Domain summary');
+	// OLD CODE: const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}${intervalQuery(interval)}`, 'Domain summary'); (finding mode)
+	const findingQuery = finding === undefined ? '' : `&${new URLSearchParams({ finding }).toString()}`;
+	const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}${intervalQuery(interval)}${findingQuery}`, 'Domain summary');
 	// OLD CODE START — the counts under tls, http and alerts, and the complete flags, were cast unchecked
 	// const ok =
 	// 	isObject(body) &&
@@ -270,7 +299,8 @@ export async function getDomainSummary(name: string, from: string, to: string, i
 		isNumber(alerts.with_host_field) &&
 		// NET-178: optional, so an older daemon's reply still loads; malformed when present is an error
 		(alerts.tagged_partial === undefined || isBoolean(alerts.tagged_partial)) &&
-		[alerts.matched_fields, alerts.unmatched_fields].every((v) => v === undefined || (Array.isArray(v) && v.every(isString)));
+		[alerts.matched_fields, alerts.unmatched_fields].every((v) => v === undefined || (Array.isArray(v) && v.every(isString))) &&
+		isFinding(isObject(body) ? body.finding : undefined, finding);
 	if (!ok) throw new Error('Domain summary failed: the reply was malformed');
 	return body as unknown as DomainSummary;
 }

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 // OLD CODE: import { getThreatReport, getBeaconing, getLateralMovement, getDnsAnomalies, getThreatIntel } from './threats'; (NET-192 PR 3: threatRequest)
-import { getThreatReport, getBeaconing, getLateralMovement, getDnsAnomalies, getThreatIntel, isSnapshotWindow, threatRequest } from './threats';
+// OLD CODE: import { getThreatReport, getBeaconing, getLateralMovement, getDnsAnomalies, getThreatIntel, isSnapshotWindow, threatRequest } from './threats'; (the drill-downs)
+import { getBeaconPair, getFailedLookups, getThreatReport, getBeaconing, getLateralMovement, getDnsAnomalies, getThreatIntel, isSnapshotWindow, threatRequest } from './threats';
+import { BEACON_PAIR, FAILED_LOOKUPS } from '../../../e2e/visual/fixtures/threats';
 
 describe('threats API client', () => {
 	it('exports all fetch functions', () => {
@@ -54,5 +56,49 @@ describe('the report and beaconing requests', () => {
 			'/api/threats/report?snapshot=7d',
 			'/api/threats/beaconing?snapshot=30d',
 		]);
+	});
+});
+
+// The Threats page's drill-downs: one beaconing pair, and one device's failed lookups
+describe('drill-down clients', () => {
+	afterEach(() => vi.unstubAllGlobals());
+	const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body });
+
+	it('asks for the pair with its port, window and bucket', async () => {
+		const fetchMock = vi.fn(async () => reply(200, BEACON_PAIR));
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(getBeaconPair('2001:db8::1', '203.0.113.45', 8080, 'a', 'b', '5m')).resolves.toEqual(BEACON_PAIR);
+		const url = new URL(String((fetchMock.mock.calls[0] as unknown[])[0]), 'http://x');
+		expect(url.pathname).toBe('/api/threats/beaconing/pair');
+		expect(Object.fromEntries(url.searchParams)).toEqual({ device: '2001:db8::1', server: '203.0.113.45', port: '8080', from: 'a', to: 'b', interval: '5m' });
+	});
+
+	it('asks for the failed lookups of one device, encoded', async () => {
+		const fetchMock = vi.fn(async () => reply(200, FAILED_LOOKUPS));
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(getFailedLookups('fe80::1', 'a', 'b')).resolves.toEqual(FAILED_LOOKUPS);
+		expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe('/api/threats/failed-lookups/fe80%3A%3A1?from=a&to=b');
+	});
+
+	it("throws the daemon's reason, and a malformed reply instead of showing it", async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => reply(503, { error: 'Working this out took too long. Try a shorter time range.' })));
+		await expect(getBeaconPair('x', 'y', 1, 'a', 'b')).rejects.toThrow('Try a shorter time range');
+		for (const bad of [
+			{ ...BEACON_PAIR, timing: { ...BEACON_PAIR.timing, status: 'maybe' } },
+			{ ...BEACON_PAIR, threat_intel: undefined },
+			{ ...BEACON_PAIR, port: '8080' },
+		]) {
+			vi.stubGlobal('fetch', vi.fn(async () => reply(200, bad)));
+			await expect(getBeaconPair('x', 'y', 1, 'a', 'b')).rejects.toThrow('malformed');
+		}
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...FAILED_LOOKUPS, failed_names: [{ name: 'x' }] })));
+		await expect(getFailedLookups('x', 'a', 'b')).rejects.toThrow('malformed');
+		vi.stubGlobal('fetch', vi.fn(async () => reply(400, { error: 'Invalid IP address: x' })));
+		await expect(getFailedLookups('x', 'a', 'b')).rejects.toThrow('Invalid IP address: x');
+	});
+
+	it('accepts a pair whose blocklist check could not run', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...BEACON_PAIR, threat_intel: null })));
+		await expect(getBeaconPair('x', 'y', 1, 'a', 'b')).resolves.toMatchObject({ threat_intel: null });
 	});
 });

@@ -3,6 +3,7 @@ import { getAddressSummary, getDomainSummary, getSuricataCategory, getSuricataRu
 import { ADDRESS, ADDRESS_EMPTY, ADDRESS_QUIET, DOMAIN, DOMAIN_EMPTY, DOMAIN_QUIET } from '../../../e2e/visual/fixtures/drilldown';
 import { SURICATA_CATEGORY, SURICATA_CATEGORY_EMPTY } from '../../../e2e/visual/fixtures/suricata-category';
 import { SURICATA_RULE, SURICATA_RULE_EMPTY } from '../../../e2e/visual/fixtures/suricata-rule';
+import { DOMAIN_FINDING } from '../../../e2e/visual/fixtures/threats';
 
 const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body });
 const without = <T extends object>(o: T, path: string): unknown => {
@@ -31,6 +32,21 @@ describe('drill-down clients', () => {
 		vi.stubGlobal('fetch', fetchMock);
 		await expect(getDomainSummary('example.com', 'a', 'b')).resolves.toEqual(DOMAIN);
 		expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe('/api/domains/example.com?from=a&to=b');
+	});
+
+	it("sends a Threats row's raw name as finding, and checks the evidence comes back", async () => {
+		const fetchMock = vi.fn(async () => reply(200, DOMAIN_FINDING));
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(getDomainSummary(DOMAIN_FINDING.name, 'a', 'b', '5m', 'KQ3z8wxv1m7tbn5r6yhp.Example.net.')).resolves.toEqual(DOMAIN_FINDING);
+		const url = new URL(String((fetchMock.mock.calls[0] as unknown[])[0]), 'http://x');
+		expect(url.searchParams.get('finding')).toBe('KQ3z8wxv1m7tbn5r6yhp.Example.net.');
+		expect(url.searchParams.get('interval')).toBe('5m');
+		// asked without finding, a reply carrying one is malformed; asked with it, a reply without one is too
+		await expect(getDomainSummary('x', 'a', 'b')).rejects.toThrow('malformed');
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, DOMAIN)));
+		await expect(getDomainSummary('x', 'a', 'b', undefined, 'x')).rejects.toThrow('malformed');
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...DOMAIN_FINDING, finding: { ...DOMAIN_FINDING.finding, dga: undefined } })));
+		await expect(getDomainSummary('x', 'a', 'b', undefined, 'x')).rejects.toThrow('malformed');
 	});
 
 	it.each([
