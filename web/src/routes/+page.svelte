@@ -27,7 +27,7 @@
 	import SeverityGauge from '$components/ui/charts/SeverityGauge.svelte';
 	import { severityBuckets } from '$lib/utils/severity';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { upDownLocal } from '$lib/utils/up-down';
+	import { recorded, upDownLocal } from '$lib/utils/up-down';
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots, snapshotWindow } from '$lib/stores/alertSnapshot';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
@@ -194,6 +194,12 @@
 		const trendQuery = { from: tw.from, to: tw.to, interval: tw.interval };
 		const since = localMidnight(new Date());
 		loading = true;
+		// settle never rejects: a failed protocols request still lets the chart draw
+		const protocolsDone = settle(guard, g, 'protocols', getProtocolDistribution(win), (v) => {
+			protocols = v.protocols;
+			services = v.services;
+			unidentified = v.unidentified ?? null;
+		});
 
 		const results = await Promise.all([
 			settle(guard, g, 'summary', getTrafficSummary(win), (v) => (trafficSummary = v)),
@@ -203,14 +209,22 @@
 				trendWin = tw;
 			}, () => (trendTraffic = null)),
 			// OLD CODE: settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: '1h' }), (v) => (bandwidthData = v.series)), (NET-249)
-			settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: bucket }), (v) => {
+			// OLD CODE START — chart resize: written as soon as it came, the chart drew at 300 px, then grew when the
+			// taller protocols card beside it settled (later on the G11 at every range) and stretched their row
+			// settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: bucket }), (v) => {
+			// 	bandwidth = { series: v.series, from: v.from, to: v.to, step: bucketMs };
+			// }),
+			// settle(guard, g, 'protocols', getProtocolDistribution(win), (v) => {
+			// 	protocols = v.protocols;
+			// 	services = v.services;
+			// 	unidentified = v.unidentified ?? null;
+			// }),
+			// OLD CODE END
+			// both requests start now; the chart is written once its row neighbour has settled, so it draws once, at the row's final height
+			settle(guard, g, 'bandwidth', Promise.all([getBandwidthTimeSeries({ ...win, interval: bucket }), protocolsDone]).then(([v]) => v), (v) => {
 				bandwidth = { series: v.series, from: v.from, to: v.to, step: bucketMs };
 			}),
-			settle(guard, g, 'protocols', getProtocolDistribution(win), (v) => {
-				protocols = v.protocols;
-				services = v.services;
-				unidentified = v.unidentified ?? null;
-			}),
+			protocolsDone,
 			settle(guard, g, 'categories', getTrafficCategories(win), (v) => (categories = v.categories)),
 			// OLD CODE: settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCount = v.count)), (slice 2b-3: the card links to the reply's window)
 			settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCountReply = v)),
@@ -606,14 +620,28 @@
 	// { key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.orig_bytes })) },
 	// return p ? `${pointLabel(p.timestamp)} · ↓ ${formatBytes(p.resp_bytes)} · ↑ ${formatBytes(p.orig_bytes)}` : '';
 	// OLD CODE END
+	// OLD CODE START — chart gaps: a slot with no connection record drew as 0 B, a flat line where NetTap had no data
+	// const bandwidthSeries = $derived<AreaSeries[]>([
+	// 	{ key: 'down', label: 'Downloaded', colour: 1, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.download_bytes })) },
+	// 	{ key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.upload_bytes })) },
+	// 	{ key: 'local', label: 'On your network', colour: 3, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.local_bytes })) },
+	// ]);
+	// const bandwidthTip = (i: number) => {
+	// 	const p = bandwidthData[i];
+	// 	return p ? `${pointLabel(p.timestamp)} · ${upDownLocal(p, formatBytes, false)}` : '';
+	// };
+	// OLD CODE END
+	/** A slot's bytes, or NaN (a "No data" gap) when it has no connection record */
+	const bytesOf = (p: BandwidthPoint, v: number) => (recorded(p) ? v : Number.NaN);
 	const bandwidthSeries = $derived<AreaSeries[]>([
-		{ key: 'down', label: 'Downloaded', colour: 1, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.download_bytes })) },
-		{ key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.upload_bytes })) },
-		{ key: 'local', label: 'On your network', colour: 3, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.local_bytes })) },
+		{ key: 'down', label: 'Downloaded', colour: 1, points: bandwidthData.map((p) => ({ t: p.timestamp, v: bytesOf(p, p.download_bytes) })) },
+		{ key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: bytesOf(p, p.upload_bytes) })) },
+		{ key: 'local', label: 'On your network', colour: 3, points: bandwidthData.map((p) => ({ t: p.timestamp, v: bytesOf(p, p.local_bytes) })) },
 	]);
 	const bandwidthTip = (i: number) => {
 		const p = bandwidthData[i];
-		return p ? `${pointLabel(p.timestamp)} · ${upDownLocal(p, formatBytes, false)}` : '';
+		if (!p) return '';
+		return `${pointLabel(p.timestamp)} · ${recorded(p) ? upDownLocal(p, formatBytes, false) : 'no data'}`;
 	};
 	const busiestText = $derived(
 		busiest >= 0
@@ -864,10 +892,12 @@ OLD CODE END -->
 				<li><span class="sw line c-d3"></span>On your network</li>
 			</ul>
 		{/snippet}
-		{#if bandwidthData.length > 0}
+		<!-- OLD CODE: {#if bandwidthData.length > 0} (chart gaps: a window with no connection record is the empty state, not an all-hatched chart) -->
+		{#if bandwidthData.some(recorded)}
 			<AreaChart
 				series={bandwidthSeries}
 				bytes
+				gaps
 				formatX={axisLabel}
 				formatY={formatBytesShort}
 				formatTip={bandwidthTip}

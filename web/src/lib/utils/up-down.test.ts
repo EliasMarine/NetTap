@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { upDownLocal } from './up-down';
+import { recorded, upDownLocal } from './up-down';
 
 const fmt = (n: number) => `${n} B`;
 
@@ -9,5 +9,14 @@ describe('upDownLocal (NET-226)', () => {
 	});
 	it('leaves local out when nothing stayed on the network, and the words out for a tooltip', () => {
 		expect(upDownLocal({ download_bytes: 5, upload_bytes: 3, local_bytes: 0 }, fmt, false)).toBe('↓ 5 B · ↑ 3 B');
+	});
+});
+
+describe('recorded (chart gaps)', () => {
+	it('is false only for a slot with no connection record', () => {
+		expect(recorded({ connections: 0 })).toBe(false);
+		expect(recorded({ connections: 5 })).toBe(true);
+		// an older reply without the field still draws as data
+		expect(recorded({} as { connections: number })).toBe(true);
 	});
 });

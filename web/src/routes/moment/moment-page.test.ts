@@ -465,4 +465,48 @@ describe('Moment page', () => {
 			from: FROM, to: '2026-11-12T14:06:59.999Z', range: '1h', down: '300', up: '30', local: '1', chart_from: CHART_FROM, chart_to: CHART_TO,
 		});
 	});
+
+	// chart resize: the chart is written once the Protocols card beside it has settled, so it draws once at the row's height
+	it('draws the chart only once the Protocols card beside it has settled', async () => {
+		at();
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		let release!: (v: unknown) => void;
+		const held = new Promise((resolve) => (release = resolve));
+		// the protocols reply's body is held back: its json() waits for release()
+		stubDaemon({ ...FULL, '/api/traffic/protocols': held });
+		render(Page);
+		await loaded();
+		await new Promise((r) => setTimeout(r, 20));
+		expect(screen.queryByRole('group', { name: /^Bandwidth / })).not.toBeInTheDocument();
+		release((FULL['/api/traffic/protocols'] as (u: URL) => unknown)(new URL(`http://localhost/api/traffic/protocols?from=${FROM}&to=${TO}`)));
+		expect(await screen.findByRole('group', { name: /^Bandwidth / })).toBeInTheDocument();
+	});
+
+	it('draws the chart when the protocols request fails', async () => {
+		at();
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		const { ['/api/traffic/protocols']: _, ...noProtocols } = FULL;
+		stubDaemon(noProtocols);
+		render(Page);
+		expect(await screen.findByRole('group', { name: /^Bandwidth / })).toBeInTheDocument();
+	});
+
+	// chart gaps: a slot with no connection record is "No data", and a window with none at all is the empty state
+	it('draws a slot with no record as a "No data" band, and a window with no record as the empty state', async () => {
+		at();
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		const none = (k: number) => ({ ...point(k), download_bytes: 0, upload_bytes: 0, local_bytes: 0, total_bytes: 0, connections: 0 });
+		stubDaemon({ ...FULL, '/api/traffic/bandwidth': (u: URL) => ({ ...echo(u), interval: '1m', series: [none(0), none(1), point(2), point(3), point(4)] }) });
+		const { container, unmount } = render(Page);
+		const chart = await screen.findByRole('group', { name: /^Bandwidth / });
+		expect(container.querySelectorAll('rect.nodata')).toHaveLength(1);
+		await fireEvent.keyDown(chart, { key: 'Home' });
+		expect(container.querySelector('.tip-tx')?.textContent).toMatch(/ · no data$/);
+		unmount();
+
+		stubDaemon({ ...FULL, '/api/traffic/bandwidth': (u: URL) => ({ ...echo(u), interval: '1m', series: [none(0), none(1)] }) });
+		render(Page);
+		expect(await screen.findByText('No bandwidth data for this window')).toBeInTheDocument();
+		expect(screen.queryByRole('group', { name: /^Bandwidth / })).not.toBeInTheDocument();
+	});
 });

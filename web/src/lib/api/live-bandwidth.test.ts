@@ -4,7 +4,10 @@ import {
 	getLiveBandwidthSetting,
 	setLiveBandwidthSetting,
 	LiveBandwidthError,
+	keepMeasured,
 	type LiveBandwidthResponse,
+	type LiveBandwidthSample,
+	type LiveBandwidthSupported,
 	type LiveBandwidthSetting,
 } from './live-bandwidth';
 
@@ -172,5 +175,101 @@ describe('the live bandwidth setting', () => {
 	])('rejects a reply with %s', async (_, body) => {
 		mockFetch(body);
 		expect((await caught(getLiveBandwidthSetting())).message).toMatch(/unexpected reply/);
+	});
+});
+
+// chart gaps: a recreated watch reports "Not measuring yet." for slots this card already measured
+describe('keepMeasured', () => {
+	const T0 = 1_794_809_620_000;
+	/** Slot `tick` read at wall time `t` (ms) and daemon time `mono` (s), with a rate or with none. */
+	const slot = (tick: number, t: number | null, mono: number | null, bps: number | null, reason: string | null = null): LiveBandwidthSample => ({
+		tick,
+		t,
+		mono,
+		bracket_ms: t === null ? null : 5,
+		down_bps: bps,
+		up_bps: bps === null ? null : bps / 2,
+		reason: bps === null ? (reason ?? 'Not measuring yet.') : null,
+	});
+	const reply = (samples: LiveBandwidthSample[], extra: Partial<LiveBandwidthSupported> = {}): LiveBandwidthSupported => ({
+		supported: true,
+		reason: null,
+		mode: 'mirror',
+		interface: 'enp1s0',
+		key: { kind: 'ip', value: '192.168.1.5' },
+		layer: 'ethernet-payload',
+		offloads: { gro: false, lro: false },
+		interval_s: 2,
+		latest: samples.at(-1) ?? null,
+		latest_age_s: 0.2,
+		last_valid_age_s: 0.2,
+		measuring_since: T0,
+		samples,
+		...extra,
+	});
+	/** Ticks 100–104 on the daemon's grid, 2 s apart, all measured. */
+	const measured = () => [0, 1, 2, 3, 4].map((k) => slot(100 + k, T0 + k * 2000, 5000 + k * 2, 1000 * (k + 1)));
+	const rates = (r: LiveBandwidthSupported) => r.samples.map((s) => s.down_bps);
+
+	it('returns the reply as it is with nothing earlier', () => {
+		const next = reply(measured());
+		expect(keepMeasured(null, next)).toBe(next);
+	});
+
+	it('keeps the earlier rates after an idle watch is recreated: same ticks, same t and mono, now "Not measuring yet."', () => {
+		const prev = reply(measured());
+		// 20 s unpolled: the new watch starts at tick 110; its earlier slots repeat the shared tick times with no rate
+		const next = reply([...measured().map((s) => slot(s.tick, s.t, s.mono, null)), slot(110, T0 + 20_000, 5020, null, 'Measuring…'), slot(111, T0 + 22_000, 5022, 7000)]);
+		expect(rates(keepMeasured(prev, next))).toEqual([1000, 2000, 3000, 4000, 5000, null, 7000]);
+	});
+
+	it('a rate in the new reply wins over the earlier one', () => {
+		const prev = reply(measured());
+		const next = reply(measured().map((s, k) => (k === 2 ? slot(s.tick, s.t, s.mono, 9999) : s)));
+		expect(rates(keepMeasured(prev, next))[2]).toBe(9999);
+	});
+
+	it('shifted grid: two earlier samples near one new slot stay a gap, neither is chosen', () => {
+		const prev = reply([slot(5, T0 + 10_100, 10.1, 111), slot(6, T0 + 11_900, 11.9, 222)]);
+		const next = reply([slot(5, T0 + 11_000, 11, null), slot(6, T0 + 13_000, 13, null)]);
+		expect(rates(keepMeasured(prev, next))).toEqual([null, null]);
+	});
+
+	it('shifted grid: one earlier sample between two new slots is drawn in neither', () => {
+		const prev = reply([slot(5, T0 + 10_000, 10, 111)]);
+		const next = reply([slot(4, T0 + 9_000, 9, null), slot(5, T0 + 11_000, 11, null)]);
+		expect(rates(keepMeasured(prev, next))).toEqual([null, null]);
+	});
+
+	it('a daemon restart whose ticks overlap the earlier ones keeps nothing', () => {
+		const prev = reply(measured());
+		// a new daemon: the same tick numbers, read at other times (or not read at all)
+		const next = reply(measured().map((s, k) => slot(s.tick, k < 2 ? null : T0 + 400_000 + k * 2000, k < 2 ? null : 9000 + k * 2, null)));
+		expect(rates(keepMeasured(prev, next))).toEqual([null, null, null, null, null]);
+	});
+
+	it('the same t with another mono, or no t, stays a gap', () => {
+		const prev = reply(measured());
+		const next = reply(measured().map((s, k) => slot(s.tick, k === 0 ? null : s.t, k === 1 ? 1 : s.mono, null)).slice(0, 2));
+		expect(rates(keepMeasured(prev, next))).toEqual([null, null]);
+	});
+
+	it('keeps nothing for another interface, interval or device', () => {
+		const prev = reply(measured());
+		const gaps = measured().map((s) => slot(s.tick, s.t, s.mono, null));
+		for (const extra of [{ interface: 'enp2s0' }, { interval_s: 4 }, { key: { kind: 'ip' as const, value: '192.168.1.6' } }, { key: { kind: 'mac' as const, value: '192.168.1.5' } }]) {
+			const next = reply(gaps, extra);
+			expect(keepMeasured(prev, next)).toBe(next);
+		}
+	});
+
+	it('changes neither reply', () => {
+		const prev = reply(measured());
+		const next = reply(measured().map((s) => slot(s.tick, s.t, s.mono, null)));
+		const before = [JSON.stringify(prev), JSON.stringify(next)];
+		const out = keepMeasured(prev, next);
+		expect([JSON.stringify(prev), JSON.stringify(next)]).toEqual(before);
+		expect(out).not.toBe(next);
+		expect(out.samples).not.toBe(next.samples);
 	});
 });

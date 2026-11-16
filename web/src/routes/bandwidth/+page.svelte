@@ -22,7 +22,7 @@
 	import { ipHref } from '$lib/stores/lan';
 	// OLD CODE: import { fmt } from '$lib/utils/drilldown'; (NET-249: a day opens its moment)
 	import { fmt, momentHref, stepMs, type BandwidthChart } from '$lib/utils/drilldown';
-	import { upDownLocal } from '$lib/utils/up-down';
+	import { recorded, upDownLocal } from '$lib/utils/up-down';
 	import { ipv6ListNotes } from '$lib/utils/ipv6-coverage';
 
 	// ---------------------------------------------------------------------------
@@ -167,18 +167,33 @@
 	// { key: 'download', label: 'Download', colour: 1, points: daily.map((d) => ({ t: d.date, v: d.resp_bytes })) },
 	// { key: 'upload', label: 'Upload', colour: 2, points: daily.map((d) => ({ t: d.date, v: d.orig_bytes })) },
 	// OLD CODE END
+	// OLD CODE START — chart gaps: a day with no connection record drew as 0 B, and could be the busiest day
+	// let dailySeries = $derived<AreaSeries[]>([
+	// 	{ key: 'download', label: 'Download', colour: 1, points: daily.map((d) => ({ t: d.date, v: d.download_bytes })) },
+	// 	{ key: 'upload', label: 'Upload', colour: 2, points: daily.map((d) => ({ t: d.date, v: d.upload_bytes })) },
+	// 	{ key: 'local', label: 'Local', colour: 3, points: daily.map((d) => ({ t: d.date, v: d.local_bytes })) },
+	// ]);
+	//
+	// let busiestDay = $derived(
+	// 	daily.reduce((best, d, i) => (d.total_bytes > (daily[best]?.total_bytes ?? -1) ? i : best), -1),
+	// );
+	// const dailyTip = (i: number) => `${formatDate(daily[i].date)} · ${upDownLocal(daily[i], formatBytes, false)}`;
+	// OLD CODE END
+	/** A day's bytes, or NaN (a "No data" gap) when it has no connection record */
+	const bytesOf = (d: DailyUsageEntry, v: number) => (recorded(d) ? v : Number.NaN);
 	let dailySeries = $derived<AreaSeries[]>([
-		{ key: 'download', label: 'Download', colour: 1, points: daily.map((d) => ({ t: d.date, v: d.download_bytes })) },
-		{ key: 'upload', label: 'Upload', colour: 2, points: daily.map((d) => ({ t: d.date, v: d.upload_bytes })) },
-		{ key: 'local', label: 'Local', colour: 3, points: daily.map((d) => ({ t: d.date, v: d.local_bytes })) },
+		{ key: 'download', label: 'Download', colour: 1, points: daily.map((d) => ({ t: d.date, v: bytesOf(d, d.download_bytes) })) },
+		{ key: 'upload', label: 'Upload', colour: 2, points: daily.map((d) => ({ t: d.date, v: bytesOf(d, d.upload_bytes) })) },
+		{ key: 'local', label: 'Local', colour: 3, points: daily.map((d) => ({ t: d.date, v: bytesOf(d, d.local_bytes) })) },
 	]);
 
+	// a day with no record is never the busiest; a recorded 0 B day still beats it
 	let busiestDay = $derived(
-		daily.reduce((best, d, i) => (d.total_bytes > (daily[best]?.total_bytes ?? -1) ? i : best), -1),
+		daily.reduce((best, d, i) => (recorded(d) && d.total_bytes > (daily[best]?.total_bytes ?? -1) ? i : best), -1),
 	);
 
 	// OLD CODE: `${formatDate(daily[i].date)} · ↓ ${formatBytes(daily[i].resp_bytes)} · ↑ ${formatBytes(daily[i].orig_bytes)}` (NET-226)
-	const dailyTip = (i: number) => `${formatDate(daily[i].date)} · ${upDownLocal(daily[i], formatBytes, false)}`;
+	const dailyTip = (i: number) => `${formatDate(daily[i].date)} · ${recorded(daily[i]) ? upDownLocal(daily[i], formatBytes, false) : 'no data'}`;
 
 	// ---------------------------------------------------------------------------
 	// Per-device table (the DataTable sorts; every column both ways)
@@ -469,10 +484,12 @@
 				<li><span class="sw c-d3"></span>Local</li>
 			</ul>
 		{/snippet}
-		{#if daily.length > 0}
+		<!-- OLD CODE: {#if daily.length > 0} (chart gaps: a month with no connection record is the empty state, not an all-hatched chart) -->
+		{#if daily.some(recorded)}
 			<AreaChart
 				series={dailySeries}
 				bytes
+				gaps
 				formatX={(t) => formatDate(String(t))}
 				formatY={formatBytes}
 				formatTip={dailyTip}

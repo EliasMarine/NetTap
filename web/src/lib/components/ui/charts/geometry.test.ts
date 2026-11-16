@@ -12,6 +12,7 @@ import {
 	labelStep,
 	nearestIndex,
 	tipBox,
+	emptyRuns,
 	segmentDash,
 	polar,
 	polygonsOf,
@@ -261,6 +262,57 @@ describe('tipBox', () => {
 		const right = tipBox(600, 10, 'long tooltip text', 600);
 		expect(right.x + right.width).toBe(598);
 		expect(right.y).toBe(0);
+	});
+
+	it('keeps a short text on one 24 px line, as before', () => {
+		const tip = tipBox(300, 100, '21:00 · 4.7 GB', 600);
+		expect(tip.lines).toEqual(['21:00 · 4.7 GB']);
+		expect(tip.height).toBe(24);
+		expect(tip.width).toBe(Math.round('21:00 · 4.7 GB'.length * 6.2 + 24));
+	});
+
+	it('wraps the longest live reason so it fits a phone-width chart (chart gaps)', () => {
+		const text = `14:01:12 · Another traffic rule on enp1s0 runs first, so NetTap can't count reliably.`;
+		const tip = tipBox(140, 120, text, 280);
+		expect(tip.lines.length).toBeGreaterThan(1);
+		expect(tip.lines.join(' ')).toBe(text);
+		for (const line of tip.lines) expect(line.length * 6.2 + 24).toBeLessThanOrEqual(280 - 4);
+		expect(tip.x).toBeGreaterThanOrEqual(2);
+		expect(tip.x + tip.width).toBeLessThanOrEqual(278);
+		expect(tip.height).toBe(24 + 14 * (tip.lines.length - 1));
+		expect(tip.y).toBe(120 - 14 - tip.height);
+	});
+
+	it('stops at three lines, the last ending in …', () => {
+		const tip = tipBox(140, 200, `14:01:12 · Couldn't read the counters: ${'tc error text '.repeat(30)}`, 280);
+		expect(tip.lines).toHaveLength(3);
+		expect(tip.lines[2].endsWith('…')).toBe(true);
+		for (const line of tip.lines) expect(line.length * 6.2 + 24).toBeLessThanOrEqual(276);
+	});
+
+	it('cuts one word longer than a line where the line ends', () => {
+		const tip = tipBox(140, 200, 'x'.repeat(60), 280);
+		const max = Math.floor((280 - 28) / 6.2);
+		expect(tip.lines[0]).toHaveLength(max);
+		expect(tip.lines.join('')).toBe('x'.repeat(60));
+	});
+});
+
+describe('emptyRuns (chart gaps)', () => {
+	const runs = (values: (number | null)[]) => emptyRuns(values.length, (i) => values[i] !== null);
+	it('finds no run when every point has a value', () => {
+		expect(runs([1, 2, 3])).toEqual([]);
+	});
+	it('finds leading, interior and trailing runs, adjacent missing points merged', () => {
+		expect(runs([null, null, 1, null, 2, null, null, null])).toEqual([
+			[0, 1],
+			[3, 3],
+			[5, 7],
+		]);
+	});
+	it('covers everything when nothing has a value, and nothing for no points', () => {
+		expect(runs([null, null, null])).toEqual([[0, 2]]);
+		expect(runs([])).toEqual([]);
 	});
 });
 

@@ -30,7 +30,7 @@
 		momentHref, notInBars, RECORDS_CHANGE, serviceBars, serviceLabel, serviceLogsHref, windowQuery, windowWords, withCount, type BandwidthChart, type DrillWindow,
 	} from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { upDownLocal } from '$lib/utils/up-down';
+	import { recorded, upDownLocal } from '$lib/utils/up-down';
 	import { suricataLevel } from '$lib/utils/severity';
 	import { MAX_WINDOW_SECONDS, nsEpoch, packetsUrl } from '$lib/utils/packet-query';
 
@@ -95,15 +95,28 @@
 					throw e;
 				},
 			);
+		const protocolsDone = settle('protocols', getProtocolDistribution(q), (v) => (protocols = v));
 		const results = await Promise.allSettled([
 			settle('summary', getTrafficSummary(q), (v) => (summary = v)),
 			settle('alertCount', getAlertCount(q), (v) => (alertCount = v)),
 			settle('deviceCount', getDeviceCount(q), (v) => (deviceCount = v)),
-			settle('chart', getBandwidthTimeSeries({ ...q, interval: bucket.bucket }), (v) => {
-				chart = { series: v.series, from: v.from, to: v.to, step: bucket.bucketMs, words: bucket.bucketWords };
-			}),
+			// OLD CODE START — chart resize: written as soon as it came, the chart grew when the taller Protocols card beside it settled
+			// settle('chart', getBandwidthTimeSeries({ ...q, interval: bucket.bucket }), (v) => {
+			// 	chart = { series: v.series, from: v.from, to: v.to, step: bucket.bucketMs, words: bucket.bucketWords };
+			// }),
+			// settle('devices', getMomentDevices(q), (v) => (devices = v)),
+			// settle('protocols', getProtocolDistribution(q), (v) => (protocols = v)),
+			// OLD CODE END
+			// both requests start now; the chart is written once its row neighbour has settled (or failed), so it draws once at the row's height
+			settle(
+				'chart',
+				Promise.all([getBandwidthTimeSeries({ ...q, interval: bucket.bucket }), protocolsDone.catch(() => null)]).then(([v]) => v),
+				(v) => {
+					chart = { series: v.series, from: v.from, to: v.to, step: bucket.bucketMs, words: bucket.bucketWords };
+				},
+			),
 			settle('devices', getMomentDevices(q), (v) => (devices = v)),
-			settle('protocols', getProtocolDistribution(q), (v) => (protocols = v)),
+			protocolsDone,
 			settle('categories', getTrafficCategories(q), (v) => (categories = v.categories)),
 			settle('alerts', getAlerts({ ...q, size: 10, sort: 'severity', order: 'desc' }), (v) => (alerts = v)),
 			settle('joined', getChangelogEvents({ ...q, type: 'device_joined', limit: NEW_DEVICES }), (v) => (joined = v.events)),
@@ -167,19 +180,37 @@
 	const kpiSub = (source: Source, what: string, value: string | null) =>
 		failed[source] !== undefined ? loadFailed(what, value !== null) : (value ?? 'Loading…');
 
+	// OLD CODE START — chart gaps: a slot with no connection record drew as 0 B, a flat line where NetTap had no data
+	// const chartSeries = $derived<AreaSeries[]>(
+	// 	chart
+	// 		? [
+	// 				{ key: 'down', label: 'Downloaded', colour: 1, points: chart.series.map((p) => ({ t: p.timestamp, v: p.download_bytes })) },
+	// 				{ key: 'up', label: 'Uploaded', colour: 2, points: chart.series.map((p) => ({ t: p.timestamp, v: p.upload_bytes })) },
+	// 				{ key: 'local', label: 'On your network', colour: 3, points: chart.series.map((p) => ({ t: p.timestamp, v: p.local_bytes })) },
+	// 			]
+	// 		: [],
+	// );
+	// const chartTip = (i: number) => {
+	// 	const p = chart?.series[i];
+	// 	return p ? `${chartTime(p.timestamp, spanHours)} · ${upDownLocal(p, formatBytes, false)}` : '';
+	// };
+	// OLD CODE END
+	/** A slot's bytes, or NaN (a "No data" gap) when it has no connection record */
+	const bytesOf = (p: { connections: number }, v: number) => (recorded(p) ? v : Number.NaN);
 	const chartSeries = $derived<AreaSeries[]>(
 		chart
 			? [
-					{ key: 'down', label: 'Downloaded', colour: 1, points: chart.series.map((p) => ({ t: p.timestamp, v: p.download_bytes })) },
-					{ key: 'up', label: 'Uploaded', colour: 2, points: chart.series.map((p) => ({ t: p.timestamp, v: p.upload_bytes })) },
-					{ key: 'local', label: 'On your network', colour: 3, points: chart.series.map((p) => ({ t: p.timestamp, v: p.local_bytes })) },
+					{ key: 'down', label: 'Downloaded', colour: 1, points: chart.series.map((p) => ({ t: p.timestamp, v: bytesOf(p, p.download_bytes) })) },
+					{ key: 'up', label: 'Uploaded', colour: 2, points: chart.series.map((p) => ({ t: p.timestamp, v: bytesOf(p, p.upload_bytes) })) },
+					{ key: 'local', label: 'On your network', colour: 3, points: chart.series.map((p) => ({ t: p.timestamp, v: bytesOf(p, p.local_bytes) })) },
 				]
 			: [],
 	);
 	const spanHours = $derived(Math.max(1, (toMs - fromMs) / HOUR));
 	const chartTip = (i: number) => {
 		const p = chart?.series[i];
-		return p ? `${chartTime(p.timestamp, spanHours)} · ${upDownLocal(p, formatBytes, false)}` : '';
+		if (!p) return '';
+		return `${chartTime(p.timestamp, spanHours)} · ${recorded(p) ? upDownLocal(p, formatBytes, false) : 'no data'}`;
 	};
 	const pick = (i: number, j: number) => chart && goto(momentHref(chart, i, j, range, chartWin ?? chart));
 
@@ -306,10 +337,12 @@
 					<li><span class="sw line c-d3"></span>On your network</li>
 				</ul>
 			{/snippet}
-			{#if chart?.series.length}
+			<!-- OLD CODE: {#if chart?.series.length} (chart gaps: a window with no connection record is the empty state, not an all-hatched chart) -->
+			{#if chart?.series.some(recorded)}
 				<AreaChart
 					series={chartSeries}
 					bytes
+					gaps
 					formatX={(t) => chartTime(t, spanHours)}
 					formatY={(v) => (v ? formatBytes(v) : '0')}
 					formatTip={chartTip}

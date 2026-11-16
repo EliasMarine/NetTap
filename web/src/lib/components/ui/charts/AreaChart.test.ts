@@ -200,6 +200,93 @@ describe('AreaChart', () => {
 		});
 	});
 
+	// chart gaps: a stretch with no value is a hatched "No data" band, explained in its tooltip and read by the keyboard
+	describe('no data bands', () => {
+		const NaN_ = Number.NaN;
+		const X = (i: number, n: number) => 50 + (i * 578) / (n - 1);
+		const bands = (container: HTMLElement) =>
+			[...container.querySelectorAll('rect.nodata')].map((r) => ({ x: Number(r.getAttribute('x')), width: Number(r.getAttribute('width')) }));
+		const labels = (container: HTMLElement) => [...container.querySelectorAll('text.ax')].filter((t) => t.textContent === 'No data');
+		const tipFor = (values: number[]) => (i: number) => (Number.isFinite(values[i]) ? `${hour(i)} · ${values[i]} GB` : `${hour(i)} · Missed.`);
+
+		it('hatches an interior stretch from the point before it to the point after it, labelled', () => {
+			const values = [1, 2, NaN_, NaN_, NaN_, 3, 4];
+			const { container } = draw([toSeries('down', 1, values)], { gaps: true, formatTip: tipFor(values) });
+			const [band, ...rest] = bands(container);
+			expect(rest).toHaveLength(0);
+			expect(band.x).toBeCloseTo(X(1, 7), 0);
+			expect(band.x + band.width).toBeCloseTo(X(5, 7), 0);
+			expect(container.querySelector('rect.nodata')!.getAttribute('fill')).toMatch(/^url\(#.+-nodata\)$/);
+			expect(container.querySelector('pattern line.hatch')).not.toBeNull();
+			expect(labels(container)).toHaveLength(1);
+			noNaN(container);
+		});
+
+		it('starts the band at the plot\'s left edge for leading padding', () => {
+			const values = [...Array(148).fill(NaN_), 5, 6];
+			const { container } = draw([toSeries('down', 1, values)], { gaps: true, formatTip: tipFor(values) });
+			const [band] = bands(container);
+			expect(band.x).toBe(50);
+			expect(band.x + band.width).toBeCloseTo(X(148, 150), 0);
+		});
+
+		it('gives a one-point hole a band but no label when it is narrower than the label', () => {
+			const values = DOWN.map((v, i) => (i === 5 ? NaN_ : v));
+			const { container } = draw([toSeries('down', 1, values)], { gaps: true, formatTip: tipFor(values) });
+			expect(bands(container)).toHaveLength(1);
+			expect(bands(container)[0].width).toBeLessThan(64);
+			expect(labels(container)).toHaveLength(0);
+		});
+
+		it('draws no band where another series still has a value, and none without gaps', () => {
+			const down = [1, 2, NaN_, 3, 4];
+			expect(bands(draw([toSeries('down', 1, down), toSeries('up', 2, [1, 1, 1, 1, 1])], { gaps: true }).container)).toHaveLength(0);
+			expect(bands(draw([toSeries('down', 1, down)]).container)).toHaveLength(0);
+		});
+
+		it('without onpick a gaps chart is a focusable group the arrow keys read, a "No data" point included', async () => {
+			const values = [1, 2, NaN_, NaN_, NaN_, 3, 4];
+			const view = draw([toSeries('down', 1, values)], { gaps: true, formatTip: tipFor(values) });
+			const group = view.getByRole('group');
+			expect(group.getAttribute('tabindex')).toBe('0');
+			expect(group.getAttribute('aria-label')).toBe(
+				'Bandwidth per hour. Busiest hour 21:00, with 4.7 GB downloaded. Use the left and right arrow keys to read each point.',
+			);
+			expect(view.queryByRole('img')).toBeNull();
+			const live = () => view.container.querySelector('[aria-live="polite"]')!.textContent;
+			await fireEvent.keyDown(group, { key: 'Home' });
+			expect(view.container.querySelector('.tip-tx')?.textContent).toBe('00:00 · 1 GB');
+			await fireEvent.keyDown(group, { key: 'ArrowRight' });
+			await fireEvent.keyDown(group, { key: 'ArrowRight' });
+			expect(view.container.querySelector('.tip-tx')?.textContent).toBe('02:00 · Missed.');
+			expect(view.container.querySelectorAll('circle.dot')).toHaveLength(0);
+			expect(live()).toBe('02:00 · Missed.');
+			// reading only: Shift makes no range, Enter opens nothing and throws nothing
+			await fireEvent.keyDown(group, { key: 'ArrowRight', shiftKey: true });
+			expect(view.container.querySelector('rect.band.pick')).toBeNull();
+			expect(live()).toBe('03:00 · Missed.');
+			await fireEvent.keyDown(group, { key: 'Enter' });
+			await fireEvent.keyDown(group, { key: 'Escape' });
+			expect(live()).toBe('');
+		});
+
+		it('wraps a tooltip longer than the chart into lines with a taller pill', async () => {
+			const long = `${hour(2)} · Another traffic rule on enp1s0 runs first, so NetTap can't count reliably. Couldn't read the counters either.`;
+			const values = [1, 2, NaN_, 3, 4];
+			const view = draw([toSeries('down', 1, values)], { gaps: true, formatTip: (i: number) => (i === 2 ? long : `${hour(i)} · ${values[i]} GB`) });
+			const group = view.getByRole('group');
+			await fireEvent.keyDown(group, { key: 'Home' });
+			expect(view.container.querySelectorAll('.tip-tx tspan')).toHaveLength(1);
+			expect(view.container.querySelector('rect.tip-bg')!.getAttribute('height')).toBe('24');
+			await fireEvent.keyDown(group, { key: 'ArrowRight' });
+			await fireEvent.keyDown(group, { key: 'ArrowRight' });
+			const lines = [...view.container.querySelectorAll('.tip-tx tspan')].map((t) => t.textContent);
+			expect(lines.length).toBe(2);
+			expect(lines.join(' ')).toBe(long);
+			expect(view.container.querySelector('rect.tip-bg')!.getAttribute('height')).toBe('38');
+		});
+	});
+
 	// NET-249: with onpick, a click, a drag or the keyboard picks points; without it nothing changes
 	describe('picking', () => {
 		// 640 px wide, plot from 50 to 628 px: 24 points 578 / 23 px apart

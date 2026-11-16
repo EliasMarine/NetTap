@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
@@ -129,7 +129,8 @@ describe('Bandwidth — cards', () => {
 		// OLD CODE: …toHaveTextContent('45.0GB'); (NET-226 follow-up: the projection leaves out local traffic)
 		expect((await screen.findByText('Projected')).closest('.kpi')).toHaveTextContent('37.5GB');
 		expect(screen.getByText('Days remaining').closest('.kpi')).toHaveTextContent('28days');
-		expect(screen.getByRole('img', { name: /^Busiest day 2 Nov, with 5\.0 GB/ })).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByRole('img', { name: /^Busiest day 2 Nov, with 5\.0 GB/ })).toBeInTheDocument(); (chart gaps: a gaps chart is a group)
+		expect(screen.getByRole('group', { name: /^Busiest day 2 Nov, with 5\.0 GB/ })).toBeInTheDocument();
 		// OLD CODE START — NET-160: the table's address is a link now too, so there are two
 		// expect(screen.getByRole('link', { name: /192\.168\.1\.9/ })).toHaveAttribute('href', '/devices/192.168.1.9');
 		// OLD CODE END
@@ -248,5 +249,38 @@ describe('Bandwidth — one month window and the device cap', () => {
 		stubDaemon(ALL);
 		render(Page);
 		expect(await screen.findByText('This month · 2 devices')).toBeInTheDocument();
+	});
+});
+
+// chart gaps: a day with no connection record is "No data", never 0 B and never the busiest day
+describe('Bandwidth — days with no record', () => {
+	afterEach(() => vi.unstubAllGlobals());
+	const missing = (date: string) => ({ date, total_bytes: 0, orig_bytes: 0, resp_bytes: 0, upload_bytes: 0, download_bytes: 0, local_bytes: 0, connections: 0 });
+	const recordedZero = (date: string) => ({ ...missing(date), connections: 3 });
+
+	it('draws a missing day as a "No data" band, and its tooltip says so', async () => {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		stubDaemon({ ...ALL, '/api/bandwidth/daily': { ...DAILY, daily: [missing('2026-10-31T00:00:00Z'), ...DAILY.daily] } });
+		const { container } = render(Page);
+		const chart = await screen.findByRole('group', { name: /^Busiest day 2 Nov, with 5\.0 GB/ });
+		expect(container.querySelectorAll('rect.nodata')).toHaveLength(1);
+		await fireEvent.keyDown(chart, { key: 'Home' });
+		expect(container.querySelector('.tip-tx')?.textContent).toMatch(/ · no data$/);
+	});
+
+	it('shows the empty state for a month with no record at all, not a hatched chart or a busiest day', async () => {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		stubDaemon({ ...ALL, '/api/bandwidth/daily': { ...DAILY, daily: [missing('2026-11-01T00:00:00Z'), missing('2026-11-02T00:00:00Z')] } });
+		const { container } = render(Page);
+		expect(await screen.findByText('No usage this month yet')).toBeInTheDocument();
+		expect(container.querySelector('rect.nodata')).toBeNull();
+		expect(screen.queryByRole('group', { name: /^Busiest day/ })).not.toBeInTheDocument();
+	});
+
+	it('a recorded 0 B day is the busiest, not the missing day before it', async () => {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		stubDaemon({ ...ALL, '/api/bandwidth/daily': { ...DAILY, daily: [missing('2026-11-01T00:00:00Z'), recordedZero('2026-11-02T00:00:00Z')] } });
+		render(Page);
+		expect(await screen.findByRole('group', { name: /^Busiest day 2 Nov, with 0 B/ })).toBeInTheDocument();
 	});
 });

@@ -77,6 +77,18 @@ export function finiteRuns(points: readonly Point[]): Point[][] {
 		.filter((run) => run.length > 0);
 }
 
+/** The inclusive index runs [first, last] where `has(i)` is false: the stretches a gaps chart marks "No data". */
+export function emptyRuns(n: number, has: (i: number) => boolean): [number, number][] {
+	const runs: [number, number][] = [];
+	for (let i = 0; i < n; i++) {
+		if (has(i)) continue;
+		const last = runs.at(-1);
+		if (last && last[1] === i - 1) runs[runs.length - 1] = [last[0], i];
+		else runs.push([i, i]);
+	}
+	return runs;
+}
+
 export interface DonutSegment {
 	/** Index into the caller's original array (zero values keep their index but are not drawn). */
 	index: number;
@@ -205,10 +217,50 @@ export function nearestIndex(x: number, left: number, plotWidth: number, count: 
 	return Math.max(0, Math.min(count - 1, i));
 }
 
-/** The pill tooltip's box: width estimated from the text, kept inside the chart. */
-export function tipBox(x: number, y: number, text: string, chartWidth: number): { x: number; y: number; width: number } {
-	const width = Math.round(text.length * 6.2 + 24);
-	return { x: Math.max(2, Math.min(x - width / 2, chartWidth - width - 2)), y: Math.max(y - 38, 0), width };
+// OLD CODE START — one line however long: a long reason ran past a phone-width chart (chart gaps, round 1)
+// /** The pill tooltip's box: width estimated from the text, kept inside the chart. */
+// export function tipBox(x: number, y: number, text: string, chartWidth: number): { x: number; y: number; width: number } {
+// 	const width = Math.round(text.length * 6.2 + 24);
+// 	return { x: Math.max(2, Math.min(x - width / 2, chartWidth - width - 2)), y: Math.max(y - 38, 0), width };
+// }
+// OLD CODE END
+
+/** A tooltip character's estimated width (px), its side padding together, its line step, and its most lines. */
+const TIP_CHAR = 6.2;
+const TIP_PAD = 24;
+const TIP_LINE = 14;
+const TIP_MAX_LINES = 3;
+
+/** Words wrapped greedily to `max` characters, at most TIP_MAX_LINES lines, the last cut with "…". */
+function wrapTip(text: string, max: number): string[] {
+	const lines: string[] = [];
+	let rest = text.trim();
+	while (rest && lines.length < TIP_MAX_LINES) {
+		if (rest.length <= max) {
+			lines.push(rest);
+			rest = '';
+			break;
+		}
+		const space = rest.lastIndexOf(' ', max);
+		const end = space > 0 ? space : max; // one word longer than a line is cut where the line ends
+		lines.push(rest.slice(0, end).trimEnd());
+		rest = rest.slice(end).trimStart();
+	}
+	if (rest) lines[lines.length - 1] = `${lines[lines.length - 1].slice(0, max - 1).trimEnd()}…`;
+	return lines.length ? lines : [''];
+}
+
+/** The pill tooltip's box: width estimated from the text, wrapped to fit and kept inside the chart. One line is 24 px tall. */
+export function tipBox(
+	x: number,
+	y: number,
+	text: string,
+	chartWidth: number,
+): { x: number; y: number; width: number; height: number; lines: string[] } {
+	const lines = wrapTip(text, Math.max(8, Math.floor((chartWidth - 4 - TIP_PAD) / TIP_CHAR)));
+	const width = Math.round(Math.max(...lines.map((l) => l.length)) * TIP_CHAR + TIP_PAD);
+	const height = 24 + TIP_LINE * (lines.length - 1);
+	return { x: Math.max(2, Math.min(x - width / 2, chartWidth - width - 2)), y: Math.max(y - 14 - height, 0), width, height, lines };
 }
 
 /** A map label sits left of its dot once the dot is past this share of the width. */

@@ -37,7 +37,9 @@ describe('Home — failed traffic requests (#96)', () => {
 
 		expect(await screen.findByText("Couldn't load traffic categories: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load traffic totals: the request failed.")).toBeInTheDocument();
-		expect(screen.getByText("Couldn't load bandwidth over time: the request failed.")).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText("Couldn't load bandwidth over time: the request failed.")).toBeInTheDocument();
+		// (chart resize: the chart is written after the protocols card beside it settles, a few microtasks later)
+		expect(await screen.findByText("Couldn't load bandwidth over time: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load network protocols: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByText(/No category data yet/)).not.toBeInTheDocument();
 		expect(screen.queryByText('No service data available.')).not.toBeInTheDocument();

@@ -56,10 +56,13 @@ describe('Bandwidth — a day opens its moment (NET-249)', () => {
 		expect(Object.fromEntries(target(1).searchParams)).toMatchObject({ from: MONTH_FROM, to: NOW, down: '300', up: '30', local: '3' });
 	});
 
-	it('a reply that names no bucket (an older daemon) stays a picture', async () => {
+	// OLD CODE: it('a reply that names no bucket (an older daemon) stays a picture', …) with getByRole('img', …)
+	// (chart gaps: the daily chart marks days with no record, so it is read with the arrow keys; it still picks nothing)
+	it('a reply that names no bucket (an older daemon) can be read but not picked', async () => {
 		dailyReply = { ...(dailyReply as object), interval: undefined };
 		render(Page);
-		await vi.waitFor(() => expect(screen.getByRole('img', { name: /^Busiest day/ })).toBeInTheDocument());
+		await vi.waitFor(() => expect(chart()).toBeInTheDocument());
+		expect(chart().getAttribute('aria-label')).toMatch(/Use the left and right arrow keys to read each point\.$/);
 		expect(screen.queryByText(/see that moment/)).not.toBeInTheDocument();
 	});
 });
