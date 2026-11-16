@@ -111,10 +111,11 @@ describe('Connection drawer — signature links', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('links each signature to /alerts?signature=…', async () => {
+	// OLD CODE: it('links each signature to /alerts?signature=…', … toHaveAttribute('href', '/alerts?signature=ET+SCAN+Nmap+%26+co') (the rule page now)
+	it('links each signature to its rule page', async () => {
 		const alerts = [{ _id: 'a1', alert: { severity: 1, signature: 'ET SCAN Nmap & co' } }];
 		stubAlerts({ ok: true, body: { from: '', to: '', page: 1, size: 10, total: 1, total_pages: 1, alerts } });
 		render(ConnectionDrawerContent, { connection: CONNECTION, activeTab: 'summary' });
-		expect(await screen.findByRole('link', { name: 'ET SCAN Nmap & co' })).toHaveAttribute('href', '/alerts?signature=ET+SCAN+Nmap+%26+co');
+		expect(await screen.findByRole('link', { name: 'ET SCAN Nmap & co' })).toHaveAttribute('href', '/alerts/rule/ET%20SCAN%20Nmap%20%26%20co');
 	});
 });

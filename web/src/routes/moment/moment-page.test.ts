@@ -165,7 +165,9 @@ describe('Moment page', () => {
 		expect(link('Streaming', card('Traffic categories'))).toHaveAttribute('href', '/traffic/streaming');
 
 		const alerts = card('Alerts');
-		expect(params(link(/ET SCAN Nmap/, alerts))).toEqual({ signature: 'ET SCAN raw rule', from: FROM, to: TO, range: '1h' });
+		// OLD CODE: expect(params(link(/ET SCAN Nmap/, alerts))).toEqual({ signature: 'ET SCAN raw rule', from: FROM, to: TO, range: '1h' }); (a named rule opens its page)
+		expect(link(/ET SCAN Nmap/, alerts).getAttribute('href')).toMatch(/^\/alerts\/rule\/ET%20SCAN%20raw%20rule\?/);
+		expect(params(link(/ET SCAN Nmap/, alerts))).toEqual({ from: FROM, to: TO, range: '1h' });
 		expect(params(link(/A rule with no name/, alerts))).toEqual({ no_rule_name: 'true', from: FROM, to: TO, range: '1h' });
 		expect(params(link('All 12 alerts', alerts))).toEqual({ from: FROM, to: TO, range: '1h', count: '12' });
 

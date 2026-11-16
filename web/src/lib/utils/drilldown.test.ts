@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery, DRILL_RANGES, bucketFor, bucketWindow, momentHref, serviceLabel, serviceLogsHref, windowWords, RECORDS_CHANGE, pickWindow, pickedTotal, stepMs, type TimeChart } from './drilldown';
+import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, ruleHref, windowQuery, DRILL_RANGES, bucketFor, bucketWindow, momentHref, serviceLabel, serviceLogsHref, windowWords, RECORDS_CHANGE, pickWindow, pickedTotal, stepMs, type TimeChart } from './drilldown';
 import { snapshotWindow } from '$lib/stores/alertSnapshot';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
@@ -157,6 +157,22 @@ describe('exact-window links', () => {
 });
 
 // NET-160 slice 2b-2: a raw Suricata category's page and the lists its figures open
+describe('Rule page links', () => {
+	const win = { from: '2026-11-05T13:02:00.000Z', to: '2026-11-06T13:02:00.000Z', range: '7d' };
+
+	it('encodes the whole name into one path segment, "/" included', () => {
+		expect(ruleHref('ET INFO A/B & C 50%')).toBe('/alerts/rule/ET%20INFO%20A%2FB%20%26%20C%2050%25');
+		expect(decodeURIComponent(new URL(ruleHref('ET INFO A/B', win), 'http://x').pathname.split('/').at(-1)!)).toBe('ET INFO A/B');
+	});
+
+	it('carries the window only when given, and the activity list only when asked', () => {
+		expect(Object.fromEntries(new URL(ruleHref('x', win), 'http://x').searchParams)).toEqual(win);
+		expect(ruleHref('x', undefined, { activity: true })).toBe('/alerts/rule/x?activity=true');
+		expect(ruleHref('x', undefined, { activity: false })).toBe('/alerts/rule/x');
+		expect(Object.fromEntries(new URL(ruleHref('x', { from: 'a', to: 'b' }, { activity: true }), 'http://x').searchParams)).toEqual({ from: 'a', to: 'b', activity: 'true' });
+	});
+});
+
 describe('Suricata category links', () => {
 	const win = { from: '2026-11-05T13:02:00.000Z', to: '2026-11-06T13:02:00.000Z', range: '7d' };
 

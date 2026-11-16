@@ -53,7 +53,7 @@
 	// OLD CODE: import { alertsHrefForSignature, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown'; (NET-185: the URL's window)
 	// OLD CODE: import { alertsHrefForSignature, customRange, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: picks)
 	import {
-		alertsHrefForSignature, bucketFor, customRange, DRILL_RANGES, fmt, linkedCount, pickedTotal, pickWindow, rangeWindow, startRange, withCount, type DrillWindow,
+		alertsHrefForSignature, bucketFor, customRange, DRILL_RANGES, fmt, linkedCount, pickedTotal, pickWindow, rangeWindow, ruleHref, startRange, withCount, type DrillWindow,
 	} from '$lib/utils/drilldown';
 	import { bucketWords, NARROW_HINT, narrowTo, pickedLine } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
@@ -761,8 +761,12 @@
 	// const sigBarHref = (sig: { signature: string; count: number }) =>
 	// 	sig.signature && sig.signature !== 'Unknown' ? withCount(sigHref(sig.signature), sig.count) : undefined;
 	// OLD CODE END
+	// OLD CODE START — a named rule opens its own page (what it means, which devices); no rule name keeps the list
+	// const sigBarHref = (sig: { signature: string | null; count: number }) =>
+	// 	sig.signature !== '' ? withCount(sigHref(sig.signature), sig.count) : undefined;
+	// OLD CODE END
 	const sigBarHref = (sig: { signature: string | null; count: number }) =>
-		sig.signature !== '' ? withCount(sigHref(sig.signature), sig.count) : undefined;
+		sig.signature === null ? withCount(sigHref(null), sig.count) : sig.signature !== '' ? ruleHref(sig.signature, shownWindow) : undefined;
 
 	/** The daemon lists at most this many addresses and signatures. */
 	const LIST_CAP = 20;
@@ -798,7 +802,8 @@ OLD CODE END -->
 	<!-- OLD CODE: …{:else}<span class="mono">Unknown</span>{/if} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
 	<!-- OLD CODE: {#if a.alert?.signature}<a class="mono" href={sigHref(a.alert.signature)} … (NET-185: linked by the shown signature, which can be Suricata's own, not the rule.name the list matches, so it opened an empty list) -->
 	<!-- Every alert with this rule over the figures' window; no link without a rule.name, which the list matches (as on Alerts) -->
-	{#if a.rule?.name}<a class="mono" href={sigHref(a.rule.name)} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else if a.alert?.signature}<span class="mono" title={a.alert.signature}>{a.alert.signature}</span>{:else}<span class="dim">No rule name</span>{/if}
+	<!-- OLD CODE: {#if a.rule?.name}<a class="mono" href={sigHref(a.rule.name)} … (the rule page explains the rule and lists its devices) -->
+	{#if a.rule?.name}<a class="mono" href={ruleHref(a.rule.name, shownWindow)} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else if a.alert?.signature}<span class="mono" title={a.alert.signature}>{a.alert.signature}</span>{:else}<span class="dim">No rule name</span>{/if}
 {/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}

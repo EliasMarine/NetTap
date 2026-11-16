@@ -124,14 +124,23 @@ describe('Suricata category page', () => {
 		const rules = card('Rules');
 		const rule = within(rules).getByRole('link', { name: 'ET INFO Observed DNS Query to .cloud TLD' });
 		// OLD CODE: …toEqual({ signature: 'ET INFO Observed DNS Query to .cloud TLD', suricata_category: NAME, ...WIN }) (section D)
-		expect(query(rule.getAttribute('href'))).toEqual({ signature: 'ET INFO Observed DNS Query to .cloud TLD', suricata_category: NAME, ...WIN, count: '700' });
+		// OLD CODE: expect(query(rule.getAttribute('href'))).toEqual({ signature: 'ET INFO Observed DNS Query to .cloud TLD', suricata_category: NAME, ...WIN, count: '700' }); (the name opens the rule page, the count the list)
+		expect(rule.getAttribute('href')).toMatch(/^\/alerts\/rule\/ET%20INFO%20Observed%20DNS%20Query%20to%20\.cloud%20TLD\?/);
+		expect(query(rule.getAttribute('href'))).toEqual(WIN);
+		const ruleCount = within(rule.closest('tr')!).getByRole('link', { name: '700' });
+		expect(query(ruleCount.getAttribute('href'))).toEqual({ signature: 'ET INFO Observed DNS Query to .cloud TLD', suricata_category: NAME, ...WIN, count: '700' });
 		// null and "" are two rows that read the same, neither a link
 		const none = within(rules).getAllByText('No rule name');
 		expect(none).toHaveLength(2);
 		for (const n of none) expect(n.closest('a')).toBeNull();
 		// a rule literally named "Unknown" is an ordinary rule
 		// OLD CODE: …toEqual({ signature: 'Unknown', suricata_category: NAME, ...WIN }) (section D)
-		expect(query(within(rules).getByRole('link', { name: 'Unknown' }).getAttribute('href'))).toEqual({ signature: 'Unknown', suricata_category: NAME, ...WIN, count: '4' });
+		// OLD CODE: expect(query(within(rules).getByRole('link', { name: 'Unknown' }).getAttribute('href'))).toEqual({ signature: 'Unknown', suricata_category: NAME, ...WIN, count: '4' }); (its count opens the list now)
+		const unknown = within(rules).getByRole('link', { name: 'Unknown' });
+		expect(unknown.getAttribute('href')).toMatch(/^\/alerts\/rule\/Unknown\?/);
+		expect(query(within(unknown.closest('tr')!).getByRole('link', { name: '4' }).getAttribute('href'))).toEqual({ signature: 'Unknown', suricata_category: NAME, ...WIN, count: '4' });
+		// the rows without a rule name keep a plain count
+		for (const n of none) expect(within(n.closest('tr')!).queryAllByRole('link')).toHaveLength(0);
 		expect(within(rules).getByText('5 rules')).toBeInTheDocument();
 		expectNoNestedInteractive(container);
 	});

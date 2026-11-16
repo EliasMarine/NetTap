@@ -78,6 +78,13 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 		expect((await pending).status).toBe(200);
 	});
 
+	it('lets a 12 s rule page answer through', async () => {
+		slowDaemon();
+		const pending = GET(event(`/api/alerts/rule/${encodeURIComponent('ET INFO A/B & C')}?from=a&to=b`) as never);
+		await vi.advanceTimersByTimeAsync(DELAY_MS);
+		expect((await pending).status).toBe(200);
+	});
+
 	it('lets a 12 s moment device breakdown through (NET-249)', async () => {
 		slowDaemon();
 		const pending = GET(event('/api/moment/devices?from=a&to=b&limit=10') as never);

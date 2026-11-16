@@ -157,7 +157,8 @@ describe('Alert category page — signature links', () => {
 		const { container } = render(Page);
 		const table = await vi.waitFor(() => screen.getByRole('table', { name: /alerts, newest first/ }));
 		const href = within(table).getByRole('link', { name: 'A shown name' }).getAttribute('href')!;
-		expect(new URL(href, 'http://localhost').searchParams.get('signature')).toBe('ET SCAN Raw rule');
+		// OLD CODE: expect(new URL(href, 'http://localhost').searchParams.get('signature')).toBe('ET SCAN Raw rule'); (the rule page, keyed by rule.name)
+		expect(new URL(href, 'http://localhost').pathname).toBe('/alerts/rule/ET%20SCAN%20Raw%20rule');
 		expect(within(table).getByText('Suricata only')).toBeInTheDocument();
 		expect(within(table).queryByRole('link', { name: 'Suricata only' })).not.toBeInTheDocument();
 		expectNoNestedInteractive(container);
@@ -192,16 +193,22 @@ describe('Alert category page — signature links', () => {
 		await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Sig a' })).toBeInTheDocument());
 		const detailUrl = vi.mocked(fetch).mock.calls.map(([u]) => String(u)).find((u) => u.startsWith('/api/alerts/categories/scan?'))!;
 		const shown = new URLSearchParams(detailUrl.split('?')[1]);
+		// OLD CODE START — both opened the list for the signature; a named rule opens its page now
+		// for (const name of ['ET SCAN Nmap', 'Sig a']) {
+		// 	const q = new URL(screen.getByRole('link', { name }).getAttribute('href')!, 'http://localhost');
+		// 	expect(q.pathname).toBe('/alerts');
+		// 	expect([q.searchParams.get('signature'), q.searchParams.get('from'), q.searchParams.get('to'), q.searchParams.get('range')]).toEqual([
+		// 		name, shown.get('from'), shown.get('to'), '24h',
+		// 	]);
+		// }
+		// expect(new URL(screen.getByRole('link', { name: 'ET SCAN Nmap' }).getAttribute('href')!, 'http://localhost').searchParams.get('count')).toBe('3');
+		// expect(new URL(screen.getByRole('link', { name: 'Sig a' }).getAttribute('href')!, 'http://localhost').searchParams.has('count')).toBe(false);
+		// OLD CODE END
 		for (const name of ['ET SCAN Nmap', 'Sig a']) {
 			const q = new URL(screen.getByRole('link', { name }).getAttribute('href')!, 'http://localhost');
-			expect(q.pathname).toBe('/alerts');
-			expect([q.searchParams.get('signature'), q.searchParams.get('from'), q.searchParams.get('to'), q.searchParams.get('range')]).toEqual([
-				name, shown.get('from'), shown.get('to'), '24h',
-			]);
+			expect(q.pathname).toBe(`/alerts/rule/${encodeURIComponent(name)}`);
+			expect(Object.fromEntries(q.searchParams)).toEqual({ from: shown.get('from'), to: shown.get('to'), range: '24h' });
 		}
-		// NET-160 section D: the bar carries its figure; the table row's link counts nothing, so carries none
-		expect(new URL(screen.getByRole('link', { name: 'ET SCAN Nmap' }).getAttribute('href')!, 'http://localhost').searchParams.get('count')).toBe('3');
-		expect(new URL(screen.getByRole('link', { name: 'Sig a' }).getAttribute('href')!, 'http://localhost').searchParams.has('count')).toBe(false);
 		expectNoNestedInteractive(container);
 
 		// a refresh still in flight (minutes later) leaves the links on the figures on screen
@@ -262,7 +269,9 @@ describe('Alert category page — signature links', () => {
 		const params = (name: string) => Object.fromEntries(new URL(within(card).getByRole('link', { name: new RegExp(name) }).getAttribute('href')!, 'http://localhost').searchParams);
 		const shown = new URLSearchParams(vi.mocked(fetch).mock.calls.map(([u]) => String(u)).find((u) => u.startsWith('/api/alerts/categories/scan?'))!.split('?')[1]);
 		const win = { from: shown.get('from'), to: shown.get('to'), range: '24h' };
-		expect(params('Unknown')).toEqual({ signature: 'Unknown', ...win, count: '5' });
+		// OLD CODE: expect(params('Unknown')).toEqual({ signature: 'Unknown', ...win, count: '5' }); (a named rule opens its page)
+		expect(new URL(within(card).getByRole('link', { name: /Unknown/ }).getAttribute('href')!, 'http://localhost').pathname).toBe('/alerts/rule/Unknown');
+		expect(params('Unknown')).toEqual(win);
 		expect(params('No rule name')).toEqual({ no_rule_name: 'true', ...win, count: '4' });
 		expect(within(card).getAllByRole('link')).toHaveLength(3);
 		expect(rows[3].querySelector('a, button, [href]')).toBeNull();

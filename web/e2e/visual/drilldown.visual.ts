@@ -112,3 +112,39 @@ test.describe('Suricata category page', () => {
 		expectNoConsoleErrors(errors, { route: path, mode: 'populated' });
 	});
 });
+
+// The rule page: one Suricata rule by its exact name
+test.describe('Suricata rule page', () => {
+	const name = 'ET EXPLOIT Apache HTTP Server 2.4.49 - Path Traversal Attempt (CVE-2021-41773) M2 / outbound & encoded 50%';
+	const path = `/alerts/rule/${encodeURIComponent(name)}`;
+
+	test('a name with "/", "&" and "%" reaches the daemon encoded once and heads the page', async ({ page }) => {
+		await setMode('populated');
+		await stubUpstreams(page, 'populated');
+		const apiIdle = watchApi(page);
+		const figures = page.waitForRequest((r) => new URL(r.url()).pathname.startsWith('/api/alerts/rule/'));
+		await page.goto(path);
+		const request = await figures;
+		expect(new URL(request.url()).pathname).toBe(`/api/alerts/rule/${encodeURIComponent(name)}`);
+		expect((await request.response())?.status()).toBe(200);
+		await expectReached(page, path, name);
+		await apiIdle();
+		await expect(page.locator('main h1.page-title')).toHaveText(name);
+		await expect(kpi(page, 'Alerts')).toContainText('180');
+	});
+
+	test('the populated page also fits 1024 and 768 in every theme (the route sweep covers 1920, 1440 and 390)', async ({ page }, testInfo) => {
+		await setMode('populated');
+		const errors = watchConsole(page);
+		const apiIdle = watchApi(page);
+		await stubUpstreams(page, 'populated');
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await page.goto(path);
+		await expectReached(page, path, name);
+		await apiIdle();
+		await expect(page.getByText(/discovery stopped at its limit/)).toBeVisible();
+		await sweep(page, testInfo, { route: path, mode: 'populated' }, { viewports: [{ width: 1024, height: 768 }, { width: 768, height: 1024 }] });
+		expectNoConsoleErrors(errors, { route: path, mode: 'populated' });
+	});
+});
+

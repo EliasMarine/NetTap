@@ -480,17 +480,37 @@ class TestRuleMatchWording(unittest.TestCase):
     def test_a_curated_malware_sid_says_check_first(self):
         """SID 2024792 told the owner to isolate the device before anything else."""
         enricher = AlertEnrichment()
+        # OLD CODE: "signature": "ET MALWARE x", (the curated text now has to name the rule)
         result = enricher.enrich_alert(
             {
                 "alert": {
                     "signature_id": 2024792,
-                    "signature": "ET MALWARE x",
+                    "signature": "ET MALWARE Win32/Emotet Activity",
                     "severity": 1,
                 }
             }
         )
         self.assertIn("Check the device", result["recommendation"])
         self.assertNotIn("Isolate", result["recommendation"])
+
+    def test_a_curated_text_is_used_only_for_the_rule_it_names(self):
+        """2016149 is filed as Bitcoin mining in the file, but the real 2016149 is STUN."""
+        enricher = AlertEnrichment()
+        stun = "ET INFO Session Traversal Utilities for NAT (STUN Binding Request)"
+        result = enricher.enrich_alert(
+            {"alert": {"signature_id": 2016149, "signature": stun, "severity": 3}}
+        )
+        self.assertNotIn("mining", result["plain_description"].lower())
+        self.assertNotIn("cryptojacking", result["risk_context"].lower())
+        self.assertIsNone(enricher.sid_text("2016149", stun))
+        # the rule it does name, exactly or with a suffix, keeps it
+        emotet = "ET MALWARE Win32/Emotet Activity"
+        self.assertIn("Emotet", enricher.sid_text("2024792", emotet)["what"])
+        self.assertIn(
+            "Emotet", enricher.sid_text("2024792", f"{emotet} (POST)")["what"]
+        )
+        self.assertIsNone(enricher.sid_text("2024792", ""))
+        self.assertIsNone(enricher.sid_text("1", emotet))
 
     def test_generated_text_never_states_a_finding(self):
         for prefix in ("ET MALWARE", "ET TROJAN", "ET EXPLOIT", "ET SCAN", "X"):

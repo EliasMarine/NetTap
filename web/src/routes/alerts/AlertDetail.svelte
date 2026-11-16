@@ -19,7 +19,8 @@
 	// OLD CODE: import { alertAdvice, alertExplanation, alertLevel, alertTitle, logExplorerHref } from './alert-view'; (slice 2b-2)
 	import { alertAdvice, alertExplanation, alertLevel, alertTitle, linkedSuricataCategory, logExplorerHref } from './alert-view';
 	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (slice 2b-2)
-	import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown'; (the rule name opens the rule page)
+	import { ruleHref, suricataCategoryHref } from '$lib/utils/drilldown';
 
 	interface Props {
 		alert: Alert;
@@ -85,7 +86,8 @@
 		<!-- OLD CODE: <p class="sig wrap">{alert.alert?.signature || 'Unknown signature'}</p> (slice 2a: not a link) -->
 		<!-- OLD CODE: <p class="sig wrap">{#if alert.alert?.signature}<a href={alertsHrefForSignature(alert.alert.signature)}>{alert.alert.signature}</a>{:else}Unknown signature{/if}</p> (slice 2b-1: the list's filter matches rule.name, not the shown signature) -->
 		<!-- OLD CODE: <a href={alertsHrefForSignature(alert.rule.name)}> (NET-191: from the activity list it opened the counted list) -->
-		<p class="sig wrap">{#if alert.rule?.name}<a href={alertsHrefForSignature(alert.rule.name, undefined, { activity })}>{alert.alert?.signature || alert.rule.name}</a>{:else}{alert.alert?.signature || 'No rule name'}{/if}</p>
+		<!-- OLD CODE: <a href={alertsHrefForSignature(alert.rule.name, undefined, { activity })}> (the rule page explains the rule and lists its devices) -->
+		<p class="sig wrap">{#if alert.rule?.name}<a href={ruleHref(alert.rule.name, undefined, { activity })}>{alert.alert?.signature || alert.rule.name}</a>{:else}{alert.alert?.signature || 'No rule name'}{/if}</p>
 		<!-- OLD CODE: …{:else}{alert.alert?.signature || 'Unknown signature'}{/if}</p> (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
 	</div>
 	{#if explanation}<p class="drawer-plain">{explanation}</p>{/if}

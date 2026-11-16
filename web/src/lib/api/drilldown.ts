@@ -347,3 +347,138 @@ export async function getSuricataCategory(name: string, from: string, to: string
 	if (!ok) throw new Error('Suricata category failed: the reply was malformed');
 	return body as unknown as SuricataCategoryFigures;
 }
+
+// ---------------------------------------------------------------------------
+// One Suricata rule (the rule page): GET /api/alerts/rule/{name} (daemon/api/suricata_rule.py).
+// Keyed by the exact rule name, counted with the Alerts list's own signature= query.
+// ---------------------------------------------------------------------------
+
+/** A "learn more" link the daemon built from a validated id; always https. */
+export interface RuleLink {
+	label: string;
+	url: string;
+	source: string;
+}
+
+export interface RuleTexts {
+	what: string;
+	risk: string;
+	todo: string;
+}
+
+/** One SID's facts, from its newest alert in the window; empty or null when not recorded. */
+export interface RuleSid {
+	sid: string;
+	alerts: number;
+	categories: string[];
+	/** ET's rating list (signature_severity); [] when the rule has none */
+	et_ratings: string[];
+	techniques: { id: string; name: string | null }[];
+	tactics: { id: string; name: string | null }[];
+	cves: string[];
+	cisa_kev: boolean;
+	/** IPFire DBL lists ("phishing", "malware"…) */
+	dbl_lists: string[];
+	/** ET rates it only informational and its name names a secret sent in the clear */
+	credential: boolean;
+	/** Its curated description, or the credential advice; null when it has neither */
+	advice: RuleTexts | null;
+	learn_more: RuleLink[];
+}
+
+/** One address's row: every figure exact (alerts = the Alerts list's ip= filter). */
+export interface RuleAddressRow {
+	ip: string;
+	as_source: number;
+	as_target: number;
+	alerts: number;
+	first_seen: string | null;
+	last_seen: string | null;
+}
+
+/**
+ * The addresses of one kind. The rows are a bounded selection picked by source + destination
+ * count, not a top list by alerts; `distinct` is null when discovery stopped at its cap.
+ */
+export interface RuleAddresses {
+	rows: RuleAddressRow[];
+	distinct: number | null;
+	examined: number;
+	complete: boolean;
+	// OLD CODE: picked_by: string; (nobody read it)
+}
+
+export interface SuricataRuleFigures {
+	name: string;
+	from: string;
+	to: string;
+	interval?: string;
+	/** Which list these figures count: the activity list (ET informational) or the counted one */
+	activity: boolean;
+	total: number;
+	counted_total: number;
+	activity_total: number;
+	severity: { high: number; medium: number; low: number; info: number };
+	timeline: TimelinePoint[];
+	first_seen: string | null;
+	last_seen: string | null;
+	rules: RuleSid[];
+	/** False when the name has more SIDs than the reply lists */
+	rules_complete: boolean;
+	/** Alerts with no SID */
+	no_sid: number;
+	/** From the rule's name, unless every SID agrees on its own advice */
+	explanation: RuleTexts & { family: string };
+	learn_more: RuleLink[];
+	devices: RuleAddresses;
+	remotes: RuleAddresses;
+	/** IPv6 addresses: NetTap's LAN rule covers IPv4 only, so their locality is unknown */
+	unplaced: RuleAddresses;
+	/** Alerts with neither a source nor a destination address */
+	missing_address: number;
+}
+
+const isTexts = (v: unknown) => isObject(v) && [v.what, v.risk, v.todo].every(isString);
+const isLinks = (v: unknown) =>
+	Array.isArray(v) && v.every((l) => isObject(l) && [l.label, l.url, l.source].every(isString) && String(l.url).startsWith('https://'));
+const isAddresses = (v: unknown) =>
+	isObject(v) &&
+	Array.isArray(v.rows) &&
+	v.rows.every((r) => isObject(r) && isString(r.ip) && [r.as_source, r.as_target, r.alerts].every(isNumber)) &&
+	isNullable(v.distinct, isNumber) &&
+	isNumber(v.examined) &&
+	isBoolean(v.complete);
+const isRuleSid = (v: unknown) =>
+	isObject(v) &&
+	isString(v.sid) &&
+	isNumber(v.alerts) &&
+	[v.categories, v.et_ratings, v.techniques, v.tactics, v.cves, v.dbl_lists].every(Array.isArray) &&
+	isBoolean(v.cisa_kev) &&
+	isBoolean(v.credential) &&
+	isNullable(v.advice, isTexts) &&
+	isLinks(v.learn_more);
+
+/** Everything the rule page shows for `name` in the window, from the counted or the activity list. */
+export async function getSuricataRule(name: string, from: string, to: string, interval?: string, activity = false): Promise<SuricataRuleFigures> {
+	const list = activity ? '&activity=true' : '';
+	const body = await getJson(`/api/alerts/rule/${encodeURIComponent(name)}?${windowQuery(from, to)}${intervalQuery(interval)}${list}`, 'Suricata rule');
+	const { severity, explanation } = isObject(body) ? body : ({} as Record<string, unknown>);
+	const ok =
+		isObject(body) &&
+		[body.name, body.from, body.to].every(isString) &&
+		isBoolean(body.activity) &&
+		[body.total, body.counted_total, body.activity_total, body.no_sid, body.missing_address].every(isNumber) &&
+		isObject(severity) &&
+		[severity.high, severity.medium, severity.low, severity.info].every(isNumber) &&
+		Array.isArray(body.timeline) &&
+		Array.isArray(body.rules) &&
+		body.rules.every(isRuleSid) &&
+		isBoolean(body.rules_complete) &&
+		isTexts(explanation) &&
+		isObject(explanation) &&
+		isString(explanation.family) &&
+		isLinks(body.learn_more) &&
+		[body.devices, body.remotes, body.unplaced].every(isAddresses);
+	if (!ok) throw new Error('Suricata rule failed: the reply was malformed');
+	return body as unknown as SuricataRuleFigures;
+}

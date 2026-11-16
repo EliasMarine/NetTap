@@ -392,6 +392,20 @@ export function alertsHrefForSignature(signature: string | null, win?: DrillWind
 	return win ? `/alerts?${q.toString()}&${windowQuery(win, win.range)}` : `/alerts?${q.toString()}`;
 }
 
+/**
+ * A Suricata rule's own page (keyed by its exact rule.name, as the list's signature= filter is),
+ * over `win` when given, else the page's default range. `activity` opens it on the activity list
+ * (alerts ET rates informational), as the click site was showing.
+ */
+export function ruleHref(name: string, win?: DrillWindow & { range?: string }, opts: { activity?: boolean } = {}): string {
+	// shortcut: a rule named "." or ".." can't be a path segment (the browser resolves it); rule names are sentences
+	const path = `/alerts/rule/${encodeURIComponent(name)}`;
+	const q = new URLSearchParams(win ? windowQuery(win, win.range) : '');
+	if (opts.activity) q.set('activity', 'true');
+	const query = q.toString();
+	return query ? `${path}?${query}` : path;
+}
+
 /** Why a smart alert's ×N isn't a link. */
 export const NO_EXACT_ALERT_LIST = "This group has no signature, source or destination recorded, so it can't be listed exactly";
 
