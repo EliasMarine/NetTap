@@ -103,6 +103,7 @@ from api.network import register_network_routes
 from api.drilldown_runner import lan_cidrs
 from api.addresses import register_address_routes
 from api.domains import register_domain_routes
+from api.threat_drilldowns import register_threat_drilldown_routes
 from api.moment import register_moment_routes
 from api.dhcp_timeline import register_dhcp_timeline_routes
 from api.device_compare import register_device_compare_routes
@@ -1498,6 +1499,8 @@ def create_app(
     register_network_routes(app)
     register_address_routes(app, drill_client)
     register_domain_routes(app, drill_client)
+    # The Threats page's beaconing pair and failed-lookups drill-downs, in the same permits
+    register_threat_drilldown_routes(app, drill_client)
     register_suricata_category_routes(app, drill_client)
     # The rule page: one Suricata rule by its exact name, in the same drill-down slots
     register_suricata_rule_routes(app, drill_client)

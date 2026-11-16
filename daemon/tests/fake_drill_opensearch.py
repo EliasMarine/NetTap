@@ -44,6 +44,7 @@ from aiohttp import web
 
 from api.daemon_auth import TOKEN_HEADER, make_auth_middleware
 from api.error_replies import safe_error_middleware
+from storage.time_slots import interval_seconds
 
 FROM, TO = "2026-11-05T00:00:00Z", "2026-11-05T12:00:00Z"
 WINDOW = f"from={FROM}&to={TO}"
@@ -181,8 +182,9 @@ def _composite(docs: list, body: dict, sub: dict) -> dict:
             found = list(dict.fromkeys(values(doc, spec["field"])))
             if (
                 kind == "date_histogram"
-            ):  # fixed_interval in minutes ("1m"), keyed by epoch ms
-                step = int(spec["fixed_interval"].rstrip("m")) * 60_000
+            ):  # any fixed_interval ("10s", "1m"), keyed by epoch ms
+                # OLD CODE: step = int(spec["fixed_interval"].rstrip("m")) * 60_000 (minutes only; the beacon timing reads 10 s slots)
+                step = interval_seconds(spec["fixed_interval"]) * 1000
                 found = list(dict.fromkeys(epoch_ms(v) // step * step for v in found))
             per_source.append(found or ([None] if spec.get("missing_bucket") else []))
         for key in itertools.product(*per_source):
