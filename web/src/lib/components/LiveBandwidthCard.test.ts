@@ -85,6 +85,9 @@ function supported(over: Partial<LiveBandwidthSupported> = {}, latest: Partial<L
 const MAC: LiveBandwidthKey = { mac: 'aa:bb:cc:dd:ee:ff' };
 const IP: LiveBandwidthKey = { ip: '192.168.1.5' };
 const figures = () => [...document.querySelectorAll('.stat-v')].map((n) => n.textContent);
+/** chart gaps: the live chart is a gaps chart, so it is a focusable group the arrow keys read, not role="img" */
+const READ_HELP = 'Use the left and right arrow keys to read each point.';
+const chart = () => screen.queryByRole('group', { name: /^Download and upload over the last 5 minutes/ });
 
 let hidden = false;
 
@@ -112,8 +115,13 @@ describe('LiveBandwidthCard', () => {
 		await answer(supported());
 		expect(figures()).toEqual(['12.3 Mbit/s', '789 bit/s']);
 		expect(screen.getByText('Live')).toBeInTheDocument();
-		expect(screen.getByRole('img').getAttribute('aria-label')).toBe(
-			'Download and upload over the last 5 minutes. Now 12.3 Mbit/s down and 789 bit/s up.',
+		// OLD CODE START — chart gaps: the chart was role="img"; it is now a group the arrow keys read
+		// expect(screen.getByRole('img').getAttribute('aria-label')).toBe(
+		// 	'Download and upload over the last 5 minutes. Now 12.3 Mbit/s down and 789 bit/s up.',
+		// );
+		// OLD CODE END
+		expect(chart()!.getAttribute('aria-label')).toBe(
+			`Download and upload over the last 5 minutes. Now 12.3 Mbit/s down and 789 bit/s up. ${READ_HELP}`,
 		);
 		expect(screen.getByText(/by hardware address/)).toHaveTextContent(
 			"Everything this device sends and the traffic addressed to it, by hardware address aa:bb:cc:dd:ee:ff. Broadcast and multicast it receives aren't included.",
@@ -128,6 +136,49 @@ describe('LiveBandwidthCard', () => {
 		await answer(supported({ samples: samples([[1, 1], [2, 2], null, [3, 3], [4, 4]]) }));
 		const line = document.querySelector('.line.ln-1')!.getAttribute('d')!;
 		expect(line.match(/M/g)).toHaveLength(2);
+	});
+
+	// chart gaps: a watch recreated after 15 s unpolled (a hidden tab) reports "Not measuring yet." for every earlier slot
+	it('keeps the minutes already drawn when the watch is recreated', async () => {
+		render(LiveBandwidthCard, { props: { key: MAC } });
+		await flush();
+		const first = supported();
+		await answer(first);
+		expect(chart()).toBeInTheDocument();
+		await wait(2000);
+		// the same slots, read at the same times, with no rate: only the newest is being measured
+		const recreated = first.samples.map((s) => (s.down_bps === null ? s : { ...s, down_bps: null, up_bps: null, reason: 'Not measuring yet.' }));
+		await answer(supported({ samples: recreated }, { down_bps: null, up_bps: null, reason: 'Measuring…' }));
+		expect(screen.queryByText('Measuring…')).not.toBeInTheDocument();
+		expect(chart()).toBeInTheDocument();
+		expect(document.querySelector('.line.ln-1')!.getAttribute('d')).toMatch(/^M[\d.]+,[\d.]+C/);
+	});
+
+	it('a daemon restart keeps nothing: other read times are not the slots measured before', async () => {
+		render(LiveBandwidthCard, { props: { key: MAC } });
+		await flush();
+		const first = supported();
+		await answer(first);
+		await wait(2000);
+		const restarted = first.samples.map((s) => (s.mono === null ? s : { ...s, mono: s.mono + 1, down_bps: null, up_bps: null, reason: 'Not measuring yet.' }));
+		await answer(supported({ samples: restarted }, { down_bps: null, up_bps: null, reason: 'Measuring…' }));
+		expect(screen.getByText('Measuring…')).toBeInTheDocument();
+	});
+
+	it('reads every point with the arrow keys, and a slot with no rate says why', async () => {
+		render(LiveBandwidthCard, { props: { key: MAC } });
+		await flush();
+		await answer(supported());
+		const group = chart()!;
+		expect(group.getAttribute('tabindex')).toBe('0');
+		const tip = () => document.querySelector('.tip-tx')?.textContent;
+		const live = () => document.querySelector('[aria-live="polite"]')?.textContent;
+		await fireEvent.keyDown(group, { key: 'End' });
+		expect(tip()).toMatch(/ · ↓ 12\.3 Mbit\/s · ↑ 789 bit\/s$/);
+		await fireEvent.keyDown(group, { key: 'Home' });
+		expect(tip()).toMatch(/^\S+ · missed$/);
+		expect(live()).toBe(tip());
+		expect(document.querySelectorAll('rect.nodata')).toHaveLength(1);
 	});
 
 	it('says it counts by address on the IP page, and notes GRO', async () => {
@@ -157,7 +208,8 @@ describe('LiveBandwidthCard', () => {
 		await flush();
 		await answer(supported({ samples: samples([[5, 5]]) }));
 		expect(screen.getByText('Measuring…')).toBeInTheDocument();
-		expect(screen.queryByRole('img')).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('img')).not.toBeInTheDocument(); (chart gaps: the chart is a group now)
+		expect(chart()).not.toBeInTheDocument();
 	});
 
 	it('shows the reason when the mode can’t split by device, and stops asking', async () => {
@@ -166,7 +218,8 @@ describe('LiveBandwidthCard', () => {
 		await flush();
 		await answer({ supported: false, reason, mode: 'bridge', interface: 'br0', key: { kind: 'ip', value: '192.168.1.5' } });
 		expect(screen.getByText(reason)).toBeInTheDocument();
-		expect(screen.queryByRole('img')).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('img')).not.toBeInTheDocument(); (chart gaps: the chart is a group now)
+		expect(chart()).not.toBeInTheDocument();
 		await wait(10_000);
 		expect(calls).toHaveLength(1);
 		// …until the page is back in view: an interface that was down may be up again
@@ -339,7 +392,8 @@ describe('LiveBandwidthCard', () => {
 		await wait(2000);
 		await answer({ error: 'Live bandwidth is busy. Try again in a moment.' }, 503);
 		expect(screen.getByText('Live bandwidth is busy. Try again in a moment.')).toBeInTheDocument();
-		expect(screen.getByRole('img')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByRole('img')).toBeInTheDocument(); (chart gaps: the chart is a group now)
+		expect(chart()).toBeInTheDocument();
 		// it keeps asking: a busy daemon is usually free a moment later
 		await wait(2000);
 		expect(calls).toHaveLength(3);

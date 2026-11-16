@@ -119,6 +119,38 @@ export async function getLiveBandwidth(key: LiveBandwidthKey, signal?: AbortSign
 	return data as LiveBandwidthResponse;
 }
 
+const hasRate = (s: LiveBandwidthSample) => Number.isFinite(s.down_bps) || Number.isFinite(s.up_bps);
+
+/**
+ * `next`, with the rates this card already had put back where a recreated watch reports none (chart gaps).
+ * The daemon ends a watch 15 s after its last poll (a hidden tab stops polling), and the new watch's reply
+ * says "Not measuring yet." for every earlier slot. Its tick times are shared by every watch, so those slots
+ * come back with the same `t` and `mono`: an earlier sample is kept only for the same device, interface and
+ * interval, the same tick, and identical non-null `t` and `mono`. Anything else (a daemon restart, which
+ * starts its ticks again) stays a gap, so no measurement is moved or drawn twice.
+ */
+export function keepMeasured(prev: LiveBandwidthSupported | null, next: LiveBandwidthSupported): LiveBandwidthSupported {
+	if (
+		!prev ||
+		prev.key.kind !== next.key.kind ||
+		prev.key.value !== next.key.value ||
+		prev.interface !== next.interface ||
+		prev.interval_s !== next.interval_s
+	) {
+		return next;
+	}
+	const measured = new Map(prev.samples.filter(hasRate).map((s) => [s.tick, s]));
+	const same = (old: LiveBandwidthSample | undefined, s: LiveBandwidthSample): old is LiveBandwidthSample =>
+		!!old && old.t !== null && old.mono !== null && old.t === s.t && old.mono === s.mono;
+	return {
+		...next,
+		samples: next.samples.map((s) => {
+			const old = measured.get(s.tick);
+			return !hasRate(s) && same(old, s) ? old : s;
+		}),
+	};
+}
+
 const SETTING_URL = '/api/settings/live-bandwidth';
 const CLEANUP_STATES: readonly unknown[] = ['idle', 'running', 'retrying'] satisfies LiveBandwidthCleanupState[];
 

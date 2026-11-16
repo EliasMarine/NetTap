@@ -7,6 +7,7 @@
 	import { untrack } from 'svelte';
 	import {
 		getLiveBandwidth,
+		keepMeasured,
 		LiveBandwidthError,
 		type LiveBandwidthKey,
 		type LiveBandwidthSupported,
@@ -115,7 +116,8 @@
 				off = !res.supported && res.off === true;
 				if (res.supported) {
 					unsupported = null;
-					data = res;
+					// OLD CODE: data = res; (chart gaps: a watch recreated after 15 s unpolled dropped the minutes already on screen)
+					data = keepMeasured(data, res);
 					show(res, sentAt);
 				} else if (off) {
 					offHalt = true;
@@ -194,6 +196,8 @@
 	function tip(i: number): string {
 		const s = data?.samples[i];
 		if (!s) return '';
+		// chart gaps: a slot with no rate says why ("Not measuring yet.", "Missed.", a counter problem)
+		if (!valid(s.down_bps) && !valid(s.up_bps)) return `${clock(times[i])} · ${s.reason ?? 'Not measured'}`;
 		return `${clock(times[i])} · ↓ ${formatBitRate(s.down_bps ?? Number.NaN)} · ↑ ${formatBitRate(s.up_bps ?? Number.NaN)}`;
 	}
 
