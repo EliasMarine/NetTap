@@ -3,13 +3,16 @@ NetTap Update Checker Service
 
 Checks for available updates across all NetTap components by querying
 Docker Hub, GitHub Releases API, and package repositories. Results are
-cached and refreshed every 6 hours.
+cached; get_available() says when they are older than 6 hours ("stale"),
+and the Updates page then runs a check.
 """
+# OLD CODE (said "refreshed every 6 hours", which nothing did): "Results are cached and refreshed every 6 hours."
 
 import asyncio
 import logging
 import os
 import re
+import shutil
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
@@ -70,6 +73,30 @@ _LOGSTASH_GEOIP_APPLIES_WITH = "Comes with Malcolm's Logstash image: a newer one
 _GEOIP_NEWER = "newer weekly release"
 # the update executor has no way to replace the running daemon and web containers
 NETTAP_APPLIES_WITH = "NetTap can't replace itself from this page: get the new release and rerun its install script."
+# a local GeoIP database is only applicable where geoipupdate exists (the daemon image has none)
+_GEOIP_MANUAL = (
+    "NetTap can't download GeoIP databases itself (geoipupdate isn't installed): put a newer "
+    "GeoLite2-City.mmdb from MaxMind in place of {path}."
+)
+
+
+_RELEASE_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
+
+
+def _release_key(tag: str) -> tuple | None:
+    """A sort key in SemVer order (0.4.0-alpha.2 < 0.4.0-alpha.10 < 0.4.0-beta.1 < 0.4.0), or
+    None for anything that isn't vX.Y.Z[-pre]. key[3] is True for a final release."""
+    m = _RELEASE_RE.match(tag.strip())
+    if m is None:
+        return None
+    pre = m.group(4)
+    # numeric identifiers compare as numbers and sort before alphanumeric ones
+    ids = tuple(
+        (0, int(p), "") if p.isdigit() else (1, 0, p)
+        for p in (pre or "").split(".")
+        if p
+    )
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), pre is None, ids)
 
 
 @dataclass
@@ -109,7 +136,11 @@ class UpdateChecker:
         self._cache_ttl = cache_ttl_hours * 3600
         self._available_updates: list[AvailableUpdate] = []
         self._last_check: str | None = None
-        self._checking: bool = False
+        # OLD CODE: self._checking: bool = False (the shared check task and _last_result replace it)
+        # one check at a time: overlapping callers await the same one (two tabs opening the page)
+        self._check_task: asyncio.Task | None = None
+        # the last finished check, which get_available() serves so nobody reads one half-way
+        self._last_result: dict | None = None
         # Components the last check could not ask about (#96): unknown, not "up to date"
         self._failed_checks: list[str] = []
         self._malcolm_known = (
@@ -145,160 +176,200 @@ class UpdateChecker:
             "last_check" (ISO timestamp), "count" (int),
             "has_updates" (bool) and "failed_checks" (components that
             could not be checked, so their update state is unknown).
+            Overlapping callers share one check and all get its finished result.
         """
-        if self._checking:
-            return await self.get_available()
+        # OLD CODE START — a caller during a check got the cache at once (a half-built failed list
+        # included), which read as a finished check
+        # if self._checking:
+        #     return await self.get_available()
+        # OLD CODE END
+        if self._check_task is None or self._check_task.done():
+            self._check_task = asyncio.create_task(self._run_check())
+        return {**await asyncio.shield(self._check_task), "stale": False}
 
-        self._checking = True
+    async def _run_check(self) -> dict:
+        """One check of every source (check_updates runs it once for all callers)."""
         now = datetime.now(timezone.utc).isoformat()
         self._failed_checks = []
         self._malcolm_known = False
         self._os_checked = False
 
-        try:
-            all_updates: list[AvailableUpdate] = []
+        # OLD CODE: the body sat in try/finally to reset self._checking, which the shared task replaced
+        all_updates: list[AvailableUpdate] = []
 
-            # Get current versions from VersionManager if available
-            current_versions: dict[str, str] = {}
-            images: dict[str, str] = {}  # running container -> image reference
-            if self._version_manager is not None:
-                try:
-                    versions_data = await self._version_manager.get_versions()
-                    for v in versions_data.get("versions", []):
-                        current_versions[v["name"]] = v["current_version"]
-                        if v.get("category") != "docker":
-                            continue
-                        if v.get("status") == "ok":
-                            # the malcolm row has no image of its own: it's checked with them
-                            if (v.get("details") or {}).get("image"):
-                                images[v["name"]] = v["details"]["image"]
-                        else:  # docker couldn't be asked: container updates unknown
-                            self._failed_checks.append(v["name"])
-                except Exception as exc:
-                    # OLD CODE START — #96: the container checks were skipped unseen
-                    # logger.debug("Could not get current versions: %s", exc)
-                    # OLD CODE END
-                    logger.warning("Could not get current versions: %s", exc)
-                    self._failed_checks.append("component-versions")
-
-            # Check GitHub releases for NetTap core updates
-            # OLD CODE START — #96: a failed GitHub request read as "no NetTap update"
-            # github_updates = await self._check_github_releases()
-            # all_updates.extend(github_updates)
-            # OLD CODE END
+        # Get current versions from VersionManager if available
+        current_versions: dict[str, str] = {}
+        images: dict[str, str] = {}  # running container -> image reference
+        if self._version_manager is not None:
             try:
-                all_updates.extend(await self._check_github_releases())
+                versions_data = await self._version_manager.get_versions()
+                for v in versions_data.get("versions", []):
+                    current_versions[v["name"]] = v["current_version"]
+                    if v.get("category") != "docker":
+                        continue
+                    if v.get("status") == "ok":
+                        # the malcolm row has no image of its own: it's checked with them
+                        if (v.get("details") or {}).get("image"):
+                            images[v["name"]] = v["details"]["image"]
+                    else:  # docker couldn't be asked: container updates unknown
+                        self._failed_checks.append(v["name"])
             except Exception as exc:
-                logger.warning(
-                    "GitHub release check failed: %r", exc
-                )  # a timeout's message is empty
-                self._failed_checks.append("nettap-daemon")
+                # OLD CODE START — #96: the container checks were skipped unseen
+                # logger.debug("Could not get current versions: %s", exc)
+                # OLD CODE END
+                logger.warning("Could not get current versions: %s", exc)
+                self._failed_checks.append("component-versions")
 
-            # OLD CODE START — #96: checked Docker Hub malcolm/*, which isn't where the
-            # deployed images come from (ghcr.io), so it could never find an update
-            # # Check Docker Hub for image updates
-            # docker_updates = await self._check_docker_updates(current_versions)
-            # all_updates.extend(docker_updates)
-            # OLD CODE END
-            # Check the running containers' images against their real source
-            docker_updates = await self._check_docker_updates(current_versions, images)
-            all_updates.extend(docker_updates)
+        # Check GitHub releases for NetTap core updates
+        # OLD CODE START — #96: a failed GitHub request read as "no NetTap update"
+        # github_updates = await self._check_github_releases()
+        # all_updates.extend(github_updates)
+        # OLD CODE END
+        try:
+            all_updates.extend(await self._check_github_releases())
+        except Exception as exc:
+            logger.warning(
+                "GitHub release check failed: %r", exc
+            )  # a timeout's message is empty
+            self._failed_checks.append("nettap-daemon")
 
-            # Check Suricata rule updates
-            rules_update = await self._check_suricata_rules()
-            if rules_update is not None:
-                all_updates.append(rules_update)
+        # OLD CODE START — #96: checked Docker Hub malcolm/*, which isn't where the
+        # deployed images come from (ghcr.io), so it could never find an update
+        # # Check Docker Hub for image updates
+        # docker_updates = await self._check_docker_updates(current_versions)
+        # all_updates.extend(docker_updates)
+        # OLD CODE END
+        # Check the running containers' images against their real source
+        docker_updates = await self._check_docker_updates(current_versions, images)
+        all_updates.extend(docker_updates)
 
-            # Check GeoIP database updates
-            geoip_update = await self._check_geoip_update()
-            if geoip_update is not None:
-                all_updates.append(geoip_update)
+        # Check Suricata rule updates
+        rules_update = await self._check_suricata_rules()
+        if rules_update is not None:
+            all_updates.append(rules_update)
 
-            # Ubuntu's own count of pending package updates (shown, not installed)
-            os_update = self._check_os_updates(current_versions.get("os", "unknown"))
-            if os_update is not None:
-                all_updates.append(os_update)
+        # Check GeoIP database updates
+        geoip_update = await self._check_geoip_update()
+        if geoip_update is not None:
+            all_updates.append(geoip_update)
 
-            self._available_updates = all_updates
-            self._last_check = now
-            # OLD CODE START — NetTap's images counted as checked even when the release check
-            # failed or found a newer release, so they read "Up to Date" beside it
-            # own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
-            # OLD CODE END
-            # NetTap's own images are built from its release: as current as that check says
-            nettap_current = "nettap-daemon" not in self._failed_checks and not any(
-                u.component == "nettap-daemon" for u in all_updates
-            )
-            own_images = (
-                (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
-                if nettap_current
-                else (_MALCOLM_REGISTRY,)
-            )
-            # OLD CODE START — a source that couldn't be read was still listed as checked
-            # self._checked = sorted(
-            #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
-            # )
-            # OLD CODE END
-            # OLD CODE START — the Malcolm row, the package rows and the OS weren't checked by anything
-            # self._checked = sorted(
-            #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
-            #     - set(self._failed_checks)
-            # )
-            # OLD CODE END
-            follows = (
-                list(_UPDATES_WITH_MALCOLM) + ["malcolm"] if self._malcolm_known else []
-            )
-            follows += list(_UPDATES_WITH_NETTAP) if nettap_current else []
-            follows += ["os"] if self._os_checked else []
-            follows = [
-                c for c in follows if c in current_versions
-            ]  # only rows that exist
-            self._checked = sorted(
-                {
-                    "nettap-daemon",
-                    "suricata-rules",
-                    "geoip-db",
-                    *follows,
-                    *(
-                        c
-                        for c, i in images.items()
-                        if i.startswith((*own_images, *_MALCOLM_TAGGED))
-                    ),
-                }
-                - set(self._failed_checks)
-            )
+        # Ubuntu's own count of pending package updates (shown, not installed)
+        os_update = self._check_os_updates(current_versions.get("os", "unknown"))
+        if os_update is not None:
+            all_updates.append(os_update)
 
-            logger.info(
-                "Update check complete: %d updates available",
-                len(all_updates),
-            )
-
-            return {
-                "updates": [u.to_dict() for u in all_updates],
-                "last_check": self._last_check,
-                "count": len(all_updates),
-                "has_updates": len(all_updates) > 0,
-                "failed_checks": list(dict.fromkeys(self._failed_checks)),
-                "checked": list(self._checked),
+        self._available_updates = all_updates
+        self._last_check = now
+        # OLD CODE START — NetTap's images counted as checked even when the release check
+        # failed or found a newer release, so they read "Up to Date" beside it
+        # own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
+        # OLD CODE END
+        # NetTap's own images are built from its release: as current as that check says
+        nettap_current = "nettap-daemon" not in self._failed_checks and not any(
+            u.component == "nettap-daemon" for u in all_updates
+        )
+        own_images = (
+            (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
+            if nettap_current
+            else (_MALCOLM_REGISTRY,)
+        )
+        # NetTap's compose file pins its other images too (nginx, grafana), so a nettap-*
+        # container follows the NetTap release the same way
+        nettap_pinned = "nettap-" if nettap_current else ()
+        # OLD CODE START — a source that couldn't be read was still listed as checked
+        # self._checked = sorted(
+        #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
+        # )
+        # OLD CODE END
+        # OLD CODE START — the Malcolm row, the package rows and the OS weren't checked by anything
+        # self._checked = sorted(
+        #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
+        #     - set(self._failed_checks)
+        # )
+        # OLD CODE END
+        follows = (
+            list(_UPDATES_WITH_MALCOLM) + ["malcolm"] if self._malcolm_known else []
+        )
+        follows += list(_UPDATES_WITH_NETTAP) if nettap_current else []
+        follows += ["os"] if self._os_checked else []
+        follows = [c for c in follows if c in current_versions]  # only rows that exist
+        self._checked = sorted(
+            {
+                "nettap-daemon",
+                "suricata-rules",
+                "geoip-db",
+                *follows,
+                *(
+                    c
+                    for c, i in images.items()
+                    if i.startswith((*own_images, *_MALCOLM_TAGGED))
+                    or c.startswith(nettap_pinned)
+                ),
             }
-        finally:
-            self._checking = False
+            - set(self._failed_checks)
+        )
+
+        logger.info(
+            "Update check complete: %d updates available",
+            len(all_updates),
+        )
+
+        self._last_result = {
+            "updates": [u.to_dict() for u in all_updates],
+            "last_check": self._last_check,
+            "count": len(all_updates),
+            "has_updates": len(all_updates) > 0,
+            "failed_checks": list(dict.fromkeys(self._failed_checks)),
+            "checked": list(self._checked),
+        }
+        return self._last_result
 
     async def get_available(self) -> dict:
         """Return cached available updates.
 
         Returns:
             Dict with "updates" (list), "last_check" (ISO timestamp),
-            "count" (int), "has_updates" (bool) and "failed_checks" (list).
+            "count" (int), "has_updates" (bool), "failed_checks" (list) and
+            "stale" (no check yet, or the last one is older than the TTL).
         """
+        if (
+            self._last_result is not None
+        ):  # the last finished check, also while one runs
+            return {**self._last_result, "stale": self._is_stale()}
+        # OLD CODE START — built from the check's working fields, which a running or crashed check
+        # leaves half-built
+        # return {
+        #     "updates": [u.to_dict() for u in self._available_updates],
+        #     "last_check": self._last_check,
+        #     "count": len(self._available_updates),
+        #     "has_updates": len(self._available_updates) > 0,
+        #     "failed_checks": []
+        #     if self._checking
+        #     else list(dict.fromkeys(self._failed_checks)),
+        #     "checked": [] if self._checking else list(self._checked),
+        #     "stale": self._is_stale(),
+        # }
+        # OLD CODE END
+        # no check has finished since the daemon started
         return {
-            "updates": [u.to_dict() for u in self._available_updates],
-            "last_check": self._last_check,
-            "count": len(self._available_updates),
-            "has_updates": len(self._available_updates) > 0,
-            "failed_checks": list(dict.fromkeys(self._failed_checks)),
-            "checked": list(self._checked),
+            "updates": [],
+            "last_check": None,
+            "count": 0,
+            "has_updates": False,
+            "failed_checks": [],
+            "checked": [],
+            "stale": True,
         }
+
+    def _is_stale(self) -> bool:
+        """No check since the daemon started, or the last one is older than the TTL."""
+        if self._last_check is None:
+            return True
+        try:
+            checked = datetime.fromisoformat(self._last_check)
+        except ValueError:
+            return True
+        return (datetime.now(timezone.utc) - checked).total_seconds() > self._cache_ttl
 
     async def get_update_for(self, component: str) -> dict | None:
         """Get update info for a specific component.
@@ -318,63 +389,110 @@ class UpdateChecker:
     # Internal check methods
     # -------------------------------------------------------------------
 
+    # OLD CODE START — asked /releases/latest, which GitHub answers 404 while every release is a
+    # pre-release (all of them so far), so "no update" was certain; and the comparison dropped
+    # "-alpha.N", so 0.4.0-alpha.1 equalled 0.4.0-alpha.2 and even 0.4.0
+    # async def _check_github_releases(self) -> list[AvailableUpdate]:
+    #     """Check GitHub Releases API for NetTap updates.
+    #
+    #     Fetches the latest release from the configured GitHub repository
+    #     and compares against the current daemon version.
+    #
+    #     Returns:
+    #         List of AvailableUpdate (0 or 1 items).
+    #
+    #     Raises:
+    #         Exception: if GitHub could not be asked (check_updates records it).
+    #     """
+    #     results: list[AvailableUpdate] = []
+    #     url = f"https://api.github.com/repos/{self._github_repo}/releases/latest"
+    #
+    #     # OLD CODE START — #96: any failure was logged at debug and read as "no update"
+    #     # try:
+    #     #     data = await self._fetch_json(url)
+    #     #     ...
+    #     # except Exception as exc:
+    #     #     logger.debug("GitHub release check failed: %s", exc)
+    #     # OLD CODE END
+    #     data = await self._fetch_json(url)
+    #     if not data or "tag_name" not in data:
+    #         return results
+    #
+    #     latest_tag = data["tag_name"]
+    #     # Strip leading 'v' for version comparison
+    #     latest_version = latest_tag.lstrip("v")
+    #
+    #     # Get current version from VersionManager or fallback
+    #     from services.version_manager import NETTAP_VERSION
+    #
+    #     current = NETTAP_VERSION
+    #
+    #     update_type = await self._compare_versions(current, latest_version)
+    #     if update_type == "same":
+    #         return results
+    #
+    #     results.append(
+    #         AvailableUpdate(
+    #             component="nettap-daemon",
+    #             current_version=current,
+    #             latest_version=latest_version,
+    #             update_type=update_type,
+    #             release_url=data.get("html_url", ""),
+    #             release_date=data.get("published_at", ""),
+    #             changelog=(data.get("body") or "")[:500],
+    #             size_mb=self._estimate_release_size(data),
+    #             requires_restart=True,
+    #             # was unset: the page offered Update and the executor answered
+    #             # "Unsupported component for update: nettap-daemon"
+    #             applies_with=NETTAP_APPLIES_WITH,
+    #         )
+    #     )
+    #
+    #     return results
+    # OLD CODE END
     async def _check_github_releases(self) -> list[AvailableUpdate]:
-        """Check GitHub Releases API for NetTap updates.
+        """The newest NetTap release on GitHub, if it is newer than this one (0 or 1 items).
 
-        Fetches the latest release from the configured GitHub repository
-        and compares against the current daemon version.
-
-        Returns:
-            List of AvailableUpdate (0 or 1 items).
+        Pre-releases count only while this NetTap is itself a pre-release; drafts never do.
 
         Raises:
             Exception: if GitHub could not be asked (check_updates records it).
         """
-        results: list[AvailableUpdate] = []
-        url = f"https://api.github.com/repos/{self._github_repo}/releases/latest"
-
-        # OLD CODE START — #96: any failure was logged at debug and read as "no update"
-        # try:
-        #     data = await self._fetch_json(url)
-        #     ...
-        # except Exception as exc:
-        #     logger.debug("GitHub release check failed: %s", exc)
-        # OLD CODE END
-        data = await self._fetch_json(url)
-        if not data or "tag_name" not in data:
-            return results
-
-        latest_tag = data["tag_name"]
-        # Strip leading 'v' for version comparison
-        latest_version = latest_tag.lstrip("v")
-
-        # Get current version from VersionManager or fallback
         from services.version_manager import NETTAP_VERSION
 
-        current = NETTAP_VERSION
-
-        update_type = await self._compare_versions(current, latest_version)
-        if update_type == "same":
-            return results
-
-        results.append(
+        url = f"https://api.github.com/repos/{self._github_repo}/releases?per_page=20"
+        releases = await self._fetch_json(url) or []  # 404 (no repository) reads as {}
+        current_key = _release_key(NETTAP_VERSION)
+        candidates = [
+            (key, r)
+            for r in releases
+            if isinstance(r, dict) and not r.get("draft")
+            if (key := _release_key(str(r.get("tag_name", "")))) is not None
+            if current_key is not None
+            and (not r.get("prerelease") or not current_key[3])
+        ]
+        if not candidates:
+            return []
+        key, data = max(candidates, key=lambda c: c[0])
+        if key <= current_key:
+            return []
+        latest_version = data["tag_name"].lstrip("v")
+        update_type = await self._compare_versions(NETTAP_VERSION, latest_version)
+        return [
             AvailableUpdate(
                 component="nettap-daemon",
-                current_version=current,
+                current_version=NETTAP_VERSION,
                 latest_version=latest_version,
-                update_type=update_type,
+                # "same" when only the pre-release part moved (alpha.1 -> alpha.2)
+                update_type="unknown" if update_type == "same" else update_type,
                 release_url=data.get("html_url", ""),
                 release_date=data.get("published_at", ""),
                 changelog=(data.get("body") or "")[:500],
                 size_mb=self._estimate_release_size(data),
                 requires_restart=True,
-                # was unset: the page offered Update and the executor answered
-                # "Unsupported component for update: nettap-daemon"
                 applies_with=NETTAP_APPLIES_WITH,
             )
-        )
-
-        return results
+        ]
 
     # OLD CODE START — #96: asked Docker Hub malcolm/*, but the deployed images come from
     # ghcr.io/idaholab/malcolm, so it could never find an update ("up to date" was false)
@@ -480,10 +598,14 @@ class UpdateChecker:
         for component, image in sorted(images.items()):
             if image.startswith(_MALCOLM_TAGGED):
                 malcolm.append(component)
-            elif not image.startswith(_NETTAP_IMAGE_PREFIX):
-                # shortcut: no registry lookup for third-party images (grafana, nginx);
-                # add one if NetTap ever updates them itself
-                self._failed_checks.append(component)
+            # OLD CODE START — every other image was a failed check: [G11] "Couldn't check nettap-nginx"
+            # on every load, though NetTap's compose file pins nginx:1.30-alpine (it moves with a
+            # NetTap release, like nettap/*), and a container that isn't NetTap's has nothing to check
+            # elif not image.startswith(_NETTAP_IMAGE_PREFIX):
+            #     # shortcut: no registry lookup for third-party images (grafana, nginx);
+            #     # add one if NetTap ever updates them itself
+            #     self._failed_checks.append(component)
+            # OLD CODE END
         if not malcolm:
             return []
 
@@ -661,7 +783,8 @@ class UpdateChecker:
             latest_version=now.strftime("%Y-%m-%d"),
             update_type="patch",
             release_url="https://rules.emergingthreats.net/",
-            release_date=now.isoformat(),
+            # OLD CODE: release_date=now.isoformat(), (the check's time, not a release date)
+            release_date="",
             changelog=f"Suricata rules are {age_days} day(s) old",
             # OLD CODE START — #96: an approximate size shown as the download size
             # size_mb=15.0,  # Approximate ET ruleset size
@@ -711,13 +834,19 @@ class UpdateChecker:
                         latest_version=_GEOIP_NEWER,
                         update_type="patch",
                         release_url="https://dev.maxmind.com/geoip/updating-databases",
-                        release_date=now.isoformat(),
+                        # OLD CODE: release_date=now.isoformat(), (the check's time, not a release date)
+                        release_date="",
                         changelog=f"GeoIP database is {age_days} day(s) old",
                         # OLD CODE START — #96: an approximate size shown as the download size
                         # size_mb=65.0,  # Approximate GeoLite2-City size
                         # OLD CODE END
                         size_mb=None,
                         requires_restart=False,
+                        # was applicable everywhere: the daemon image has no geoipupdate, so the
+                        # update could only fail
+                        applies_with=None
+                        if shutil.which("geoipupdate")
+                        else _GEOIP_MANUAL.format(path=geoip_path),
                     )
                 return None
             except OSError:
@@ -748,7 +877,8 @@ class UpdateChecker:
             latest_version=_GEOIP_NEWER,
             update_type="patch",
             release_url="https://dev.maxmind.com/geoip/updating-databases",
-            release_date=now.isoformat(),
+            # OLD CODE: release_date=now.isoformat(), (the check's time, not a release date)
+            release_date="",
             changelog=f"Logstash's GeoIP database is {age_days} day(s) old",
             size_mb=None,
             requires_restart=False,
@@ -822,14 +952,16 @@ class UpdateChecker:
     # Helpers
     # -------------------------------------------------------------------
 
-    async def _fetch_json(self, url: str) -> dict:
+    # OLD CODE: async def _fetch_json(self, url: str) -> dict: (the releases list answers a JSON list)
+    async def _fetch_json(self, url: str) -> Any:
         """Fetch JSON from a URL using aiohttp.
 
         Args:
             url: The URL to fetch.
 
         Returns:
-            Parsed JSON as a dict, or an empty dict on 404 (nothing published).
+            The parsed JSON (an object or, for a list endpoint, a list), or an empty dict on 404
+            (nothing published).
 
         Raises:
             RuntimeError: on any other non-200 status (rate limit, server error).
@@ -856,7 +988,7 @@ class UpdateChecker:
             async with session.get(
                 url,
                 headers={"Accept": "application/json"},
-                ssl=False,
+                # OLD CODE: ssl=False, (TLS unchecked; the daemon image verifies api.github.com fine)
             ) as resp:
                 if resp.status == 200:
                     return await resp.json()

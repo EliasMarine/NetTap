@@ -22,6 +22,10 @@ RULES_STATE_DIR = os.environ.get("NETTAP_RULES_STATE", "/run/nettap-rules")
 # Interactive requests must answer before the web proxy's 290 s limit; a nightly update with every
 # source takes one to two minutes (the plan's 900 s is the shell side's wait)
 LOCK_WAIT_S = 240.0
+# How long one rule update can hold the lock: the shim's own limits (900 s for the lock, 900 s to update,
+# 300 s to confirm) add up to 2,100 s. The Updates page's batch follows an update this long, and the
+# Malcolm update waits this long for the lock before it recreates suricata-live; past it something is stuck
+RULES_FOLLOW_WAIT_S = 2400
 
 
 def open_regular(path: str, flags: int = os.O_RDONLY) -> int:

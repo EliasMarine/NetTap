@@ -1,6 +1,7 @@
 import type { SystemHealth } from '../../../src/lib/api/system.ts';
 import type {
 	ComponentVersion,
+	UpdateBatch,
 	UpdateResult,
 	UpdateStatus,
 	getAvailableUpdates,
@@ -26,9 +27,10 @@ interface VersionsResponse {
 	count: number;
 }
 
-/** GET /api/system/updates/history, which the client unwraps to `history`. */
+/** GET /api/system/updates/history: one batch per update run, which the client flattens into rows. */
 interface UpdateHistoryResponse {
-	history: UpdateResult[];
+	// OLD CODE: history: UpdateResult[]; (the daemon sends batches)
+	history: UpdateBatch[];
 	count: number;
 }
 
@@ -147,29 +149,63 @@ const AVAILABLE_EMPTY = {
 	checked: [],
 } satisfies AvailableUpdatesResponse;
 
+const RULES_RESULT: UpdateResult = {
+	component: 'suricata-rules',
+	success: true,
+	old_version: '2026-10-30',
+	new_version: '2026-11-02',
+	started_at: iso(1 * DAY + 2 * MIN),
+	completed_at: iso(1 * DAY),
+	error: null,
+	rollback_available: true,
+};
+const GEOIP_RESULT: UpdateResult = {
+	component: 'geoip-db',
+	success: false,
+	old_version: '2026-10-21',
+	new_version: '2026-10-21',
+	started_at: iso(9 * DAY + 3 * MIN),
+	completed_at: iso(9 * DAY),
+	error: 'The download server did not answer.',
+	rollback_available: false,
+};
+const batchOf = (result: UpdateResult): UpdateBatch => ({
+	results: [result],
+	components: [result.component],
+	success: result.success,
+	started_at: result.started_at,
+	completed_at: result.completed_at,
+});
+
+// OLD CODE START — flat results; the daemon sends one batch per run (the rows the page shows are the same)
+// const HISTORY_POPULATED = {
+// 	history: [
+// 		{
+// 			component: 'suricata-rules',
+// 			success: true,
+// 			old_version: '2026-10-30',
+// 			new_version: '2026-11-02',
+// 			started_at: iso(1 * DAY + 2 * MIN),
+// 			completed_at: iso(1 * DAY),
+// 			error: null,
+// 			rollback_available: true,
+// 		},
+// 		{
+// 			component: 'geoip-db',
+// 			success: false,
+// 			old_version: '2026-10-21',
+// 			new_version: '2026-10-21',
+// 			started_at: iso(9 * DAY + 3 * MIN),
+// 			completed_at: iso(9 * DAY),
+// 			error: 'The download server did not answer.',
+// 			rollback_available: false,
+// 		},
+// 	],
+// 	count: 2,
+// } satisfies UpdateHistoryResponse;
+// OLD CODE END
 const HISTORY_POPULATED = {
-	history: [
-		{
-			component: 'suricata-rules',
-			success: true,
-			old_version: '2026-10-30',
-			new_version: '2026-11-02',
-			started_at: iso(1 * DAY + 2 * MIN),
-			completed_at: iso(1 * DAY),
-			error: null,
-			rollback_available: true,
-		},
-		{
-			component: 'geoip-db',
-			success: false,
-			old_version: '2026-10-21',
-			new_version: '2026-10-21',
-			started_at: iso(9 * DAY + 3 * MIN),
-			completed_at: iso(9 * DAY),
-			error: 'The download server did not answer.',
-			rollback_available: false,
-		},
-	],
+	history: [batchOf(RULES_RESULT), batchOf(GEOIP_RESULT)],
 	count: 2,
 } satisfies UpdateHistoryResponse;
 

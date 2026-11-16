@@ -60,7 +60,8 @@ def os_update_fields(os_version: str, path: str = UPDATE_NOTIFIER) -> dict | Non
         "latest_version": f"{pending} package update{'s' if plural else ''}",
         "update_type": "unknown",
         "release_url": "https://ubuntu.com/security/notices",
-        "release_date": stamp.isoformat(),
+        # OLD CODE: "release_date": stamp.isoformat(), (when Ubuntu counted them, not a release; it's in the changelog)
+        "release_date": "",
         "changelog": (
             f"{pending} Ubuntu package update{'s are' if plural else ' is'} ready to install, "
             f"{security} of them security update{'s' if security != 1 else ''} "

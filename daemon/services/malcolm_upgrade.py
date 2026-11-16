@@ -20,6 +20,7 @@ depend on the daemon, which must not be recreated while it runs the update.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -27,6 +28,9 @@ import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from services import rules_lock
+from services.rules_lock import RULES_FOLLOW_WAIT_S
 
 logger = logging.getLogger("nettap.services.malcolm_upgrade")
 
@@ -89,6 +93,9 @@ LOGIN_TIMEOUT_S = 600
 HEALTHY_TIMEOUT_S = 900
 ARRIVAL_TIMEOUT_S = 600
 POLL_S = 10
+# Suricata's rules lock (the shim's flock in the nettap-rules-state volume): free within this before
+# anything starts, and taken within rules_lock.RULES_FOLLOW_WAIT_S before suricata-live is recreated
+RULES_FREE_WAIT_S = 10
 
 _TAG_RE = re.compile(r"^\d+\.\d+\.\d+$")
 # sets each KEY=VALUE in an env file, adding the lines that are missing; keeps the file's mode
@@ -168,10 +175,19 @@ def malcolm_changelog(offered: str, latest: str, tested: bool) -> str:
     """What the Malcolm row's update does, in plain English."""
     if not tested:
         return f"Malcolm {offered} is out, but NetTap hasn't been tested with it yet."
+    # OLD CODE START — said capture pauses (it keeps recording) and that it takes a few minutes
+    # text = (
+    #     f"Updates all of Malcolm's containers to {offered}, the release this NetTap was tested with. "
+    #     "OpenSearch's data is backed up first, capture and ingest pause for a few minutes, and the "
+    #     "update rolls itself back if capture doesn't resume."
+    # )
+    # OLD CODE END
     text = (
         f"Updates all of Malcolm's containers to {offered}, the release this NetTap was tested with. "
-        "OpenSearch's data is backed up first, capture and ingest pause for a few minutes, and the "
-        "update rolls itself back if capture doesn't resume."
+        "It downloads the new images first, then backs up OpenSearch's data. Dashboards and searches "
+        "are unavailable for 10 to 40 minutes; capture keeps recording, apart from a short gap while "
+        "its containers restart. If records or PCAP stop arriving afterwards, it puts the old release "
+        "and its data back on its own."
     )
     if newer(latest, offered):
         text += f" Malcolm {latest} is also out, not yet tested with NetTap."
@@ -246,6 +262,8 @@ class MalcolmUpgrade:
                 False, old, target, f"Malcolm {old} is already at or past {target}."
             )
         try:
+            await self._check_no_backup_left(p)
+            await self._check_rules_idle()
             step(f"Checking there's disk space for Malcolm {target}")
             await self._check_disk(p)
             step(f"Downloading Malcolm {target}'s images")
@@ -288,15 +306,30 @@ class MalcolmUpgrade:
         self._clear_state()
         return _result(True, old, target, None)
 
-    def take_unfinished(self) -> dict | None:
-        """An update the daemon didn't see finish (it restarted mid-way), read once."""
+    # OLD CODE START — read and deleted in one go: a history save that failed afterwards lost the record
+    # def take_unfinished(self) -> dict | None:
+    #     """An update the daemon didn't see finish (it restarted mid-way), read once."""
+    #     try:
+    #         with open(self._state_file) as fh:
+    #             state = json.load(fh)
+    #     except (OSError, ValueError):
+    #         return None
+    #     self._clear_state()
+    #     return state
+    # OLD CODE END
+    def peek_unfinished(self) -> dict | None:
+        """An update the daemon didn't see finish (it restarted mid-way); the record stays until
+        clear_unfinished(), so the caller can save it first."""
         try:
             with open(self._state_file) as fh:
                 state = json.load(fh)
         except (OSError, ValueError):
             return None
+        return state if isinstance(state, dict) else None
+
+    def clear_unfinished(self) -> None:
+        """Forget the unfinished update once its record is kept elsewhere."""
         self._clear_state()
-        return state
 
     # -- project and commands ------------------------------------------------
 
@@ -432,6 +465,41 @@ class MalcolmUpgrade:
 
     # -- steps -----------------------------------------------------------------
 
+    async def _check_no_backup_left(self, p: dict) -> None:
+        """A backup volume left by an earlier attempt may be the only copy of the old data: the copy
+        step would empty it first, so the update doesn't start."""
+        volume = p["backup_volume"]
+        out = await self._must(
+            ["docker", "volume", "ls", "--quiet", "--filter", f"name=^{volume}$"],
+            60,
+            "Listing Docker volumes",
+        )
+        if volume in out.split():
+            # OLD CODE: f"Docker volume {volume} still holds a copy of OpenSearch's data from an earlier update "
+            #           "attempt, so this update won't start: ..." (also shown when a finished update's removal failed)
+            raise UpgradeError(
+                f"Docker volume {volume} still holds a copy of OpenSearch's data that an earlier update left "
+                "behind, so this update won't start: it would overwrite that copy. Keep it until OpenSearch "
+                "is running and shows your older records, after restoring them from the copy if that "
+                f"attempt's rollback failed. Only then remove it with: sudo docker volume rm {volume}"
+            )
+
+    async def _check_rules_idle(self) -> None:
+        """No rule update holds Suricata's rules lock now (the update restarts Suricata). Asked of the
+        lock itself, which the shim's process holds, so it's right after a daemon restart too."""
+        try:
+            async with rules_lock.rules_lock(RULES_FREE_WAIT_S):
+                pass
+        except rules_lock.RulesBusyError as exc:
+            raise UpgradeError(
+                "A Suricata rule update is running, and the Malcolm update restarts Suricata: try again "
+                "once it has finished (the Suricata rules page shows it)."
+            ) from exc
+        except (
+            OSError
+        ) as exc:  # as rules_lock does without the volume: go on without it
+            logger.warning("Couldn't check Suricata's rules lock: %s", exc)
+
     async def _check_disk(self, p: dict) -> None:
         script = "du -sk /d | cut -f1; df -Pk /d | awk 'NR==2{print $4}'"
         out = await self._must(
@@ -510,8 +578,50 @@ class MalcolmUpgrade:
         )
         await self._must(cmd, 60, f"Writing {' '.join(pairs)} to {env}")
 
-    async def _up(self, p: dict, tag: str, services: list[str]) -> None:
-        if services:
+    # OLD CODE START — recreated suricata-live without Suricata's rules lock, so it could cut off a
+    # rule update that started after the update's first checks
+    # async def _up(self, p: dict, tag: str, services: list[str]) -> None:
+    #     if services:
+    #         await self._must(
+    #             self._compose(p, tag, "up", "-d", "--no-deps", "--no-build", *services),
+    #             STEP_TIMEOUT_S,
+    #             f"Starting {', '.join(services)}",
+    #         )
+    # OLD CODE END
+    async def _up(
+        self, p: dict, tag: str, services: list[str], abort_on_busy: bool = True
+    ) -> None:
+        """abort_on_busy=False (the rollback) recreates Suricata even if a rule update keeps its lock."""
+        if not services:
+            return
+        async with contextlib.AsyncExitStack() as stack:
+            # Held only while suricata-live is recreated (the upgrade and the rollback): released
+            # when compose returns, before the health waits, because Suricata's startup rule
+            # update takes the same lock
+            if "suricata-live" in services:
+                try:
+                    await stack.enter_async_context(
+                        rules_lock.rules_lock(RULES_FOLLOW_WAIT_S)
+                    )
+                except rules_lock.RulesBusyError as exc:
+                    # a half-done rollback (OpenSearch restored, the rest stopped) is worse than one
+                    # cut-off rule update, which the next run redoes; the shim's flock -w waiter can
+                    # win every handover from this non-blocking poll
+                    if not abort_on_busy:
+                        logger.warning(
+                            "A Suricata rule update kept its lock for %d minutes: rolling back Suricata anyway",
+                            RULES_FOLLOW_WAIT_S // 60,
+                        )
+                    else:
+                        raise UpgradeError(
+                            f"A Suricata rule update kept its lock for {RULES_FOLLOW_WAIT_S // 60} minutes, "
+                            "so Suricata couldn't be restarted safely."
+                        ) from exc
+                except OSError as exc:  # as rules_lock does without the volume
+                    logger.warning(
+                        "Couldn't take Suricata's rules lock, restarting it without: %s",
+                        exc,
+                    )
             await self._must(
                 self._compose(p, tag, "up", "-d", "--no-deps", "--no-build", *services),
                 STEP_TIMEOUT_S,
@@ -679,7 +789,13 @@ class MalcolmUpgrade:
                 await self._copy(p, p["backup_volume"], p["data_volume"])
             await self._up(p, old, ["opensearch"])
             await self._wait_login(p)
-            await self._up(p, old, [s for s in p["services"] if s != "opensearch"])
+            # OLD CODE: await self._up(p, old, [s for s in p["services"] if s != "opensearch"]) (stopped half-way on a busy rules lock)
+            await self._up(
+                p,
+                old,
+                [s for s in p["services"] if s != "opensearch"],
+                abort_on_busy=False,
+            )
             since = self._now()
             await self._wait_healthy(p, old)
             # healthy containers aren't capture: Logstash took 4 minutes to start its pipelines on the G11
@@ -695,8 +811,12 @@ class MalcolmUpgrade:
                 else ""
             )
             return f"Rolling back to Malcolm {old} failed too: {exc}{kept}"
-        if copied:
-            await self._remove_volume(p["backup_volume"])
+        # OLD CODE START — kept a copy that failed part-way, which then blocked every later update
+        # if copied:
+        #     await self._remove_volume(p["backup_volume"])
+        # OLD CODE END
+        # the data volume was only read, so a copy that failed part-way is worthless
+        await self._remove_volume(p["backup_volume"])
         self._clear_state()
         if copied:
             return (

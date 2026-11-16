@@ -62,6 +62,18 @@ export interface UpdateResult {
 	rollback_available: boolean;
 }
 
+/** One update run as the daemon keeps it in its history: what it was asked to update and each result. */
+export interface UpdateBatch {
+	results: UpdateResult[];
+	components: string[];
+	success: boolean;
+	started_at: string;
+	completed_at: string;
+}
+
+/** A history row: one result, with a key unique in the list (a batch can repeat a component). */
+export type UpdateHistoryRow = UpdateResult & { key: string };
+
 export interface AutoUpdateConfig {
 	suricata_rules_daily: boolean;
 	geoip_weekly: boolean;
@@ -114,7 +126,8 @@ export async function scanVersions(): Promise<{ versions: ComponentVersion[] }> 
 /**
  * Get a list of available updates that have been previously checked.
  */
-export async function getAvailableUpdates(): Promise<{ updates: AvailableUpdate[]; last_check: string; failed_checks?: string[]; checked?: string[] }> {
+// stale: no check since the daemon started, or the last one is over 6 h old (the page then checks)
+export async function getAvailableUpdates(): Promise<{ updates: AvailableUpdate[]; last_check: string; failed_checks?: string[]; checked?: string[]; stale?: boolean }> {
 	const res = await fetch('/api/system/updates/available');
 
 	// OLD CODE START — #96: a failed request marked every component "Up to Date"
@@ -135,7 +148,7 @@ export async function getAvailableUpdates(): Promise<{ updates: AvailableUpdate[
 /**
  * Check for new updates from upstream sources.
  */
-export async function checkForUpdates(): Promise<{ updates: AvailableUpdate[]; failed_checks?: string[]; checked?: string[] }> {
+export async function checkForUpdates(): Promise<{ updates: AvailableUpdate[]; last_check?: string; failed_checks?: string[]; checked?: string[] }> {
 	const res = await fetch('/api/system/updates/check', {
 		method: 'POST',
 	});
@@ -180,16 +193,19 @@ export async function applyUpdates(components: string[]): Promise<UpdateStatus> 
 		// 	results: [],
 		// };
 		// OLD CODE END
-		return {
-			state: 'error',
-			components: [],
-			current_component: null,
-			current_step: null,
-			progress_percent: 0,
-			started_at: null,
-			completed_at: null,
-			results: [],
-		};
+		// OLD CODE START — dropped the daemon's reason (e.g. a 400's "components must be names NetTap can update")
+		// return {
+		// 	state: 'error',
+		// 	components: [],
+		// 	current_component: null,
+		// 	current_step: null,
+		// 	progress_percent: 0,
+		// 	started_at: null,
+		// 	completed_at: null,
+		// 	results: [],
+		// };
+		// OLD CODE END
+		throw new Error(await errorText(res));
 	}
 
 	return res.json();
@@ -220,40 +236,94 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
 }
 
 /**
- * Get the history of past update operations.
+ * The daemon's update history as it sends it: one batch per update run, newest first.
  */
-export async function getUpdateHistory(): Promise<UpdateResult[]> {
+export async function getUpdateHistoryBatches(): Promise<UpdateBatch[]> {
 	const res = await fetch('/api/system/updates/history');
-
-	// OLD CODE START — the daemon replies {history, count}, so this object never read as a list and
-	// the history never showed; a failure also read as "no past updates"
-	// if (!res.ok) {
-	// 	return [];
-	// }
-	//
-	// return res.json();
-	// OLD CODE END
 	if (!res.ok) {
 		throw new Error(`Update history request failed: HTTP ${res.status}`);
 	}
-
-	const body: { history: UpdateResult[]; count: number } = await res.json();
+	const body: { history: UpdateBatch[]; count: number } = await res.json();
 	return body.history;
+}
+
+/**
+ * The history of past updates, one row per component result, newest batch first.
+ */
+// OLD CODE START — returned the daemon's batches as if each were one component's result, so every
+// history row read "undefined → undefined" with no component
+// export async function getUpdateHistory(): Promise<UpdateResult[]> {
+// 	const res = await fetch('/api/system/updates/history');
+//
+// 	// OLD CODE START — the daemon replies {history, count}, so this object never read as a list and
+// 	// the history never showed; a failure also read as "no past updates"
+// 	// if (!res.ok) {
+// 	// 	return [];
+// 	// }
+// 	//
+// 	// return res.json();
+// 	// OLD CODE END
+// 	if (!res.ok) {
+// 		throw new Error(`Update history request failed: HTTP ${res.status}`);
+// 	}
+//
+// 	const body: { history: UpdateResult[]; count: number } = await res.json();
+// 	return body.history;
+// }
+// OLD CODE END
+export async function getUpdateHistory(): Promise<UpdateHistoryRow[]> {
+	const batches = await getUpdateHistoryBatches();
+	return batches.flatMap((batch, b) => (batch.results ?? []).map((result, r) => ({ ...result, key: `${b}:${r}` })));
 }
 
 /**
  * Rollback a specific component to its previous version.
  */
-export async function rollbackComponent(component: string): Promise<{ result: string }> {
+// OLD CODE START — expected {result}, but the daemon sends {success, component, message} (or {error} on a
+// 500, and the proxy {error} on a 502), so its reason never reached the page
+// export async function rollbackComponent(component: string): Promise<{ result: string }> {
+// 	const res = await fetch('/api/system/updates/rollback', {
+// 		method: 'POST',
+// 		headers: { 'Content-Type': 'application/json' },
+// 		body: JSON.stringify({ component }),
+// 	});
+//
+// 	if (!res.ok) {
+// 		return { result: 'error' };
+// 	}
+//
+// 	return res.json();
+// }
+// OLD CODE END
+/** Always {success, message}: the daemon's message, its or the proxy's error, or the HTTP status. Throws only when the request itself fails. */
+export async function rollbackComponent(component: string): Promise<{ success: boolean; message: string }> {
 	const res = await fetch('/api/system/updates/rollback', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ component }),
 	});
-
-	if (!res.ok) {
-		return { result: 'error' };
+	const body = await readBody(res);
+	if (res.ok && body.success === true) {
+		return { success: true, message: typeof body.message === 'string' ? body.message : '' };
 	}
+	return { success: false, message: textOf(body, res.status) };
+}
 
-	return res.json();
+/** A response's JSON object, or {} when it has none. */
+async function readBody(res: Response): Promise<Record<string, unknown>> {
+	const body: unknown = await res.json().catch(() => ({}));
+	return body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+}
+
+/** What a failed reply says: its message, else its error, else that it failed, with its HTTP status. */
+function textOf(body: Record<string, unknown>, status: number): string {
+	for (const key of ['message', 'error']) {
+		const value = body[key];
+		if (typeof value === 'string' && value) return value;
+	}
+	return `the request failed (HTTP ${status}).`;
+}
+
+async function errorText(res: Response): Promise<string> {
+	return textOf(await readBody(res), res.status);
 }

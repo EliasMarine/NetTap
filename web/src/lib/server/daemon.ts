@@ -53,6 +53,13 @@ export const THREAT_SCAN_TIMEOUT_MS = 120_000;
 export const RULE_UPDATE_TIMEOUT_MS = 290_000;
 
 /**
+ * The Updates page's "Check for updates": the daemon asks GitHub twice (15 s limit each) and runs a few
+ * docker execs, so a slow GitHub ran past the 10 s default and read as a failed check while the daemon
+ * finished it. Under nginx's 60 s proxy_read_timeout.
+ */
+export const UPDATE_CHECK_TIMEOUT_MS = 55_000;
+
+/**
  * NET-203: each Tools page's daemon call, 5 s above the daemon's own limit for that tool, so a slow
  * but working tool answers instead of being cut off. The 10 s default sat below all four: a 15 s DNS
  * lookup on the G11 (2026-11-07) read "Daemon unreachable". All stay under nginx's 60 s proxy_read_timeout.
