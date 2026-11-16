@@ -517,6 +517,23 @@ class TestALeftoverBackupIsNeverOverwritten:
             n in t for t in text for n in (" pull ", "docker stop", "cp -a", " up -d ")
         )
 
+    def test_the_refusal_fits_a_copy_a_finished_update_couldnt_remove(self, tmp_path):
+        docker = FakeDocker()
+        docker.volumes = [BACKUP]
+        error = _apply(_upgrade(docker, tmp_path=tmp_path))["error"]
+        assert "that an earlier update left behind" in error
+        assert "attempt" not in error.split("Keep it")[0]
+
+    def test_a_copy_that_failed_part_way_is_removed_after_the_rollback(self, tmp_path):
+        """Review: the half-filled volume was kept, and the guard then refused every later update."""
+        docker = FakeDocker(fail="copy")
+        result = _apply(_upgrade(docker, tmp_path=tmp_path))
+        assert result["rolled_back"] is True
+        assert "NetTap restarted Malcolm 26.02.0" in result["error"]
+        assert docker.text()[-1] == f"docker volume rm {BACKUP}"
+        # so the next update isn't refused (the fake keeps no volumes)
+        assert _apply(_upgrade(FakeDocker(), tmp_path=tmp_path))["success"] is True
+
     def test_a_similar_name_is_not_a_leftover(self, tmp_path):
         docker = FakeDocker()
         docker.volumes = [f"{BACKUP}-old"]

@@ -483,9 +483,11 @@ class MalcolmUpgrade:
             "Listing Docker volumes",
         )
         if volume in out.split():
+            # OLD CODE: f"Docker volume {volume} still holds a copy of OpenSearch's data from an earlier update "
+            #           "attempt, so this update won't start: ..." (also shown when a finished update's removal failed)
             raise UpgradeError(
-                f"Docker volume {volume} still holds a copy of OpenSearch's data from an earlier update "
-                "attempt, so this update won't start: it would overwrite that copy. Keep it until OpenSearch "
+                f"Docker volume {volume} still holds a copy of OpenSearch's data that an earlier update left "
+                "behind, so this update won't start: it would overwrite that copy. Keep it until OpenSearch "
                 "is running and shows your older records, after restoring them from the copy if that "
                 f"attempt's rollback failed. Only then remove it with: sudo docker volume rm {volume}"
             )
@@ -817,8 +819,12 @@ class MalcolmUpgrade:
                 else ""
             )
             return f"Rolling back to Malcolm {old} failed too: {exc}{kept}"
-        if copied:
-            await self._remove_volume(p["backup_volume"])
+        # OLD CODE START — kept a copy that failed part-way, which then blocked every later update
+        # if copied:
+        #     await self._remove_volume(p["backup_volume"])
+        # OLD CODE END
+        # the data volume was only read, so a copy that failed part-way is worthless
+        await self._remove_volume(p["backup_volume"])
         self._clear_state()
         if copied:
             return (
