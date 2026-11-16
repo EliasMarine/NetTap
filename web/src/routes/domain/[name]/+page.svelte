@@ -467,4 +467,6 @@
 	.story p { margin: 0 0 var(--sp-3); color: var(--text-2); font-size: var(--text-sm); }
 	.todo ul { margin: 0; padding-left: var(--sp-4); }
 	.excluded { margin-left: var(--sp-2); }
+	/* a long name has no space to break at, so it scrolled the page sideways at 390 px */
+	.page-title { overflow-wrap: anywhere; }
 </style>

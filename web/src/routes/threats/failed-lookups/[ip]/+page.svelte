@@ -238,6 +238,8 @@
 <style>
 	/* Layout glue the system lacks */
 	.eyebrow { margin: 0 0 var(--sp-1); }
+	/* a full IPv6 address has no space to break at */
+	.page-title { overflow-wrap: anywhere; }
 	.notice { margin-bottom: var(--sp-3); }
 	.story p { margin: 0 0 var(--sp-3); color: var(--text-2); font-size: var(--text-sm); }
 	.todo ul { margin: 0; padding-left: var(--sp-4); }

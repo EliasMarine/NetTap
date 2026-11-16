@@ -342,5 +342,9 @@ describe('Threats page — drill-downs and the investigation layout', () => {
 		const ip = body.querySelector('dd.ip')!;
 		expect(ip.textContent).toBe(v6);
 		expect(ip.querySelectorAll('wbr')).toHaveLength(7);
+		// the head's source → destination line breaks the same way (it scrolled the page at 390 px)
+		const head = container.querySelector('.inv-head .mono')!;
+		expect(head.textContent).toBe(`${v6} → 203.0.113.45`);
+		expect(head.querySelectorAll('wbr')).toHaveLength(7);
 	});
 });

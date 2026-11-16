@@ -925,7 +925,8 @@
 								<SeverityPill level={levelOf(inv.alert.severity_label) ?? 'info'} />
 								<span class="inv-main">
 									<span class="inv-title">{inv.alert.signature}</span>
-									<span class="mono dim">{inv.alert.source_ip} → {inv.alert.destination_ip}</span>
+									<!-- OLD CODE: <span class="mono dim">{inv.alert.source_ip} → {inv.alert.destination_ip}</span> (a full IPv6 pair scrolled the page sideways at 390 px) -->
+									<span class="mono dim">{@render ipText(inv.alert.source_ip)} → {@render ipText(inv.alert.destination_ip)}</span>
 								</span>
 								<Icon name="chevdown" class={expandedInvestigation === i ? 'inv-chev open' : 'inv-chev'} />
 							</button>

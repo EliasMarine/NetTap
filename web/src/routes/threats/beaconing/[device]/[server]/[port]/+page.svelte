@@ -250,6 +250,8 @@
 <style>
 	/* Layout glue the system lacks */
 	.eyebrow { margin: 0 0 var(--sp-1); }
+	/* a full IPv6 server address has no space to break at */
+	.page-title { overflow-wrap: anywhere; }
 	.notice { margin-bottom: var(--sp-3); }
 	.small { font-size: var(--text-sm); }
 	.story p { margin: 0 0 var(--sp-3); color: var(--text-2); font-size: var(--text-sm); }
