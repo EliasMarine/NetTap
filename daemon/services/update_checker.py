@@ -136,7 +136,7 @@ class UpdateChecker:
         self._cache_ttl = cache_ttl_hours * 3600
         self._available_updates: list[AvailableUpdate] = []
         self._last_check: str | None = None
-        self._checking: bool = False
+        # OLD CODE: self._checking: bool = False (the shared check task and _last_result replace it)
         # one check at a time: overlapping callers await the same one (two tabs opening the page)
         self._check_task: asyncio.Task | None = None
         # the last finished check, which get_available() serves so nobody reads one half-way
@@ -189,145 +189,140 @@ class UpdateChecker:
 
     async def _run_check(self) -> dict:
         """One check of every source (check_updates runs it once for all callers)."""
-        self._checking = True
         now = datetime.now(timezone.utc).isoformat()
         self._failed_checks = []
         self._malcolm_known = False
         self._os_checked = False
 
-        try:
-            all_updates: list[AvailableUpdate] = []
+        # OLD CODE: the body sat in try/finally to reset self._checking, which the shared task replaced
+        all_updates: list[AvailableUpdate] = []
 
-            # Get current versions from VersionManager if available
-            current_versions: dict[str, str] = {}
-            images: dict[str, str] = {}  # running container -> image reference
-            if self._version_manager is not None:
-                try:
-                    versions_data = await self._version_manager.get_versions()
-                    for v in versions_data.get("versions", []):
-                        current_versions[v["name"]] = v["current_version"]
-                        if v.get("category") != "docker":
-                            continue
-                        if v.get("status") == "ok":
-                            # the malcolm row has no image of its own: it's checked with them
-                            if (v.get("details") or {}).get("image"):
-                                images[v["name"]] = v["details"]["image"]
-                        else:  # docker couldn't be asked: container updates unknown
-                            self._failed_checks.append(v["name"])
-                except Exception as exc:
-                    # OLD CODE START — #96: the container checks were skipped unseen
-                    # logger.debug("Could not get current versions: %s", exc)
-                    # OLD CODE END
-                    logger.warning("Could not get current versions: %s", exc)
-                    self._failed_checks.append("component-versions")
-
-            # Check GitHub releases for NetTap core updates
-            # OLD CODE START — #96: a failed GitHub request read as "no NetTap update"
-            # github_updates = await self._check_github_releases()
-            # all_updates.extend(github_updates)
-            # OLD CODE END
+        # Get current versions from VersionManager if available
+        current_versions: dict[str, str] = {}
+        images: dict[str, str] = {}  # running container -> image reference
+        if self._version_manager is not None:
             try:
-                all_updates.extend(await self._check_github_releases())
+                versions_data = await self._version_manager.get_versions()
+                for v in versions_data.get("versions", []):
+                    current_versions[v["name"]] = v["current_version"]
+                    if v.get("category") != "docker":
+                        continue
+                    if v.get("status") == "ok":
+                        # the malcolm row has no image of its own: it's checked with them
+                        if (v.get("details") or {}).get("image"):
+                            images[v["name"]] = v["details"]["image"]
+                    else:  # docker couldn't be asked: container updates unknown
+                        self._failed_checks.append(v["name"])
             except Exception as exc:
-                logger.warning(
-                    "GitHub release check failed: %r", exc
-                )  # a timeout's message is empty
-                self._failed_checks.append("nettap-daemon")
+                # OLD CODE START — #96: the container checks were skipped unseen
+                # logger.debug("Could not get current versions: %s", exc)
+                # OLD CODE END
+                logger.warning("Could not get current versions: %s", exc)
+                self._failed_checks.append("component-versions")
 
-            # OLD CODE START — #96: checked Docker Hub malcolm/*, which isn't where the
-            # deployed images come from (ghcr.io), so it could never find an update
-            # # Check Docker Hub for image updates
-            # docker_updates = await self._check_docker_updates(current_versions)
-            # all_updates.extend(docker_updates)
-            # OLD CODE END
-            # Check the running containers' images against their real source
-            docker_updates = await self._check_docker_updates(current_versions, images)
-            all_updates.extend(docker_updates)
+        # Check GitHub releases for NetTap core updates
+        # OLD CODE START — #96: a failed GitHub request read as "no NetTap update"
+        # github_updates = await self._check_github_releases()
+        # all_updates.extend(github_updates)
+        # OLD CODE END
+        try:
+            all_updates.extend(await self._check_github_releases())
+        except Exception as exc:
+            logger.warning(
+                "GitHub release check failed: %r", exc
+            )  # a timeout's message is empty
+            self._failed_checks.append("nettap-daemon")
 
-            # Check Suricata rule updates
-            rules_update = await self._check_suricata_rules()
-            if rules_update is not None:
-                all_updates.append(rules_update)
+        # OLD CODE START — #96: checked Docker Hub malcolm/*, which isn't where the
+        # deployed images come from (ghcr.io), so it could never find an update
+        # # Check Docker Hub for image updates
+        # docker_updates = await self._check_docker_updates(current_versions)
+        # all_updates.extend(docker_updates)
+        # OLD CODE END
+        # Check the running containers' images against their real source
+        docker_updates = await self._check_docker_updates(current_versions, images)
+        all_updates.extend(docker_updates)
 
-            # Check GeoIP database updates
-            geoip_update = await self._check_geoip_update()
-            if geoip_update is not None:
-                all_updates.append(geoip_update)
+        # Check Suricata rule updates
+        rules_update = await self._check_suricata_rules()
+        if rules_update is not None:
+            all_updates.append(rules_update)
 
-            # Ubuntu's own count of pending package updates (shown, not installed)
-            os_update = self._check_os_updates(current_versions.get("os", "unknown"))
-            if os_update is not None:
-                all_updates.append(os_update)
+        # Check GeoIP database updates
+        geoip_update = await self._check_geoip_update()
+        if geoip_update is not None:
+            all_updates.append(geoip_update)
 
-            self._available_updates = all_updates
-            self._last_check = now
-            # OLD CODE START — NetTap's images counted as checked even when the release check
-            # failed or found a newer release, so they read "Up to Date" beside it
-            # own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
-            # OLD CODE END
-            # NetTap's own images are built from its release: as current as that check says
-            nettap_current = "nettap-daemon" not in self._failed_checks and not any(
-                u.component == "nettap-daemon" for u in all_updates
-            )
-            own_images = (
-                (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
-                if nettap_current
-                else (_MALCOLM_REGISTRY,)
-            )
-            # NetTap's compose file pins its other images too (nginx, grafana), so a nettap-*
-            # container follows the NetTap release the same way
-            nettap_pinned = "nettap-" if nettap_current else ()
-            # OLD CODE START — a source that couldn't be read was still listed as checked
-            # self._checked = sorted(
-            #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
-            # )
-            # OLD CODE END
-            # OLD CODE START — the Malcolm row, the package rows and the OS weren't checked by anything
-            # self._checked = sorted(
-            #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
-            #     - set(self._failed_checks)
-            # )
-            # OLD CODE END
-            follows = (
-                list(_UPDATES_WITH_MALCOLM) + ["malcolm"] if self._malcolm_known else []
-            )
-            follows += list(_UPDATES_WITH_NETTAP) if nettap_current else []
-            follows += ["os"] if self._os_checked else []
-            follows = [
-                c for c in follows if c in current_versions
-            ]  # only rows that exist
-            self._checked = sorted(
-                {
-                    "nettap-daemon",
-                    "suricata-rules",
-                    "geoip-db",
-                    *follows,
-                    *(
-                        c
-                        for c, i in images.items()
-                        if i.startswith((*own_images, *_MALCOLM_TAGGED))
-                        or c.startswith(nettap_pinned)
-                    ),
-                }
-                - set(self._failed_checks)
-            )
+        # Ubuntu's own count of pending package updates (shown, not installed)
+        os_update = self._check_os_updates(current_versions.get("os", "unknown"))
+        if os_update is not None:
+            all_updates.append(os_update)
 
-            logger.info(
-                "Update check complete: %d updates available",
-                len(all_updates),
-            )
-
-            self._last_result = {
-                "updates": [u.to_dict() for u in all_updates],
-                "last_check": self._last_check,
-                "count": len(all_updates),
-                "has_updates": len(all_updates) > 0,
-                "failed_checks": list(dict.fromkeys(self._failed_checks)),
-                "checked": list(self._checked),
+        self._available_updates = all_updates
+        self._last_check = now
+        # OLD CODE START — NetTap's images counted as checked even when the release check
+        # failed or found a newer release, so they read "Up to Date" beside it
+        # own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
+        # OLD CODE END
+        # NetTap's own images are built from its release: as current as that check says
+        nettap_current = "nettap-daemon" not in self._failed_checks and not any(
+            u.component == "nettap-daemon" for u in all_updates
+        )
+        own_images = (
+            (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
+            if nettap_current
+            else (_MALCOLM_REGISTRY,)
+        )
+        # NetTap's compose file pins its other images too (nginx, grafana), so a nettap-*
+        # container follows the NetTap release the same way
+        nettap_pinned = "nettap-" if nettap_current else ()
+        # OLD CODE START — a source that couldn't be read was still listed as checked
+        # self._checked = sorted(
+        #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
+        # )
+        # OLD CODE END
+        # OLD CODE START — the Malcolm row, the package rows and the OS weren't checked by anything
+        # self._checked = sorted(
+        #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
+        #     - set(self._failed_checks)
+        # )
+        # OLD CODE END
+        follows = (
+            list(_UPDATES_WITH_MALCOLM) + ["malcolm"] if self._malcolm_known else []
+        )
+        follows += list(_UPDATES_WITH_NETTAP) if nettap_current else []
+        follows += ["os"] if self._os_checked else []
+        follows = [c for c in follows if c in current_versions]  # only rows that exist
+        self._checked = sorted(
+            {
+                "nettap-daemon",
+                "suricata-rules",
+                "geoip-db",
+                *follows,
+                *(
+                    c
+                    for c, i in images.items()
+                    if i.startswith((*own_images, *_MALCOLM_TAGGED))
+                    or c.startswith(nettap_pinned)
+                ),
             }
-            return self._last_result
-        finally:
-            self._checking = False
+            - set(self._failed_checks)
+        )
+
+        logger.info(
+            "Update check complete: %d updates available",
+            len(all_updates),
+        )
+
+        self._last_result = {
+            "updates": [u.to_dict() for u in all_updates],
+            "last_check": self._last_check,
+            "count": len(all_updates),
+            "has_updates": len(all_updates) > 0,
+            "failed_checks": list(dict.fromkeys(self._failed_checks)),
+            "checked": list(self._checked),
+        }
+        return self._last_result
 
     async def get_available(self) -> dict:
         """Return cached available updates.
@@ -341,17 +336,29 @@ class UpdateChecker:
             self._last_result is not None
         ):  # the last finished check, also while one runs
             return {**self._last_result, "stale": self._is_stale()}
-        # nothing finished yet; while the first check runs its lists are half-built
+        # OLD CODE START — built from the check's working fields, which a running or crashed check
+        # leaves half-built
+        # return {
+        #     "updates": [u.to_dict() for u in self._available_updates],
+        #     "last_check": self._last_check,
+        #     "count": len(self._available_updates),
+        #     "has_updates": len(self._available_updates) > 0,
+        #     "failed_checks": []
+        #     if self._checking
+        #     else list(dict.fromkeys(self._failed_checks)),
+        #     "checked": [] if self._checking else list(self._checked),
+        #     "stale": self._is_stale(),
+        # }
+        # OLD CODE END
+        # no check has finished since the daemon started
         return {
-            "updates": [u.to_dict() for u in self._available_updates],
-            "last_check": self._last_check,
-            "count": len(self._available_updates),
-            "has_updates": len(self._available_updates) > 0,
-            "failed_checks": []
-            if self._checking
-            else list(dict.fromkeys(self._failed_checks)),
-            "checked": [] if self._checking else list(self._checked),
-            "stale": self._is_stale(),
+            "updates": [],
+            "last_check": None,
+            "count": 0,
+            "has_updates": False,
+            "failed_checks": [],
+            "checked": [],
+            "stale": True,
         }
 
     def _is_stale(self) -> bool:

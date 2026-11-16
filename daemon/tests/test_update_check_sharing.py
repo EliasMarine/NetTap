@@ -75,6 +75,39 @@ def test_during_a_check_readers_see_the_last_finished_one():
     assert during["last_check"] == done["last_check"]
 
 
+def test_a_check_that_crashes_part_way_serves_nothing_half_built():
+    """Review: the empty first state was built from the check's working fields."""
+    uc = _checker()
+
+    async def crash():
+        uc._failed_checks.append("half-built")
+        raise RuntimeError("unexpected")
+
+    uc._check_geoip_update = crash
+    try:
+        asyncio.run(uc.check_updates())
+    except RuntimeError:
+        pass
+    assert asyncio.run(uc.get_available()) == {
+        "updates": [],
+        "last_check": None,
+        "count": 0,
+        "has_updates": False,
+        "failed_checks": [],
+        "checked": [],
+        "stale": True,
+    }
+    # after a check that finished, a later crash leaves that one in place
+    uc._check_geoip_update = _checker()._check_geoip_update
+    done = asyncio.run(uc.check_updates())
+    uc._check_geoip_update = crash
+    try:
+        asyncio.run(uc.check_updates())
+    except RuntimeError:
+        pass
+    assert asyncio.run(uc.get_available())["failed_checks"] == done["failed_checks"]
+
+
 def test_stale_until_checked_and_again_after_the_ttl():
     uc = _checker()
     assert asyncio.run(uc.get_available())["stale"] is True

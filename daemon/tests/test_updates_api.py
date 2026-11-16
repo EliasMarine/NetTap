@@ -38,7 +38,9 @@ def _make_mock_update_checker():
     uc = UpdateChecker.__new__(UpdateChecker)
     uc._available_updates = []
     uc._last_check = None
-    uc._checking = False
+    # OLD CODE: uc._checking = False (the flag is gone)
+    uc._check_task = None
+    uc._last_result = None
     uc._github_repo = "EliasMarine/NetTap"
     uc._cache_ttl = 6 * 3600
     uc._version_manager = None

@@ -107,7 +107,8 @@ class TestUpdateCheckerInitialization(unittest.TestCase):
         self.assertEqual(uc._cache_ttl, 6 * 3600)
         self.assertEqual(uc._available_updates, [])
         self.assertIsNone(uc._last_check)
-        self.assertFalse(uc._checking)
+        # OLD CODE: self.assertFalse(uc._checking) (the flag is gone: a shared check task replaced it)
+        self.assertIsNone(uc._check_task)
 
     def test_custom_parameters(self):
         """Custom parameters should be stored correctly."""
@@ -193,11 +194,17 @@ class TestCheckUpdates(unittest.TestCase):
         dt = datetime.fromisoformat(uc._last_check)
         self.assertIsInstance(dt, datetime)
 
-    def test_checking_flag_reset_after_check(self):
-        """_checking flag should be False after check completes."""
+    # OLD CODE START — the _checking flag is gone (a shared check task replaced it)
+    # def test_checking_flag_reset_after_check(self):
+    #     """_checking flag should be False after check completes."""
+    #     uc = self._make_checker_with_mocks()
+    #     asyncio.run(uc.check_updates())
+    #     self.assertFalse(uc._checking)
+    # OLD CODE END
+    def test_check_task_done_after_check(self):
         uc = self._make_checker_with_mocks()
         asyncio.run(uc.check_updates())
-        self.assertFalse(uc._checking)
+        self.assertTrue(uc._check_task.done())
 
 
 class TestGetAvailable(unittest.TestCase):
@@ -217,12 +224,24 @@ class TestGetAvailable(unittest.TestCase):
             size_mb=0.0,
             requires_restart=True,
         )
-        uc._available_updates = [update]
+        # OLD CODE START — get_available serves the last finished check, not the working fields
+        # uc._available_updates = [update]
+        # uc._last_check = datetime.now(timezone.utc).isoformat()
+        # OLD CODE END
         uc._last_check = datetime.now(timezone.utc).isoformat()
+        uc._last_result = {
+            "updates": [update.to_dict()],
+            "last_check": uc._last_check,
+            "count": 1,
+            "has_updates": True,
+            "failed_checks": [],
+            "checked": [],
+        }
 
         result = asyncio.run(uc.get_available())
         self.assertEqual(result["count"], 1)
         self.assertTrue(result["has_updates"])
+        self.assertFalse(result["stale"])
 
     def test_get_available_empty_on_fresh_init(self):
         """get_available() should return empty on fresh instance."""
