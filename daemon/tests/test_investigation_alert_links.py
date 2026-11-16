@@ -6,11 +6,12 @@ alert_rules, so Alert response coverage survives the alert's index expiring. The
 fake runs the real lookup over a set of documents.
 """
 
+import asyncio
 import os
 import sys
 import tempfile
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -22,6 +23,7 @@ from api.alerts import _SURICATA_ALERT_FILTERS
 from api.investigations import (
     MAX_ALERT_LINKS,
     RESOLVE_TIMEOUT_S,
+    _alert_ids,
     register_investigation_routes,
 )
 from services.investigation_store import InvestigationStore
@@ -40,6 +42,7 @@ DOCS = [
     _alert("a2", None),
     _alert("a3", ""),
     _alert("a4", "ET POLICY Telnet"),
+    _alert("a5", ["ET MULTI first", "ET MULTI second"]),  # a multi-valued rule.name
     {**conn(DEVICE, B), "_id": "c1"},  # a conn record is not an alert
 ]
 
@@ -136,6 +139,20 @@ class TestCreateWithAlerts(LinkTestCase):
         self.search.assert_not_called()
         self.assertEqual(self.store.list_all(), [])
 
+    async def test_a_multi_valued_rule_name_keeps_its_first_name(self):
+        status, data = await self.post(
+            "/api/investigations", {"title": "x", "alert_ids": ["a5"]}
+        )
+        self.assertEqual(status, 201, data)
+        self.assertEqual(data["alert_rules"], {"a5": "ET MULTI first"})
+
+    def test_the_cap_is_checked_before_any_entry_is_read(self):
+        """Security review LOW-3: a 16 MiB list was read entry by entry before the cap."""
+        with patch("api.investigations._alert_id") as each:
+            self.assertIsNone(_alert_ids(["a1"] * (MAX_ALERT_LINKS + 1)))
+        each.assert_not_called()
+        self.assertEqual(_alert_ids(["a1"] * MAX_ALERT_LINKS), ["a1"])
+
     async def test_without_alerts_opensearch_is_never_asked(self):
         """R2-1: the Investigations form sends no alert_ids; it must work with OpenSearch down."""
         self.search.side_effect = OpenSearchException("down")
@@ -199,6 +216,36 @@ class TestLinkAlert(LinkTestCase):
         status, _ = await self.post(path, {"alert_id": "a1"})  # already linked
         self.assertEqual(status, 200)
         self.assertEqual(len(self.store.get(inv.id).alert_ids), MAX_ALERT_LINKS)
+
+    async def test_two_links_at_once_cant_both_pass_the_cap(self):
+        """NET-308 review: one slot left and two links in flight; the store checks as it adds."""
+        inv = self.store.create(
+            title="Nearly full",
+            alert_ids=[f"old{i}" for i in range(MAX_ALERT_LINKS - 1)],
+        )
+        path = f"/api/investigations/{inv.id}/alerts"
+        results = await asyncio.gather(
+            self.post(path, {"alert_id": "a1"}), self.post(path, {"alert_id": "a4"})
+        )
+        self.assertEqual(sorted(status for status, _ in results), [200, 400])
+        refused = next(data for status, data in results if status == 400)
+        self.assertEqual(
+            refused, {"error": "An investigation links at most 100 alerts"}
+        )
+        self.assertEqual(len(self.store.get(inv.id).alert_ids), MAX_ALERT_LINKS)
+
+    async def test_relinking_a_resolved_alert_needs_no_lookup(self):
+        """Its index may have expired: the stored rule answers, not a 404."""
+        inv = self.store.create(
+            title="Old", alert_ids=["gone"], alert_rules={"gone": "ET SCAN Nmap"}
+        )
+        status, data = await self.post(
+            f"/api/investigations/{inv.id}/alerts", {"alert_id": "gone"}
+        )
+        self.assertEqual(
+            (status, data), (200, {"result": "linked", "alert_id": "gone"})
+        )
+        self.search.assert_not_called()
 
     async def test_relinking_an_unresolved_link_fills_its_rule_once(self):
         """A link made before NET-308 has no rule; linking it again resolves it, no duplicate."""

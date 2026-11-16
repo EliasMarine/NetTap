@@ -731,6 +731,40 @@ describe('Alerts — drawer', () => {
 		expect(within(drawer).queryByRole('alert')).not.toBeInTheDocument();
 	});
 
+	it('offers no second investigation while the first is being created on a remounted drawer, and offers it again if it fails', async () => {
+		succeedAll([enriched, alert('e2', { category: 'Misc activity', signature: 'ET INFO Other' })]);
+		render(Page);
+		await flush();
+		const drawer = () => screen.getByRole('complementary', { name: 'Alert details' });
+		const create = deferred<Investigation>();
+		vi.mocked(createInvestigation).mockReturnValueOnce(create.promise);
+		await fireEvent.click(screen.getByRole('button', { name: /A device contacted a server/ }));
+		await fireEvent.click(within(drawer()).getByRole('button', { name: 'Open an investigation' }));
+		// its own request: Opening…, disabled
+		expect(within(drawer()).getByRole('button', { name: 'Opening…' })).toBeDisabled();
+		// away and back while it runs: no button to open a second
+		await fireEvent.click(screen.getByRole('button', { name: /Misc activity/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /A device contacted a server/ }));
+		expect(within(drawer()).queryByRole('button', { name: 'Open an investigation' })).not.toBeInTheDocument();
+		// it fails: the button is back
+		create.reject(new Error('Creating the investigation failed: HTTP 502'));
+		await flush();
+		expect(within(drawer()).getByRole('button', { name: 'Open an investigation' })).toBeInTheDocument();
+		expect(createInvestigation).toHaveBeenCalledTimes(1);
+	});
+
+	it('shows the error and the button again when the create fails in its own drawer', async () => {
+		const drawer = await openFromRow();
+		const create = deferred<Investigation>();
+		vi.mocked(createInvestigation).mockReturnValueOnce(create.promise);
+		await fireEvent.click(within(drawer).getByRole('button', { name: 'Open an investigation' }));
+		create.reject(new Error("An alert to link wasn't found"));
+		await flush();
+		expect(within(drawer).getByRole('alert')).toHaveTextContent("Not applied: An alert to link wasn't found");
+		expect(within(drawer).getByRole('button', { name: 'Open an investigation' })).toBeEnabled();
+		expect(within(drawer).queryByRole('status')).not.toBeInTheDocument();
+	});
+
 	it('keeps an opened investigation when the drawer moves to another alert and back, even if the create finishes in between (review M3)', async () => {
 		succeedAll([enriched, alert('e2', { category: 'Misc activity', signature: 'ET INFO Other' })]);
 		render(Page);

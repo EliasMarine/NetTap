@@ -9,7 +9,11 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.investigation_store import InvestigationStore, _clean_alert_rules
+from services.investigation_store import (
+    MAX_ALERT_LINKS,
+    InvestigationStore,
+    _clean_alert_rules,
+)
 
 FROM, TO = "2026-11-05T00:00:00Z", "2026-11-06T00:00:00Z"
 
@@ -32,6 +36,7 @@ class StoreTestCase(unittest.TestCase):
 class TestOpenDuring(StoreTestCase):
     def test_open_at_some_point_in_the_window(self):
         early, inside = "2026-11-01T00:00:00+00:00", "2026-11-05T10:00:00+00:00"
+        # records made by hand have no closed_at, as before NET-308: updated_at stands in
         cases = [  # (kept, status, created_at, updated_at)
             (True, "open", early, early),  # created before the window, still open
             (True, "in_progress", inside, inside),
@@ -49,6 +54,53 @@ class TestOpenDuring(StoreTestCase):
         ]
         found = {inv.id for inv in self.store.open_during(FROM, TO)}
         self.assertEqual(found, {inv.id for kept, inv in made if kept})
+
+
+class TestClosedAt(StoreTestCase):
+    """NET-308 review: updated_at moved with any later edit, so a note added today made an
+    investigation closed weeks ago count as open in today's window."""
+
+    EARLY, CLOSED = "2026-11-01T00:00:00+00:00", "2026-11-02T00:00:00+00:00"
+
+    def closed_early(self):
+        inv = self.store.create(title="x")
+        inv.created_at = self.EARLY
+        self.store.update(inv.id, status="closed")
+        self.assertIsNotNone(inv.closed_at)
+        inv.closed_at = self.CLOSED  # closed before the window
+        return inv
+
+    def test_a_note_after_closing_doesnt_reopen_it_in_a_later_window(self):
+        inv = self.closed_early()
+        self.store.add_note(
+            inv.id, "found the cause"
+        )  # updated_at is now, after the window
+        self.assertGreater(inv.updated_at, TO)
+        self.assertEqual(self.store.open_during(FROM, TO), [])
+        # it still counts for a window it was open in
+        self.assertEqual(self.store.open_during(self.EARLY, self.CLOSED), [inv])
+
+    def test_reopening_clears_it_and_closing_again_sets_it(self):
+        inv = self.closed_early()
+        self.store.update(
+            inv.id, status="resolved"
+        )  # done to done: still the first close
+        self.assertEqual(inv.closed_at, self.CLOSED)
+        self.store.update(inv.id, status="in_progress")
+        self.assertIsNone(inv.closed_at)
+        self.assertEqual(self.store.open_during(FROM, TO), [inv])
+        self.store.update(inv.id, status="closed")
+        self.assertGreater(inv.closed_at, TO)
+
+    def test_it_survives_a_restart_and_an_old_record_has_none(self):
+        inv = self.closed_early()
+        old = self.make("old", "closed", self.EARLY, "2026-11-05T12:00:00+00:00")
+        self.store._save()
+        loaded = InvestigationStore(self.path)
+        self.assertEqual(loaded.get(inv.id).closed_at, self.CLOSED)
+        self.assertIsNone(loaded.get(old.id).closed_at)
+        # the old record falls back to its updated_at, inside the window
+        self.assertEqual([i.id for i in loaded.open_during(FROM, TO)], [old.id])
 
 
 class TestAlertRules(StoreTestCase):
@@ -87,6 +139,18 @@ class TestAlertRules(StoreTestCase):
         self.assertTrue(self.store.link_alert(inv.id, "a1", "ET SCAN Nmap"))
         self.assertEqual(inv.alert_ids, ["a1"])
         self.assertEqual(inv.alert_rules, {"a1": "ET SCAN Nmap"})
+
+    def test_the_cap_is_checked_as_the_link_is_added(self):
+        """NET-308 review: checked by the caller before its lookup, two requests could both pass."""
+        inv = self.store.create(
+            title="x", alert_ids=[f"a{i}" for i in range(MAX_ALERT_LINKS)]
+        )
+        with self.assertRaisesRegex(ValueError, "at most 100 alerts"):
+            self.store.link_alert(inv.id, "one-more", None)
+        self.assertTrue(
+            self.store.link_alert(inv.id, "a0", "ET X")
+        )  # a relink isn't capped
+        self.assertEqual(len(inv.alert_ids), MAX_ALERT_LINKS)
 
     def test_an_unchanged_relink_leaves_updated_at(self):
         """A closed investigation counts until its last change, so a no-op mustn't extend it."""

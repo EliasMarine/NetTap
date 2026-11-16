@@ -398,7 +398,12 @@ class TestDns(PostureTestCase):
                     **{"8.8.8.8": {"org": _buckets(("AS15169 Google LLC", 120))}},
                 ),
             },
-            over_tls={"doc_count": 200, "resolvers": _buckets(("9.9.9.9", 200))},
+            # OLD CODE: over_tls={"doc_count": 200, "resolvers": _buckets(("9.9.9.9", 200))}, (NET-308)
+            over_tls={
+                "doc_count": 200,
+                "private_local": {"doc_count": 30},
+                "resolvers": _buckets(("9.9.9.9", 200)),
+            },
         )
 
     @unittest_run_loop
@@ -431,6 +436,8 @@ class TestDns(PostureTestCase):
         self.assertEqual(
             data["plain_scope"], {"private_local": 300, "unknown": 5, "public": 195}
         )
+        # NET-308 review: the DoT the score leaves out, so 500 - 300 and 200 - 30 are its figures
+        self.assertEqual(data["over_tls_scope"], {"private_local": 30})
         by_ip = {r["ip"]: r for r in data["resolvers"]["plain"]}
         self.assertEqual(by_ip["192.168.1.174"]["scope"], "private_local")
         self.assertEqual(
@@ -499,6 +506,8 @@ class TestDns(PostureTestCase):
         await self.client.request("GET", "/api/posture/dns-security")
         plain = self.body()["aggs"]["plain"]["aggs"]
         self.assertEqual(plain["private_local"]["filter"], PRIVATE_LOCAL)
+        over_tls = self.body()["aggs"]["over_tls"]["aggs"]
+        self.assertEqual(over_tls["private_local"]["filter"], PRIVATE_LOCAL)
         self.assertEqual(plain["unknown"]["filter"], UNKNOWN)
         self.assertEqual(
             plain["public"]["filter"], {"bool": {"must_not": [PRIVATE_LOCAL, UNKNOWN]}}

@@ -27,14 +27,18 @@ The owner approved fixing the five formula flaws #313 found and stated on the ca
 - **DNS security:** plain lookups and DoT connections to private or local-scope addresses are left out on
   both sides (`dns.local`), so a resolver is judged by what it sends out. Unknown scope still counts.
 - **Network segmentation:** scored from IoT isolation (`/api/iot/network-isolation`). A pair costs points
-  only if it reached the host (data both ways); an attempt with no data back stays a finding, worded
-  "reachability not confirmed". The IoT page reads the same score. The web checks the reply's shape, so a
+  only if it reached the host: data both ways, or a connection Zeek saw established (`REACHED` in
+  `services/excluded_ips.py`; a port scan's completed handshake is RSTO with 0 bytes). REJ, S0, RSTOS0, SH,
+  SHR and OTH stay findings, worded "reachability not confirmed", and sort after the reached pairs. The IoT page reads the same score. The web checks the reply's shape, so a
   malformed one reads "Couldn't compute", never 100.
 - **Alert response:** new `GET /api/posture/alert-response`. The score is the share of high-severity
   (Suricata priority 1) counted rule groups with an investigation open during the window that links one of
   the rule's alerts. Linking an alert now stores the rule name the daemon reads at link time
   (`alert_rules`), so coverage survives the alert's index expiring. `alert_ids` and `alert_id` are
-  validated (a non-string was a 500). The alert drawer has "Open an investigation".
+  validated (a non-string was a 500), and the store enforces the 100-link cap as it adds. An investigation
+  gets `closed_at` when it enters resolved or closed (cleared on reopen), so a later note can't move its
+  close; a record from before it falls back to `updated_at`. The alert drawer has "Open an investigation",
+  remembered per alert for the session so a remounted drawer can't open a duplicate.
 - **Patch currency:** `protocols.patch` counts each connection once.
 - One 24-hour window for all six requests on the overview.
 

@@ -272,7 +272,7 @@ export function scoreCategories(inputs: PostureInputs): CategoryScore[] {
 			if (n > 0) findings.push(`${n} ${risk}-risk smart-device connection(s) to your other devices`);
 		}
 		const unconfirmed = isolation.pairs.length - reached.length;
-		if (unconfirmed > 0) findings.push(`${unconfirmed} more where reachability isn't confirmed (no data seen both ways)`);
+		if (unconfirmed > 0) findings.push(`${unconfirmed} more where reachability isn't confirmed (no completed connection seen)`);
 		if (isolation.recommendation) findings.push(isolation.recommendation);
 		return findings;
 	}
@@ -402,7 +402,7 @@ export function scoreCategories(inputs: PostureInputs): CategoryScore[] {
 				statusClass: getStatusClass(networkScore),
 				// OLD CODE: description: 'Whether all devices have been baselined and communicate with expected destinations.', (NET-308)
 				description:
-					'Whether smart (IoT) devices can reach your other devices. A connection counts only when data went both ways; risky ports (remote login, file sharing, admin pages) cost the most.',
+					'Whether smart (IoT) devices can reach your other devices. A connection counts only when it completed; risky ports (remote login, file sharing, admin pages) cost the most.',
 				findings: networkFindings(),
 				// OLD CODE: needs: ['devices', 'risk'], (NET-308)
 				needs: ['isolation'],

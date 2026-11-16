@@ -40,8 +40,10 @@
 
 	let error = $state('');
 	let busy = $state(false);
-	/** NET-308: an investigation was opened from this alert (kept by the page, not this drawer) */
+	/** NET-308: an investigation was opened from this alert, or is being (kept by the page, not this
+	 * drawer); `opening` is this drawer's own request */
 	const opened = $derived($openedInvestigations.has(alert._id));
+	let opening = $state(false);
 	let panel = $state<HTMLElement>();
 
 	// Under 1100 px the column sits below the list (position: static), out of sight: bring it in
@@ -65,12 +67,21 @@
 		}
 	}
 
-	const openInvestigation = () =>
-		act(async () => {
-			const id = alert._id; // recorded even if the drawer has moved to another alert by then
-			await createInvestigation(investigationFor(alert));
-			openedInvestigations.update((ids) => new Set([...ids, id]));
+	// recorded before the request, so a drawer remounted on this alert meanwhile offers no second one
+	async function openInvestigation() {
+		const id = alert._id;
+		opening = true;
+		openedInvestigations.update((ids) => new Set([...ids, id]));
+		await act(async () => {
+			try {
+				await createInvestigation(investigationFor(alert));
+			} catch (err) {
+				openedInvestigations.update((ids) => new Set([...ids].filter((x) => x !== id)));
+				throw err;
+			}
 		});
+		opening = false;
+	}
 
 	function formatTimestamp(ts: string | undefined): string {
 		if (!ts) return '—';
@@ -128,7 +139,7 @@
 	{#if error}
 		<p class="notice is-error" role="alert"><Icon name="warn" />Not applied: {error}</p>
 	{/if}
-	{#if opened}
+	{#if opened && !opening}
 		<p class="notice" role="status"><Icon name="check" />Investigation opened. <a href="/investigations">Open Investigations</a></p>
 	{/if}
 	<div class="actions">
@@ -138,7 +149,9 @@
 		{#if !alert.acknowledged}
 			<button class="btn" type="button" disabled={busy} onclick={() => act(onacknowledge)}><Icon name="check" />Acknowledge</button>
 		{/if}
-		{#if !opened}
+		{#if opening}
+			<button class="btn" type="button" disabled>Opening…</button>
+		{:else if !opened}
 			<button class="btn" type="button" disabled={busy} onclick={openInvestigation}>Open an investigation</button>
 		{/if}
 		{#if hasSignatureId}

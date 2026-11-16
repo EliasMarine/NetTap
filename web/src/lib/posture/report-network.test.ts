@@ -24,7 +24,7 @@ const ISOLATION: NetworkIsolation = {
 	pairs: [
 		{ iot_device: { mac: '02:00:5e:10:00:50', name: 'Camera', ip: '192.168.1.50' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'high', connection_count: 40, ports: [80, 445], reached: true, reached_ports: [80], description: 'Camera can reach 192.168.1.20 via HTTP' },
 		{ iot_device: { mac: '02:00:5e:10:00:31', name: 'Thermostat', ip: '192.168.1.31' }, internal_target: { ip: '192.168.1.6', hostname: null }, risk: 'low', connection_count: 2, ports: [], reached: true, reached_ports: [], description: 'Thermostat can reach 192.168.1.6 via ping (ICMP)' },
-		{ iot_device: { mac: '02:00:5e:10:00:60', name: 'Plug', ip: '192.168.1.60' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'critical', connection_count: 9, ports: [22], reached: false, reached_ports: [], description: 'Plug sent traffic to 192.168.1.20 via SSH; reachability not confirmed (no data seen both ways)' },
+		{ iot_device: { mac: '02:00:5e:10:00:60', name: 'Plug', ip: '192.168.1.60' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'critical', connection_count: 9, ports: [22], reached: false, reached_ports: [], description: 'Plug sent traffic to 192.168.1.20 via SSH; reachability not confirmed (no completed connection seen)' },
 	],
 };
 const health = (state: string, sensors: Record<string, string> = {}): PostureInputs['health'] => ({
@@ -57,7 +57,6 @@ describe('segmentationReport', () => {
 		expect(r.drivers.limits).toEqual([
 			'It only sees traffic that passes NetTap; two devices on the same switch or access point can talk without it.',
 			'A device counts as smart (IoT) by its maker; one NetTap doesn’t recognise isn’t checked.',
-			'A connection counts as reaching a device only if data went both ways; a bare TCP handshake with no data doesn’t count.',
 		]);
 		expect(r.drivers.counts.join(' ')).toContain('Put smart devices on their own network.');
 	});
@@ -170,7 +169,8 @@ describe('alertReport', () => {
 		expect(r.drivers.counts.join(' ')).not.toMatch(/from the alert/);
 		// plain English: no API instructions on the page
 		expect([...r.drivers.counts, ...r.drivers.limits].join(' ')).not.toMatch(/\/api\/|endpoint|POST/);
-		expect(r.drivers.limits).toContain('NetTap keeps no close time, so a closed investigation counts until its last change; a note added after closing keeps it counting.');
+		// OLD CODE: …toContain('NetTap keeps no close time, so a closed investigation counts until its last change; …'); (NET-308 review: closed_at)
+		expect(r.drivers.limits).toContain('A closed investigation counts until it was closed. One closed before this change counts until its last change, so a note added after closing keeps it counting.');
 		expect(r.drivers.limits).not.toContain('Investigations count all time; alerts count the last 24 hours.');
 	});
 

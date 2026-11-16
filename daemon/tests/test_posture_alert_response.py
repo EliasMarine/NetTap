@@ -11,11 +11,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from aiohttp.test_utils import AioHTTPTestCase
+from opensearchpy import OpenSearchException
 
 from api.alerts import ET_ACTIVITY_CLAUSE, alert_query
 from api.investigations import register_investigation_routes
 from api.posture import register_posture_routes
 from services.investigation_store import InvestigationStore
+from storage.exact_terms import PartialResultsError
+from storage.snapshot_search import QueryFailed
 from tests.fake_drill_opensearch import AUTH, FROM, TO, DrillOpenSearch, alert
 
 DEVICE, B = "192.168.1.20", "93.184.216.34"
@@ -139,6 +142,16 @@ class TestAlertResponse(AlertResponseTestCase):
             status, data = await self.get()
         self.assertEqual(status, 502)
         self.assertEqual(data, {"error": "The alert search was incomplete"})
+
+    async def test_each_search_failure_is_a_502_with_fixed_text(self):
+        for exc, error in (
+            (OpenSearchException("secret detail"), "The alert search failed"),
+            (QueryFailed("timed out"), "The alert search was incomplete"),
+            (PartialResultsError("capped"), "The alert search was incomplete"),
+        ):
+            with patch("api.posture._every_key", side_effect=exc):
+                status, data = await self.get()
+            self.assertEqual((status, data), (502, {"error": error}), type(exc))
 
     async def test_an_unreadable_from_is_a_400(self):
         status, _ = await self.get(**{"from": "now-1d"})

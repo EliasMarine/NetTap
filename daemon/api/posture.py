@@ -49,7 +49,7 @@ from services.iot_monitor import (
     LOCAL_CHATTER_EXCLUSION,
     NO_PAYLOAD_PROTOCOLS,
 )
-from services.investigation_store import InvestigationStore
+from services.investigation_store import Investigation, InvestigationStore
 from storage.exact_terms import PartialResultsError
 from storage.snapshot_search import QueryFailed, checked
 
@@ -392,7 +392,11 @@ def _dns(app: web.Application, search: Search) -> dict:
         },
         "over_tls": {
             "filter": DOT,
-            "aggs": {"resolvers": {**_terms("destination.ip", 5), "aggs": org}},
+            "aggs": {
+                # NET-308 review: the score leaves DoT to your own resolvers out
+                "private_local": {"filter": PRIVATE_LOCAL},
+                "resolvers": {**_terms("destination.ip", 5), "aggs": org},
+            },
         },
     }
     found = search(aggs, "posture DNS")["aggregations"]
@@ -433,6 +437,8 @@ def _dns(app: web.Application, search: Search) -> dict:
     return {
         "plain": plain.get("doc_count", 0),
         "over_tls": over_tls.get("doc_count", 0),
+        # plain - plain_scope.private_local and over_tls - this are the score's two figures
+        "over_tls_scope": {"private_local": _count(over_tls, "private_local")},
         "plain_scope": {
             "private_local": _count(plain, "private_local"),
             "unknown": _count(plain, "unknown"),
@@ -568,11 +574,13 @@ RESPONSE_GROUPS = 25  # groups listed; needing and investigated count them all
 _HIGH = 1  # Suricata priority 1, NetTap's High (suricataLevel tops out there)
 
 
-def _coverage(investigations: list) -> tuple[set, dict]:
+def _coverage(
+    investigations: list[Investigation],
+) -> tuple[set[str | None], dict[str, int]]:
     """The rules (str, "" or None) the investigations' resolved links cover, and the counts the
     page reports. A record whose alert_ids isn't a list of ids is skipped; a link with no rule
     recorded (made before NET-308) is unresolved and covers nothing."""
-    covered: set = set()
+    covered: set[str | None] = set()
     counts = {
         "open_during": len(investigations),
         "linked_alerts": 0,

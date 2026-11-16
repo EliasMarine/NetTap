@@ -114,7 +114,7 @@ const MOVE_FIX = 'Move smart devices to a guest or IoT network and turn on clien
 const UNCONFIRMED_FIX =
 	'Check this traffic: NetTap saw it sent but couldn’t tell whether it got through. If the device has no reason to talk to that one, move it to a guest or IoT network.';
 
-/** NET-308: the IoT isolation score; only a pair that reached its host (data both ways) costs points. */
+/** NET-308: the IoT isolation score; only a pair that reached its host (a completed connection) costs points. */
 export function segmentationReport(data: ReportData): Report {
 	const { category, names, inputs } = data;
 	const iso = inputs.isolation;
@@ -169,19 +169,18 @@ export function segmentationReport(data: ReportData): Report {
 		kpis: [
 			scoreKpi(category),
 			kpi('reached', 'Smart devices reaching others', reached.length, `isolation ${iso.segmentation_score ?? '—'}/100, grade ${iso.segmentation_grade ?? '—'}`),
-			kpi('unconfirmed', 'Reachability not confirmed', unconfirmed.length, 'no data seen both ways'),
+			kpi('unconfirmed', 'Reachability not confirmed', unconfirmed.length, 'no completed connection seen'),
 		],
 		drivers: {
 			// keep the weights in step with iot_monitor.py's get_network_isolation (25, 15, 5)
 			formula: `100 − 25 × ${c} critical − 15 × ${h} high − 5 × ${m} medium reached pairs = ${category.score ?? '—'} (pings, low-risk pairs and pairs whose reachability isn’t confirmed cost nothing)`,
 			counts: [
-				`Smart-device connections to your other devices: ${fmt(pairs.length)}; reached (data both ways): ${fmt(reached.length)}.`,
+				`Smart-device connections to your other devices: ${fmt(pairs.length)}; reached (a connection completed, or data went both ways): ${fmt(reached.length)}.`,
 				...(isoMeasured && iso.recommendation ? [iso.recommendation] : []),
 			],
 			limits: [
 				'It only sees traffic that passes NetTap; two devices on the same switch or access point can talk without it.',
 				'A device counts as smart (IoT) by its maker; one NetTap doesn’t recognise isn’t checked.',
-				'A connection counts as reaching a device only if data went both ways; a bare TCP handshake with no data doesn’t count.',
 			],
 			bars: isoMeasured
 				? [
@@ -422,7 +421,7 @@ export function alertReport(data: ReportData): Report {
 			],
 			limits: [
 				'This measures follow-up, not how many alerts there were.',
-				'NetTap keeps no close time, so a closed investigation counts until its last change; a note added after closing keeps it counting.',
+				'A closed investigation counts until it was closed. One closed before this change counts until its last change, so a note added after closing keeps it counting.',
 				'It checks that an investigation was opened, not that it was finished.',
 				'Medium and low-severity rules aren’t scored here.',
 			],

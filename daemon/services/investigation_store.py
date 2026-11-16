@@ -18,8 +18,9 @@ from api.time_range import _utc
 
 logger = logging.getLogger("nettap.investigation_store")
 
-# Statuses that mean the work is done; their last change stands in for a close time (NET-308)
+# Statuses that mean the work is done (NET-308): closed_at is set on entering one
 _DONE_STATUSES = ("resolved", "closed")
+MAX_ALERT_LINKS = 100  # per investigation; bounds the rule lookup too (NET-308)
 
 
 def _clean_alert_rules(value: object) -> dict[str, str | None]:
@@ -73,6 +74,9 @@ class Investigation:
     # NET-308: each linked alert's rule.name as the daemon read it at link time (None: no name), so
     # Alert response coverage survives the alert's index expiring. A link without one is unresolved.
     alert_rules: dict[str, str | None] = field(default_factory=dict)
+    # NET-308: when the status last entered resolved or closed (None while open). A record from
+    # before it has none, and its updated_at stands in, which a later note moves.
+    closed_at: str | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -119,6 +123,7 @@ class InvestigationStore:
                         notes=notes,
                         tags=inv_data.get("tags", []),
                         alert_rules=_clean_alert_rules(inv_data.get("alert_rules")),
+                        closed_at=inv_data.get("closed_at"),
                     )
                     self._investigations[inv.id] = inv
                 logger.info(
@@ -230,6 +235,15 @@ class InvestigationStore:
                 raise ValueError(
                     f"Invalid severity: {value}. Must be one of {self.VALID_SEVERITIES}"
                 )
+            # NET-308: a close time of its own, so a later note can't move it
+            if key == "status" and (value in _DONE_STATUSES) != (
+                inv.status in _DONE_STATUSES
+            ):
+                inv.closed_at = (
+                    datetime.now(timezone.utc).isoformat()
+                    if value in _DONE_STATUSES
+                    else None
+                )
             setattr(inv, key, value)
 
         inv.updated_at = datetime.now(timezone.utc).isoformat()
@@ -310,12 +324,15 @@ class InvestigationStore:
         self, investigation_id: str, alert_id: str, rule: str | None
     ) -> bool:
         """Link an alert and record its rule name. Re-linking an alert already linked fills in
-        its rule without a second id. Returns True on success."""
+        its rule without a second id. Returns True on success. Raises ValueError past
+        MAX_ALERT_LINKS, checked here so no other link can land between the check and the add."""
         inv = self._investigations.get(investigation_id)
         if inv is None:
             return False
 
         linked = alert_id in inv.alert_ids
+        if not linked and len(inv.alert_ids) >= MAX_ALERT_LINKS:
+            raise ValueError(f"An investigation links at most {MAX_ALERT_LINKS} alerts")
         if linked and alert_id in inv.alert_rules and inv.alert_rules[alert_id] == rule:
             return True  # nothing changes, so updated_at stays
         if not linked:
@@ -353,16 +370,17 @@ class InvestigationStore:
 
     def open_during(self, from_ts: str, to_ts: str) -> list[Investigation]:
         """Investigations open at some point in [from_ts, to_ts]: created by the end, and either
-        still open or last changed after the start. NetTap stores no close time, so a done
-        investigation's updated_at stands in for it. An unreadable record time leaves it out.
-        The window is the caller's, already validated (_parse_time_range)."""
+        still open or closed after the start. A done record from before closed_at uses its
+        updated_at. An unreadable record time leaves it out. The window is the caller's,
+        already validated (_parse_time_range)."""
         start, end = _utc(from_ts), _utc(to_ts)
         found = []
         for inv in self._investigations.values():
             done = inv.status in _DONE_STATUSES
             try:
                 created = _utc(inv.created_at)
-                changed = _utc(inv.updated_at) if done else None
+                # OLD CODE: changed = _utc(inv.updated_at) if done else None (a note moved it)
+                changed = _utc(inv.closed_at or inv.updated_at) if done else None
             except (AttributeError, ValueError):  # not a str, or not an ISO time
                 continue
             if created <= end and (changed is None or changed >= start):

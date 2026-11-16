@@ -13,12 +13,12 @@ from opensearchpy import OpenSearchException
 from api.alerts import NETWORK_INDEX, _SURICATA_ALERT_FILTERS, _get_client
 from api.error_replies import public_json
 from api.offload import run_blocking
-from services.investigation_store import InvestigationStore
+from services.investigation_store import MAX_ALERT_LINKS, InvestigationStore
 from storage.snapshot_search import QueryFailed, checked
 
 logger = logging.getLogger("nettap.api.investigations")
 
-MAX_ALERT_LINKS = 100  # per investigation; bounds the rule lookup too
+# OLD CODE: MAX_ALERT_LINKS = 100 (NET-308 review: in the store, which enforces it on link)
 _MAX_ALERT_ID = 256
 RESOLVE_TIMEOUT_S = 4  # well under the web proxy's 10 s (web/src/lib/server/daemon.ts)
 
@@ -36,13 +36,13 @@ def _alert_ids(value: object) -> list[str] | None:
     MAX_ALERT_LINKS of them. None when malformed."""
     if value is None:
         return []
-    if not isinstance(value, list):
+    # the cap first, so a huge body isn't read entry by entry (security review LOW-3)
+    if not isinstance(value, list) or len(value) > MAX_ALERT_LINKS:
         return None
     ids = [_alert_id(v) for v in value]
     if None in ids:
         return None
-    unique = list(dict.fromkeys(ids))
-    return unique if len(unique) <= MAX_ALERT_LINKS else None
+    return list(dict.fromkeys(ids))
 
 
 def _resolve_rules(client, ids: list[str]) -> dict[str, str | None]:
@@ -317,19 +317,22 @@ async def handle_link_alert(request: web.Request) -> web.Response:
     inv = store.get(inv_id)
     if inv is None:
         return web.json_response({"error": "Investigation not found"}, status=404)
-    if alert_id not in inv.alert_ids and len(inv.alert_ids) >= MAX_ALERT_LINKS:
-        return web.json_response(
-            {"error": f"An investigation links at most {MAX_ALERT_LINKS} alerts"},
-            status=400,
-        )
+    # already linked with its rule: nothing to look up, and an expired alert isn't a 404
+    if alert_id in inv.alert_rules:
+        return web.json_response({"result": "linked", "alert_id": alert_id})
 
     rules = await _rules_or_reply(request, [alert_id])
     if isinstance(rules, web.Response):
         return rules
     if alert_id not in rules:
         return web.json_response({"error": "Alert not found"}, status=404)
+    # the store checks the cap as it adds, so two requests can't both pass it during the lookup;
     # the investigation may have gone while the lookup ran
-    if store.link_alert(inv_id, alert_id, rules[alert_id]):
+    try:
+        linked = store.link_alert(inv_id, alert_id, rules[alert_id])
+    except ValueError as exc:  # past MAX_ALERT_LINKS
+        return web.json_response({"error": str(exc)}, status=400)
+    if linked:
         return web.json_response({"result": "linked", "alert_id": alert_id})
     return web.json_response({"error": "Investigation not found"}, status=404)
 

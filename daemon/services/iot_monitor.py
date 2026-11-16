@@ -23,7 +23,7 @@ from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import (
     CONN_ACCOUNTING,
-    PAYLOAD_BOTH,
+    REACHED,
     build_excluded_ips_filter,
     valid_excluded_ips,
 )
@@ -136,13 +136,17 @@ _ISOLATION_PORTS: dict = {
     },
 }
 # Per (IoT MAC, LAN host) pair: every attempt, and apart the ones that reached the host (data
-# went both ways, NET-308). Only reached pairs cost points; on the G11 that matched Zeek's
-# established states (SF, RSTO, RSTR, S3) and never REJ or S0.
+# both ways or an established connection, NET-308). Only reached pairs cost points.
 ISOLATION_PAIR_AGGS: dict = {
     **_ISOLATION_PORTS,
-    "reached": {"filter": PAYLOAD_BOTH, "aggs": _ISOLATION_PORTS},
+    # OLD CODE: "reached": {"filter": PAYLOAD_BOTH, "aggs": _ISOLATION_PORTS}, (security review: a
+    # completed handshake with no data, e.g. a port scan, reached the host too)
+    "reached": {"filter": REACHED, "aggs": _ISOLATION_PORTS},
     "source_ip": {"terms": {"field": "source.ip", "size": 1}},
 }
+# `reached` doubles a pair's buckets (35 to 69 at worst), so 1,000 pairs a page could pass
+# OpenSearch's 65,535 search.max_buckets; 500 keeps a page at 34,500 (a test holds it)
+ISOLATION_PAGE_SIZE = 500
 
 # Path to tracker domains list (suffix-matched against DNS queries)
 _TRACKER_DOMAINS_FILE = os.path.join(
@@ -2781,9 +2785,7 @@ class IoTMonitor:
                     {"dest": {"terms": {"field": "destination.ip"}}},
                 ],
                 aggs=ISOLATION_PAIR_AGGS,
-                # NET-308: `reached` doubles a pair's buckets (35 to 69 at worst), so 1,000 pairs a
-                # page could pass OpenSearch's 65,535 max_buckets; 500 keeps it at 34,500
-                page_size=500,
+                page_size=ISOLATION_PAGE_SIZE,  # NET-308
             )
         except Exception as exc:
             logger.error("Network isolation query failed: %s", exc)
@@ -2873,8 +2875,14 @@ class IoTMonitor:
         # them in key order, so the busiest-first tiebreak is now explicit
         # pairs.sort(key=lambda p: risk_order.get(p["risk"], 99))
         # OLD CODE END
+        # OLD CODE: key=lambda p: (risk_order.get(p["risk"], 99), -p["connection_count"]) (NET-308:
+        # an unconfirmed pair costs nothing, so it goes after every reached one)
         pairs.sort(
-            key=lambda p: (risk_order.get(p["risk"], 99), -p["connection_count"])
+            key=lambda p: (
+                not p["reached"],
+                risk_order.get(p["risk"], 99),
+                -p["connection_count"],
+            )
         )
 
         return {
@@ -2931,7 +2939,7 @@ class IoTMonitor:
         else:  # one-way delivery, a missing counter or a one-sided mirror look the same
             description = (
                 f"{dev_name} sent traffic to {dest_ip} via {port_names}; reachability "
-                "not confirmed (no data seen both ways)"
+                "not confirmed (no completed connection seen)"
             )
 
         return {
