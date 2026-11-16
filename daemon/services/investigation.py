@@ -34,6 +34,10 @@ async def auto_investigate(client, alert: dict) -> dict:
             "source_ip": src_ip,
             "destination_ip": dst_ip,
             "count": alert.get("count"),
+            # the group's exact rule.name and ET's informational flag, so the Threats page links
+            # the rule's own page (the shown signature can come from a sample's alert.signature)
+            "rule_name": (alert.get("key") or {}).get("rule_name"),
+            "activity": bool(alert.get("activity")),
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sections": {},

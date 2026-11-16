@@ -76,6 +76,10 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/system/cyberchef', marker: 'CyberChef' },
 	{ path: '/system/updates', marker: 'Software updates' },
 	{ path: '/threats', marker: 'Threats' },
+	// The Threats page's drill-downs: a beaconing pair, a device's failed lookups, and a DGA name in finding mode
+	{ path: '/threats/beaconing/192.168.1.42/203.0.113.45/8080?range=24h', marker: 'Beaconing to 203.0.113.45:8080' },
+	{ path: '/threats/failed-lookups/192.168.1.80?range=24h', marker: 'Failed lookups from' },
+	{ path: '/domain/kq3z8wxv1m7tbn5r6yhp.example.net?range=24h&finding=kq3z8wxv1m7tbn5r6yhp.example.net', marker: 'kq3z8wxv1m7tbn5r6yhp.example.net' },
 	{ path: '/tools', marker: 'Network tools' },
 	{ path: '/tools/base64', marker: 'Base64 and hex converter' },
 	{ path: '/tools/cyberchef', marker: 'CyberChef' },

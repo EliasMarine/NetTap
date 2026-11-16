@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, ruleHref, windowQuery, DRILL_RANGES, bucketFor, bucketWindow, momentHref, serviceLabel, serviceLogsHref, windowWords, RECORDS_CHANGE, pickWindow, pickedTotal, stepMs, type TimeChart } from './drilldown';
+import { blocklistWords, DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, ruleHref, windowQuery, DRILL_RANGES, bucketFor, bucketWindow, momentHref, serviceLabel, serviceLogsHref, windowWords, RECORDS_CHANGE, pickWindow, pickedTotal, stepMs, type TimeChart } from './drilldown';
 import { snapshotWindow } from '$lib/stores/alertSnapshot';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
@@ -521,5 +521,23 @@ describe('pickWindow, pickedTotal and stepMs (NET-249 slice 2)', () => {
 	it('knows the table buckets and daily, and nothing else', () => {
 		expect([stepMs('1m'), stepMs('5m'), stepMs('1h'), stepMs('3h'), stepMs('1d')]).toEqual([60_000, 300_000, 3_600_000, 10_800_000, 86_400_000]);
 		expect([stepMs('10m'), stepMs('6h'), stepMs(''), stepMs(null), stepMs(undefined), stepMs('toString')]).toEqual([null, null, null, null, null, null]);
+	});
+});
+
+// The address page and the beaconing pair page show an address's blocklist state in the same words
+describe('blocklistWords', () => {
+	const LISTED = { matched: true, feeds: [{ feed: 'et_compromised', label: 'Suricata blocklist rules', indicator: '203.0.113.9', type: 'ip' }], indicators: 3, in_window: true };
+	const UNLISTED = { matched: false, feeds: [], indicators: 0, in_window: false };
+
+	it("words the four states as the address page always has", () => {
+		expect(blocklistWords(null)).toEqual({ tone: 'unknown', chip: 'Not checked', note: "This window's alerts couldn't all be checked" });
+		expect(blocklistWords(LISTED)).toEqual({ tone: 'bad', chip: 'On a threat list: Suricata blocklist rules', note: 'A Suricata blocklist rule named it in this window' });
+		expect(blocklistWords({ ...LISTED, in_window: false }).note).toBe("Named on an earlier Threats scan; NetTap doesn't keep the date");
+		expect(blocklistWords({ ...LISTED, in_window: null }).note).toBe("Named on an earlier Threats scan; this window's alerts couldn't all be checked");
+		// an older daemon doesn't say when
+		expect(blocklistWords({ ...LISTED, in_window: undefined }).note).toBe('');
+		expect(blocklistWords(UNLISTED)).toEqual({ tone: 'ok', chip: 'Not on a threat list', note: "Checked this window's alerts" });
+		expect(blocklistWords({ ...UNLISTED, indicators: 1 }).note).toBe("Checked this window's alerts and 1 cached indicator");
+		expect(blocklistWords({ ...UNLISTED, indicators: 1200 }).note).toBe("Checked this window's alerts and 1,200 cached indicators");
 	});
 });

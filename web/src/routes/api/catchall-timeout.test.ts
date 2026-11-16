@@ -106,6 +106,15 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 		expect((await pending).status).toBe(200);
 	});
 
+	it("lets a 15 s answer from the Threats page's beaconing pair and failed lookups through", async () => {
+		for (const path of ['/api/threats/beaconing/pair?device=192.168.1.20&server=203.0.113.9&port=443', '/api/threats/failed-lookups/192.168.1.20?from=a&to=b']) {
+			slowDaemon(15_000);
+			const pending = GET(event(path) as never);
+			await vi.advanceTimersByTimeAsync(15_000);
+			expect((await pending).status, path).toBe(200);
+		}
+	});
+
 	it('gives the local services allowance to that one path, not to paths that start like it', async () => {
 		slowDaemon();
 		const pending = GET(event('/api/local-services-x') as never);

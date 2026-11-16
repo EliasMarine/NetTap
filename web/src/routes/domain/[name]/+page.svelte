@@ -33,6 +33,7 @@
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	import { formatWhen, statusList } from '../../certificates/cert-view';
 	import { alertCoverage, taggedFigure, unmatchedNote } from './domain-view';
+	import { dgaWhy, findingTodo, tunnelWhy } from '$lib/utils/dns-anomaly';
 
 	interface TlsPeer {
 		ip: string;
@@ -48,7 +49,8 @@
 	const name = $derived(canonicalName(($page.params as Record<string, string>).name ?? ''));
 
 	// OLD CODE: let rangeValue = $state<DrillRangeValue>('24h'); (NET-195: Settings › Display's default, read where the range starts)
-	let rangeValue = $state<DrillRangeValue>(startRange('24h'));
+	// OLD CODE: let rangeValue = $state<DrillRangeValue>(startRange('24h')); (a Threats link's ?range= is where it starts)
+	let rangeValue = $state<DrillRangeValue>(DRILL_RANGES.find((r) => r.value === $page.url.searchParams.get('range'))?.value ?? startRange('24h'));
 	// OLD CODE: ?? DRILL_RANGES[0]); (NET-192 PR 4: 1h and 6h added, 24h is index 2)
 	// OLD CODE: ?? DRILL_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES.find((r) => r.value === '24h')!);
@@ -70,7 +72,10 @@
 			? { custom: true, words: custom.words, hours: custom.hours, drill: bucketFor(Date.parse(custom.from), Date.parse(custom.to)), range: rangeValue }
 			: { custom: false, words: range.words, hours: range.hours, drill: range, range: rangeValue },
 	);
-	const viewKey = $derived(`${name}|${custom ? `${custom.from}|${custom.to}` : range.value}`);
+	/** A Threats DNS row's raw name (?finding=): the DNS check's evidence, with every device counted as the check counts them */
+	const finding = $derived(params.get('finding'));
+	// OLD CODE: const viewKey = $derived(`${name}|${custom ? `${custom.from}|${custom.to}` : range.value}`); (finding mode is another view)
+	const viewKey = $derived(`${name}|${finding ?? ''}|${custom ? `${custom.from}|${custom.to}` : range.value}`);
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
 	// OLD CODE: let loaded = $state<{ data: DomainSummary; range: DrillRange } | null>(null); (slice 2a: the figures keep their window)
 	/** The figures on screen, with the range and exact window they were counted over (their links carry it). */
@@ -111,6 +116,7 @@
 		const r = range;
 		const v = view;
 		const c = custom;
+		const f = finding ?? undefined;
 		if (!target) return 'skipped';
 		// OLD CODE: const s = rangeWindow(r.hours); (NET-249: a pick's window is fixed)
 		const s = c ? { from: c.from, to: c.to } : rangeWindow(r.hours);
@@ -127,7 +133,8 @@
 			() => null,
 		);
 		// OLD CODE: const results = await Promise.allSettled([getDomainSummary(target, s.from, s.to)]); (NET-249: the owner's bucket table)
-		const results = await Promise.allSettled([getDomainSummary(target, s.from, s.to, v.drill.bucket)]);
+		// OLD CODE: const results = await Promise.allSettled([getDomainSummary(target, s.from, s.to, v.drill.bucket)]); (finding mode)
+		const results = await Promise.allSettled([getDomainSummary(target, s.from, s.to, v.drill.bucket, f)]);
 		// Names are cosmetic: a failed registry load keeps the last names and isn't a failure
 		const loadedNames = await namesLoad;
 		if (!guard.current(g)) return 'skipped';
@@ -198,6 +205,13 @@
 	const httpLogs = $derived(loaded ? logsHrefForQuery([`zeek.http.host:"${name}"`], loaded.window, shown.range) : '');
 	/** NET-249: on a Custom window the alerts list opens over that window */
 	const alertsHref = $derived(loaded?.view.custom ? `/alerts?${windowQuery(loaded.window, shown.range)}` : `/alerts?range=${shown.range}`);
+
+	// --- Finding mode: why the Threats page's DNS check listed this name ---
+	const evidence = $derived(data?.finding ?? null);
+	const excludedAskers = $derived(evidence ? (data?.dns.askers ?? []).filter((a) => a.excluded).length : 0);
+	const findingLines = $derived(
+		evidence && data ? [...(evidence.dga ? dgaWhy(evidence.dga, data.dns) : []), ...(evidence.tunnel ? tunnelWhy(evidence.tunnel, evidence.name, data.dns) : [])] : [],
+	);
 </script>
 
 {#snippet who(ip: string)}
@@ -208,7 +222,8 @@
 		<IPAddress {ip} />
 	{/if}
 {/snippet}
-{#snippet askerCell(a: DomainAsker)}{@render who(a.ip)}{/snippet}
+<!-- OLD CODE: {#snippet askerCell(a: DomainAsker)}{@render who(a.ip)}{/snippet} (finding mode marks excluded devices) -->
+{#snippet askerCell(a: DomainAsker)}{@render who(a.ip)}{#if a.excluded}<span class="chip excluded">Excluded in Settings</span>{/if}{/snippet}
 {#snippet askerLookupsCell(a: DomainAsker)}{fmt(a.lookups)}{/snippet}
 {#snippet askerSeenCell(a: DomainAsker)}<span class="num">{formatWhen(a.last_seen)}</span>{/snippet}
 {#snippet answerCell(a: DomainAnswer)}
@@ -241,6 +256,9 @@
 	<div>
 		<h1 class="page-title mono">{name}</h1>
 		<p class="page-sub">Who looked this name up, what it resolved to, and its TLS sessions. Matches the name exactly, ignoring case · {words}</p>
+		{#if excludedAskers > 0}
+			<p class="page-sub">Counted as the Threats page counts: every device, including {fmt(excludedAskers)} excluded in Settings.</p>
+		{/if}
 	</div>
 	<div class="head-actions">
 		<!-- OLD CODE: <Pills options={DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }))} bind:value={rangeValue} ariaLabel="Time range" /> (NET-249: a pick's window is Custom) -->
@@ -276,6 +294,20 @@
 	/>
 	<KpiCard class="c-3" label="TLS sessions" icon="certs" value={data ? fmt(data.tls.sessions) : '—'} sub={data ? 'that asked for this name' : undefined} note={words} />
 </div>
+
+{#if evidence && data && findingLines.length > 0}
+	<div class="grid">
+		<Card class="c-12" title="Why NetTap's DNS check lists this name" sub="From the check's own measurement of “{evidence.name}” · {words}">
+			<div class="story">
+				{#each findingLines as line, i (i)}<p>{line}</p>{/each}
+			</div>
+			<div class="todo">
+				<b>What to do</b>
+				<ul>{#each findingTodo(evidence, evidence.name) as step, i (i)}<li>{step}</li>{/each}</ul>
+			</div>
+		</Card>
+	</div>
+{/if}
 
 <div class="grid">
 	<!-- OLD CODE: sub="DNS lookups per {shown.interval} · {words}" (NET-249: the owner's bucket table) -->
@@ -377,9 +409,14 @@
 			</div>
 			<p class="dim small">
 				TLS sessions count every session that asked for this name. Certificates counts only the sessions that showed a certificate (TLS 1.3
-				hides it, and a resumed session doesn't send it again) and leaves out excluded addresses, so its figures can be lower. Unlike
-				"Devices that looked it up", which follows the DNS page and leaves excluded devices out, the TLS sessions and devices here include
-				them.
+				hides it, and a resumed session doesn't send it again) and leaves out excluded addresses, so its figures can be lower.
+				<!-- OLD CODE: the sentence below was unconditional; in finding mode "Devices that looked it up" counts excluded devices too -->
+				{#if evidence}
+					The TLS sessions and devices here include excluded devices, as "Devices that looked it up" does in this view.
+				{:else}
+					Unlike "Devices that looked it up", which follows the DNS page and leaves excluded devices out, the TLS sessions and devices here
+					include them.
+				{/if}
 			</p>
 			<!-- OLD CODE: <a class="link" href={certificatesHref({ site: name, ...span })}>Certificates seen for this name<Icon name="back" class="chev" /></a> (slice 2a: span moves when a refresh starts) -->
 			<a class="link" href={certificatesHref({ site: name, ...(loaded?.window ?? span) })}>Certificates seen for this name<Icon name="back" class="chev" /></a>
@@ -405,7 +442,8 @@
 			<!-- OLD CODE START — Log Explorer matches the exact spelling, so it can list fewer than the count above
 			<a class="link" href={httpLogs}>Search them in Log Explorer<Icon name="back" class="chev" /></a>
 			OLD CODE END -->
-			<a class="link" href={httpLogs}>Search Log Explorer for “{name}”<Icon name="back" class="chev" /></a>
+			<!-- OLD CODE: <a class="link" href={httpLogs}>Search Log Explorer for “{name}”<Icon name="back" class="chev" /></a> (.link is nowrap: a long name scrolled the page at 390 px) -->
+			<a class="link wraps" href={httpLogs}>Search Log Explorer for “{name}”<Icon name="back" class="chev" /></a>
 			<p class="dim small">Log Explorer matches this exact spelling, so it can list fewer requests than this count, which ignores case.</p>
 		{/if}
 	</Card>
@@ -427,4 +465,12 @@
 	.small { margin: var(--sp-2) 0 var(--sp-3); font-size: var(--text-sm); }
 	.tls-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-3); }
 	.list-title { margin: 0 0 var(--sp-2); font-size: var(--text-sm); color: var(--text-2); }
+	.story p { margin: 0 0 var(--sp-3); color: var(--text-2); font-size: var(--text-sm); }
+	.todo ul { margin: 0; padding-left: var(--sp-4); }
+	.excluded { margin-left: var(--sp-2); }
+	/* a long name has no space to break at, so it scrolled the page sideways at 390 px */
+	.page-title { overflow-wrap: anywhere; }
+	/* system .link is a nowrap inline-flex; a link naming the domain wraps like text, chevron after the last word */
+	.link.wraps { display: inline; white-space: normal; overflow-wrap: anywhere; }
+	.link.wraps :global(.ic) { vertical-align: middle; margin-left: var(--sp-1); }
 </style>

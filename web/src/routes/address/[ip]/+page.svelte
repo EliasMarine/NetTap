@@ -20,7 +20,7 @@
 	// OLD CODE: import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown'; (slice 2a)
 	// OLD CODE: import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (section D)
 	// OLD CODE: import { DRILL_RANGES, byteFigure, …, withCount, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: the chart picks)
-	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, pickedTotal, pickWindow, rangeWindow, startRange, windowQuery, withCount, type DrillRange, type DrillRangeValue, type DrillWindow, type TimeChart } from '$lib/utils/drilldown';
+	import { DRILL_RANGES, blocklistWords, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, pickedTotal, pickWindow, rangeWindow, startRange, windowQuery, withCount, type DrillRange, type DrillRangeValue, type DrillWindow, type TimeChart } from '$lib/utils/drilldown';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { bucketWords } from '$lib/utils/narrow-page';
 	import { goto } from '$app/navigation';
@@ -86,6 +86,8 @@
 	let connWindow = $state<DrillWindow | null>(null);
 
 	const data = $derived(loaded?.data ?? null);
+	/** The blocklist chip's words, shared with the beaconing pair page */
+	const blocklist = $derived(data ? blocklistWords(data.threat_intel) : null);
 	const shown = $derived(loaded?.range ?? range);
 	const words = $derived(shown.words);
 	/** NET-160 slice 2a: the window of the figures on screen, which their links carry; null before any land. */
@@ -539,13 +541,14 @@ OLD CODE END -->
 					<span class="chip is-ok" title="Checked against {fmt(data.threat_intel.indicators)} threat indicators"><Icon name="check" />Not on a threat list</span>
 				{/if}
 				OLD CODE END -->
+				<!-- OLD CODE START — the same words now come from blocklistWords (utils/drilldown.ts), which the beaconing pair page shares
 				{#if data.threat_intel === null}
-					<!-- only when nothing matched and some of the window's alerts couldn't be read -->
+					( only when nothing matched and some of the window's alerts couldn't be read )
 					<span class="chip">Not checked</span>
 					<span class="chip-note">This window's alerts couldn't all be checked</span>
 				{:else if data.threat_intel.matched}
 					<span class="chip is-bad"><Icon name="warn" />On a threat list: {data.threat_intel.feeds.map((f) => f.label).join(', ')}</span>
-					<!-- NET-228 (audit ALR-12): when it was listed, as far as NetTap knows -->
+					( NET-228 (audit ALR-12): when it was listed, as far as NetTap knows )
 					{#if data.threat_intel.in_window === true}
 						<span class="chip-note">A Suricata blocklist rule named it in this window</span>
 					{:else if data.threat_intel.in_window === false}
@@ -560,6 +563,13 @@ OLD CODE END -->
 							? `Checked this window's alerts and ${fmt(data.threat_intel.indicators)} cached ${data.threat_intel.indicators === 1 ? 'indicator' : 'indicators'}`
 							: "Checked this window's alerts"}</span
 					>
+				{/if}
+				OLD CODE END -->
+				{#if blocklist}
+					<span class={['chip', blocklist.tone === 'bad' && 'is-bad', blocklist.tone === 'ok' && 'is-ok']}
+						>{#if blocklist.tone === 'bad'}<Icon name="warn" />{:else if blocklist.tone === 'ok'}<Icon name="check" />{/if}{blocklist.chip}</span
+					>
+					{#if blocklist.note}<span class="chip-note">{blocklist.note}</span>{/if}
 				{/if}
 			</div>
 		{/if}

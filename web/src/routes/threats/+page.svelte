@@ -42,12 +42,16 @@
 	import { ipHref } from '$lib/stores/lan';
 	import { formatTime } from '$lib/utils/time';
 	// OLD CODE: import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-238: fmt, SCAN_CAP)
-	import { DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown'; (isHostName: a DNS row links only a host name)
+	// OLD CODE: import { DRILL_RANGES, fmt, isHostName, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown'; (ruleHref)
+	import { DRILL_RANGES, fmt, isHostName, rangeWindow, ruleHref, SCAN_CAP, startRange } from '$lib/utils/drilldown';
 	// NET-228 (audit B5): "nothing needs attention" carries the pipeline's current state
 	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
 	// OLD CODE: import { nothingFound } from '$api/system'; (NET-242: and the page-level pipeline line)
 	import { nothingFound, pipelineProblem } from '$api/system';
 	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
+	import { beaconHref } from '$lib/utils/beacon';
+	import { failedLookupsHref, findingHref } from '$lib/utils/dns-anomaly';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -114,6 +118,8 @@
 	let dnsAnomalies = $derived(report?.dns_anomalies ?? { dga_suspects: [], tunnel_suspects: [], nxdomain_spikes: [], suspicious_tlds: [] });
 	let lateralMoves = $derived(report?.lateral_movement ?? []);
 	let investigations = $derived(report?.investigations ?? []);
+	/** The report's own window, for a rule's page (none from an older daemon's empty bounds) */
+	let reportWindow = $derived(report?.from && report?.to ? { from: report.from, to: report.to, range: selectedRange } : undefined);
 	let failedChecks = $derived(new Set(report?.failed_checks ?? []));
 	let incompleteChecks = $derived(new Set(report?.incomplete_checks ?? []));
 	// NET-187: failed checks that ran out of time (also in failed_checks)
@@ -274,20 +280,43 @@
 		signalValue: number;
 		queries: number;
 		queriesText: string;
+		/** Why it was listed: the domain page in finding mode, or the device's failed lookups; null for a name with no domain page */
+		href: string | null;
 	}
+	// OLD CODE START — the rows opened nothing; each now links to why it was listed
+	// let dnsRows = $derived<DnsRow[]>([
+	// 	...(dnsAnomalies.dga_suspects ?? []).slice(0, 5).map((d, i) => ({
+	// 		key: `dga-${i}`, kind: 'DGA suspect', name: d.domain, signal: `H=${d.entropy}`, signalValue: d.entropy,
+	// 		queries: d.query_count, queriesText: formatNumber(d.query_count),
+	// 	})),
+	// 	...(dnsAnomalies.tunnel_suspects ?? []).slice(0, 5).map((t, i) => ({
+	// 		key: `tunnel-${i}`, kind: 'DNS tunnelling', name: t.domain, signal: `${t.subdomain_length} chars`, signalValue: t.subdomain_length,
+	// 		queries: t.query_count, queriesText: formatNumber(t.query_count),
+	// 	})),
+	// 	...(dnsAnomalies.nxdomain_spikes ?? []).slice(0, 5).map((nx, i) => ({
+	// 		key: `nx-${i}`, kind: 'NXDOMAIN spike', name: nx.source_ip, signal: `${Math.round(nx.nxdomain_ratio * 100)}% failed`,
+	// 		signalValue: nx.nxdomain_ratio, queries: nx.total_queries,
+	// 		queriesText: `${formatNumber(nx.nxdomain_count)} / ${formatNumber(nx.total_queries)}`,
+	// 	})),
+	// ]);
+	// OLD CODE END
 	let dnsRows = $derived<DnsRow[]>([
 		...(dnsAnomalies.dga_suspects ?? []).slice(0, 5).map((d, i) => ({
 			key: `dga-${i}`, kind: 'DGA suspect', name: d.domain, signal: `H=${d.entropy}`, signalValue: d.entropy,
 			queries: d.query_count, queriesText: formatNumber(d.query_count),
+			// Zeek writes non-ASCII bytes as \xNN, which no domain page can take
+			href: isHostName(d.domain) ? findingHref(d.domain, { range: selectedRange }) : null,
 		})),
 		...(dnsAnomalies.tunnel_suspects ?? []).slice(0, 5).map((t, i) => ({
 			key: `tunnel-${i}`, kind: 'DNS tunnelling', name: t.domain, signal: `${t.subdomain_length} chars`, signalValue: t.subdomain_length,
 			queries: t.query_count, queriesText: formatNumber(t.query_count),
+			href: isHostName(t.domain) ? findingHref(t.domain, { range: selectedRange }) : null,
 		})),
 		...(dnsAnomalies.nxdomain_spikes ?? []).slice(0, 5).map((nx, i) => ({
 			key: `nx-${i}`, kind: 'NXDOMAIN spike', name: nx.source_ip, signal: `${Math.round(nx.nxdomain_ratio * 100)}% failed`,
 			signalValue: nx.nxdomain_ratio, queries: nx.total_queries,
 			queriesText: `${formatNumber(nx.nxdomain_count)} / ${formatNumber(nx.total_queries)}`,
+			href: failedLookupsHref(nx.source_ip, selectedRange),
 		})),
 	]);
 
@@ -504,6 +533,8 @@
 {#snippet lateralCount(m: LateralRow)}{formatNumber(m.connection_count)}{/snippet}
 {#snippet lateralFrom(m: LateralRow)}<IPAddress ip={m.source_ip} />{/snippet}
 {#snippet lateralTo(m: LateralRow)}<IPAddress ip={m.destination_ip} />{/snippet}
+<!-- An address as text that breaks only after a colon (IPv6), never inside a group -->
+{#snippet ipText(ip: string)}{#each ip.split(':') as part, k (k)}{#if k > 0}:<wbr />{/if}{part}{/each}{/snippet}
 
 <svelte:head>
 	<title>Threats | NetTap</title>
@@ -778,7 +809,15 @@
 					</p>
 				{/if}
 				{#if beacons.length > 0}
-					<DataTable columns={BEACON_COLUMNS} rows={beaconRows} ariaLabel="Beaconing suspects" rowKey={(b) => b.key} />
+					<!-- OLD CODE: <DataTable columns={BEACON_COLUMNS} rows={beaconRows} ariaLabel="Beaconing suspects" rowKey={(b) => b.key} /> (a row opens the pair's page) -->
+					<DataTable
+						columns={BEACON_COLUMNS}
+						rows={beaconRows}
+						ariaLabel="Beaconing suspects"
+						rowKey={(b) => b.key}
+						onrowactivate={(b) => goto(beaconHref(b.source_ip, b.destination_ip, b.destination_port, selectedRange))}
+						rowLabel={(b) => `Open beaconing from ${b.source_ip} to ${b.destination_ip}:${b.destination_port}`}
+					/>
 					{#if beacons.length > BEACONS_SHOWN}
 						<p class="note">Showing the {BEACONS_SHOWN} most confident of {beacons.length.toLocaleString('en-US')} suspects.</p>
 					{/if}
@@ -794,7 +833,8 @@
 			{#if !beaconFailed && !beaconPending}
 				{#each manyHostSources as m (m.ip)}
 					<p class="note">
-						<span class="mono">{m.ip}</span> contacts {m.hosts.toLocaleString('en-US')} internet hosts on regular schedules.
+						<!-- OLD CODE: <span class="mono">{m.ip}</span> (the device's page) -->
+						<a class="mono" href={$ipHref(m.ip)}>{m.ip}</a> contacts {m.hosts.toLocaleString('en-US')} internet hosts on regular schedules.
 						Malware usually calls one or a few servers; this many usually means peer-to-peer software (such as BitTorrent)
 						or a device syncing with many services, so these aren't counted as suspects.
 					</p>
@@ -803,7 +843,8 @@
 		</Card>
 
 		<!-- DNS anomalies -->
-		<Card title="DNS anomalies" sub="Up to 5 of each finding · {rangeText}" class="c-6">
+		<!-- OLD CODE: sub="Up to 5 of each finding · {rangeText}" (a row opens why it was listed) -->
+		<Card title="DNS anomalies" sub="Up to 5 of each finding · select one to see why it was listed · {rangeText}" class="c-6">
 			{#snippet actions()}
 				<span class={['chip', (dnsAnomalies.dga_suspects?.length ?? 0) + (dnsAnomalies.nxdomain_spikes?.length ?? 0) > 0 && 'is-warn']}
 					>{failedChecks.has('dns_anomalies') ? 'check failed' : plural(dnsFindings, 'finding')}</span
@@ -812,7 +853,16 @@
 			{#if failedChecks.has('dns_anomalies')}
 				<CardState state="error" title="Couldn't check for DNS anomalies: the query failed." onaction={reload} />
 			{:else if dnsRows.length > 0}
-				<DataTable columns={DNS_COLUMNS} rows={dnsRows} ariaLabel="DNS anomalies" rowKey={(r) => r.key} />
+				<!-- OLD CODE: <DataTable columns={DNS_COLUMNS} rows={dnsRows} ariaLabel="DNS anomalies" rowKey={(r) => r.key} /> (rows open why they were listed) -->
+				<DataTable
+					columns={DNS_COLUMNS}
+					rows={dnsRows}
+					ariaLabel="DNS anomalies"
+					rowKey={(r) => r.key}
+					onrowactivate={(r) => r.href && goto(r.href)}
+					rowActivatable={(r) => r.href !== null}
+					rowLabel={(r) => `Open ${r.kind} ${r.name}: why it was listed`}
+				/>
 			{:else}
 				<CardState
 					state="empty"
@@ -878,18 +928,28 @@
 								<SeverityPill level={levelOf(inv.alert.severity_label) ?? 'info'} />
 								<span class="inv-main">
 									<span class="inv-title">{inv.alert.signature}</span>
-									<span class="mono dim">{inv.alert.source_ip} → {inv.alert.destination_ip}</span>
+									<!-- OLD CODE: <span class="mono dim">{inv.alert.source_ip} → {inv.alert.destination_ip}</span> (a full IPv6 pair scrolled the page sideways at 390 px) -->
+									<span class="mono dim">{@render ipText(inv.alert.source_ip)} → {@render ipText(inv.alert.destination_ip)}</span>
 								</span>
 								<Icon name="chevdown" class={expandedInvestigation === i ? 'inv-chev open' : 'inv-chev'} />
 							</button>
 							{#if expandedInvestigation === i}
+								<!-- OLD CODE: the three sections and the todo shared one auto-fit grid; the todo's 1 / -1 span kept the empty tracks, so sections sat in narrow columns -->
 								<div class="inv-body">
+									<!-- the rule's name is in the head button, so its link lives here; by rule.name, never the shown signature -->
+									{#if inv.alert.rule_name}
+										<p class="inv-rule">
+											<a href={ruleHref(inv.alert.rule_name, reportWindow, { activity: inv.alert.activity })}>What this rule means and which devices it involved</a>
+										</p>
+									{/if}
+									<div class="inv-sections">
 									{#if inv.sections.source_profile}
 										{@const p = inv.sections.source_profile}
 										<section>
 											<h4 class="eyebrow">Source host profile</h4>
 											<dl class="facts">
-												<dt>IP</dt><dd class="mono">{p.ip}</dd>
+												<!-- OLD CODE: <dt>IP</dt><dd class="mono">{p.ip}</dd> (an IPv6 address breaks only after a colon) -->
+												<dt>IP</dt><dd class="mono ip">{@render ipText(String(p.ip ?? ""))}</dd>
 												<!-- OLD CODE START (I14: the daemon counts only connections this host started, and the bytes it sent in them)
 												<dt>Connections (24h)</dt><dd class="num">{formatNumber(Number(p.connection_count_24h) || 0)}</dd>
 												<dt>Unique destinations</dt><dd class="num">{Number(p.unique_destinations) || 0}</dd>
@@ -908,7 +968,8 @@
 										<section>
 											<h4 class="eyebrow">Destination host profile</h4>
 											<dl class="facts">
-												<dt>IP</dt><dd class="mono">{p.ip}</dd>
+												<!-- OLD CODE: <dt>IP</dt><dd class="mono">{p.ip}</dd> (an IPv6 address breaks only after a colon) -->
+												<dt>IP</dt><dd class="mono ip">{@render ipText(String(p.ip ?? ""))}</dd>
 												<!-- OLD CODE START (I14: the daemon counts only connections this host started, and the bytes it sent in them)
 												<dt>Connections (24h)</dt><dd class="num">{formatNumber(Number(p.connection_count_24h) || 0)}</dd>
 												<dt>Unique destinations</dt><dd class="num">{Number(p.unique_destinations) || 0}</dd>
@@ -932,6 +993,7 @@
 											</dl>
 										</section>
 									{/if}
+									</div>
 									<div class="todo inv-todo"><b>What to do</b>{inv.recommendation}</div>
 								</div>
 							{/if}
@@ -970,15 +1032,30 @@
 	.inv-title { font-weight: 700; overflow-wrap: anywhere; }
 	.inv-head :global(.inv-chev) { width: 16px; height: 16px; color: var(--text-3); transition: transform var(--dur-fast); }
 	.inv-head :global(.inv-chev.open) { transform: rotate(180deg); }
+	/* OLD CODE START — the todo's 1 / -1 span kept auto-fit's empty tracks from collapsing, so one or two
+	   sections sat in a quarter-width column with values wrapping letter by letter
 	.inv-body {
 		display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-5);
 		padding: var(--sp-4); border-top: 1px solid var(--line);
 	}
+	.inv-todo { grid-column: 1 / -1; }
+	OLD CODE END */
+	.inv-body { display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-4); border-top: 1px solid var(--line); }
+	/* the todo sits outside this grid, so auto-fit collapses the tracks no section fills */
+	.inv-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--sp-5); }
+	.inv-sections > section { container-type: inline-size; min-width: 0; }
 	.inv-body .eyebrow { margin-bottom: var(--sp-2); }
+	.inv-rule { margin: 0; font-size: var(--text-sm); }
 	/* system.css breaks .facts values anywhere; in these three narrow columns an IP split mid-address (NET-192).
 	   break-word keeps a value whole and breaks it only when it can't fit a line on its own. */
 	.inv-body .facts dd { overflow-wrap: break-word; }
-	.inv-todo { grid-column: 1 / -1; }
+	/* an address breaks only at the <wbr> after each colon */
+	.inv-body .facts dd.ip { overflow-wrap: normal; }
+	/* a narrow section stacks each label over its value instead of squeezing both onto one line */
+	@container (max-width: 22rem) {
+		.inv-body .facts { grid-template-columns: minmax(0, 1fr); }
+		.inv-body .facts dd { text-align: left; }
+	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.inv-head :global(.inv-chev) { transition: none; }

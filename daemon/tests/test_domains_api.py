@@ -515,3 +515,61 @@ class TestLongestNameThroughASubfield(DomainCase):
         }
         alerts = (await self.figures(LONGEST))["alerts"]
         self.assertEqual((alerts["tagged"], alerts["tagged_partial"]), (1, False))
+
+
+# ---------------------------------------------------------------------------
+# finding= (the Threats page's DNS rows): the detector's records and its own evidence
+# ---------------------------------------------------------------------------
+
+DGA_NAME = "kq3z8wxv1m7tbn5r6yhp.com"
+MIXED = "aAbBcCdDeEfFgGhH.com."
+LONG = "a" * 50 + ".example.com."
+
+
+class TestFinding(DomainCase):
+    docs = [
+        *[dns(DGA_NAME, src=EXCLUDED) for _ in range(3)],
+        dns(MIXED, src=PHONE),
+        dns(LONG, src=PHONE),
+        dns("foo.local", src=PHONE),
+    ]
+
+    async def test_an_excluded_only_finding_counts_its_device_and_says_so(self):
+        plain = await self.figures(DGA_NAME)
+        self.assertEqual(
+            plain["dns"]["lookups"], 0
+        )  # unchanged: Settings exclusions apply
+        self.assertNotIn("finding", plain)
+        body = await self.figures(DGA_NAME, f"{WINDOW}&finding={DGA_NAME}")
+        self.assertEqual(body["dns"]["lookups"], 3)
+        self.assertEqual(
+            [(a["ip"], a["lookups"], a["excluded"]) for a in body["dns"]["askers"]],
+            [(EXCLUDED, 3, True)],
+        )
+        finding = body["finding"]
+        self.assertEqual(finding["name"], DGA_NAME)
+        # OLD CODE: self.assertTrue(finding["excluded_counted"]) (always true and never read)
+        self.assertNotIn("excluded_counted", finding)
+        self.assertEqual(finding["dga"]["label"], "kq3z8wxv1m7tbn5r6yhp")
+        self.assertEqual(finding["dga"]["entropy"], 4.322)
+        self.assertIsNone(finding["tunnel"])
+
+    async def test_the_raw_spelling_is_measured_as_the_detector_read_it(self):
+        body = await self.figures("aabbccddeeffgghh.com", f"{WINDOW}&finding={MIXED}")
+        self.assertEqual(body["finding"]["dga"]["entropy"], 4.0)
+        self.assertEqual(body["finding"]["name"], MIXED)
+        long = await self.figures(LONG.lower().rstrip("."), f"{WINDOW}&finding={LONG}")
+        self.assertEqual(long["finding"]["tunnel"]["length"], 58)
+
+    async def test_a_name_the_checks_skip_has_empty_evidence(self):
+        body = await self.figures("foo.local", f"{WINDOW}&finding=foo.local")
+        self.assertEqual(body["finding"]["dga"], None)
+        self.assertEqual(body["finding"]["tunnel"], None)
+
+    async def test_a_finding_that_is_not_this_name_is_a_400_and_no_search_runs(self):
+        for finding in ("other.com", "x" * 256):
+            self.assertIn(
+                "error",
+                await self.figures(DGA_NAME, f"{WINDOW}&finding={finding}", status=400),
+            )
+        self.assertEqual(self.os.bodies, [])
