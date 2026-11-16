@@ -944,7 +944,12 @@ class UpdateExecutor:
             detail = (
                 result.get("reload_output") or result.get("output") or ""
             ).strip()[-500:]
-            error = f"Suricata's rule update failed: {detail or 'no output'}"
+            # OLD CODE: error = f"Suricata's rule update failed: {detail or 'no output'}" (also when it was only unconfirmed)
+            error = (
+                f"Couldn't confirm Suricata's rule update finished: {detail}"
+                if result.get("running")
+                else f"Suricata's rule update failed: {detail or 'no output'}"
+            )
         return UpdateResult(
             component="suricata-rules",
             success=error is None,

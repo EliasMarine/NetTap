@@ -141,6 +141,29 @@ class TestUpdateRulesThroughTheShim:
         assert result["success"] is success
         assert result["reload_output"] == (record["reason"] or record["state"])
 
+    def test_follow_gives_up_on_a_stuck_update_and_says_it_is_unconfirmed(
+        self, state, monkeypatch
+    ):
+        """Review: a wedged docker exec kept the Updates page's batch running forever."""
+        monkeypatch.setattr(sr, "RULES_FOLLOW_WAIT_S", 0.05)
+        monkeypatch.setattr(
+            sr, "RULES_UPDATE_WAIT_S", 0.01
+        )  # follow uses its own limit
+        never = asyncio.Event()
+
+        async def stuck():
+            await never.wait()
+            return b"", None
+
+        proc = AsyncMock()
+        proc.communicate = stuck
+        manager = SuricataRuleManager(container_name="live")
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+            result = asyncio.run(manager.update_rules(follow=True))
+        assert result["running"] is True and result["success"] is False
+        assert "may be stuck" in result["output"]
+        assert not manager._op_lock.locked()  # a later rule operation isn't blocked
+
     def test_docker_missing_is_a_failure(self, state):
         with patch(
             "asyncio.create_subprocess_exec",

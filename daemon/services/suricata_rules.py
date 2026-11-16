@@ -96,6 +96,9 @@ RULES_UPDATE_SHIM = "/usr/local/bin/suricata-update-rules.sh"
 RULES_UPDATE_USER = "suricata"
 # The web proxy waits 290 s; past this the update keeps running and its status record says how it went
 RULES_UPDATE_WAIT_S = 270
+# The Updates page's batch follows a rule update to its end, but not forever: past the shim's own worst
+# case (900 s for the lock, 900 s to update, 300 s to confirm) something is stuck, such as docker exec
+RULES_FOLLOW_WAIT_S = 2400
 STALE_AFTER = timedelta(hours=48)
 _RECORD_FIELDS = (
     "state",
@@ -359,7 +362,7 @@ class SuricataRuleManager:
         Returns 'success', 'output' (redacted by the shim), 'reload_output' (the record's reason or
         state), 'status' (the record) and, when the wait ran out first, 'running'.
 
-        follow=True waits for the shim to exit however long it takes (the Updates page's background
+        follow=True waits for the shim to exit, up to RULES_FOLLOW_WAIT_S (the Updates page's background
         batch, which has no proxy limit); the Rules page's request gives up after RULES_UPDATE_WAIT_S.
         """
         async with self._op_lock:
@@ -392,13 +395,31 @@ class SuricataRuleManager:
                 #     asyncio.shield(drain), RULES_UPDATE_WAIT_S
                 # )
                 # OLD CODE END
-                stdout, _ = await (
-                    drain
-                    if follow
-                    else asyncio.wait_for(asyncio.shield(drain), RULES_UPDATE_WAIT_S)
-                )
+                # OLD CODE START — review: a followed update had no limit, so a wedged docker exec
+                # kept the Updates page's batch running forever
+                # stdout, _ = await (
+                #     drain
+                #     if follow
+                #     else asyncio.wait_for(asyncio.shield(drain), RULES_UPDATE_WAIT_S)
+                # )
+                # OLD CODE END
+                wait_s = RULES_FOLLOW_WAIT_S if follow else RULES_UPDATE_WAIT_S
+                stdout, _ = await asyncio.wait_for(asyncio.shield(drain), wait_s)
             except asyncio.TimeoutError:
-                logger.info("Rule update still running after %d s", RULES_UPDATE_WAIT_S)
+                logger.info("Rule update still running after %d s", wait_s)
+                if follow:
+                    logger.warning(
+                        "Rule update didn't finish within %d s: something may be stuck",
+                        wait_s,
+                    )
+                    return {
+                        "success": False,
+                        "running": True,
+                        "output": f"It was still running after {wait_s // 60} minutes, so something may "
+                        "be stuck. Its result shows under Rules Suricata runs if it finishes.",
+                        "reload_output": "",
+                        "status": update_record(),
+                    }
                 return {
                     "success": False,
                     "running": True,

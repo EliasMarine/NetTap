@@ -54,6 +54,23 @@ def test_the_batch_waits_for_the_rules_update_then_runs_malcolm():
     assert by["malcolm"]["success"] is True
 
 
+def test_an_unconfirmed_rules_update_is_not_called_failed():
+    *_, done = asyncio.run(
+        _run(
+            {
+                "success": False,
+                "running": True,
+                "output": "It was still running after 40 minutes, so something may be stuck.",
+                "reload_output": "",
+            }
+        )
+    )
+    rules = next(r for r in done["results"] if r["component"] == "suricata-rules")
+    assert rules["success"] is False
+    assert rules["error"].startswith("Couldn't confirm Suricata's rule update finished")
+    assert "may be stuck" in rules["error"]
+
+
 def test_a_rules_update_that_fails_late_records_its_own_reason():
     *_, done = asyncio.run(
         _run(
