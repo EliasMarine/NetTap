@@ -945,14 +945,16 @@ class UpdateChecker:
     # Helpers
     # -------------------------------------------------------------------
 
-    async def _fetch_json(self, url: str) -> dict:
+    # OLD CODE: async def _fetch_json(self, url: str) -> dict: (the releases list answers a JSON list)
+    async def _fetch_json(self, url: str) -> Any:
         """Fetch JSON from a URL using aiohttp.
 
         Args:
             url: The URL to fetch.
 
         Returns:
-            Parsed JSON as a dict, or an empty dict on 404 (nothing published).
+            The parsed JSON (an object or, for a list endpoint, a list), or an empty dict on 404
+            (nothing published).
 
         Raises:
             RuntimeError: on any other non-200 status (rate limit, server error).
