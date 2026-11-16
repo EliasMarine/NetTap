@@ -41,7 +41,7 @@
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
-	import { domainHref } from '$lib/stores/lan';
+	// OLD CODE: import { domainHref } from '$lib/stores/lan'; (the domain page link moved to DomainAskers)
 	// OLD CODE: import { chartTime, DRILL_RANGES, fmt, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-238: SCAN_CAP)
 	// OLD CODE: import { chartTime, DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown'; (NET-249: a pick narrows the page)
 	import {
@@ -50,6 +50,10 @@
 	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
+	import { getDomainSummary, type DomainSummary } from '$lib/api/drilldown';
+	import { getRegistryDevices } from '$lib/api/devices-registry';
+	import { namesByIp } from '$lib/utils/device-names';
+	import DomainAskers from './DomainAskers.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -158,7 +162,22 @@
 	const DEVICE_DOMAIN_CAP = 200;
 
 	// Interaction state
-	let selectedDomain = $state<string | null>(null);
+	// OLD CODE: let selectedDomain = $state<string | null>(null); (a pick keeps its list and that list's window, for its askers)
+	/** The lists a domain can be picked in */
+	type DomainSource = 'top' | 'nx' | 'suspicious' | 'device';
+	type Span = { from: string; to: string };
+	/** Each list's window, as of its last successful reply: a pick asks over the window its list counted */
+	let listWindow = $state<Record<DomainSource, Span | null>>({ top: null, nx: null, suspicious: null, device: null });
+	/** The domain picked, the list it came from and the window it asks for its askers over */
+	let selected = $state<({ domain: string; source: DomainSource } & Span) | null>(null);
+	const selectedDomain = $derived(selected?.domain ?? null);
+	// The picked domain's askers (GET /api/domains/{name}); the names are cosmetic
+	let askers = $state<DomainSummary['dns'] | null>(null);
+	let askersFailed = $state<string | null>(null);
+	let askersLoading = $state(false);
+	let askerNames = $state<Map<string, string>>(new Map());
+	/** Only the newest askers request writes (not reactive): a pick, a clear, a new view or leaving bumps it */
+	let askersGen = 0;
 	let domainSearch = $state('');
 	// OLD CODE START — the hand-drawn bar chart's hover; AreaChart handles its own
 	// let hoveredBarIndex = $state<number | null>(null);
@@ -387,6 +406,13 @@
 		if (results[0].status === 'fulfilled') stats = results[0].value;
 		if (results[1].status === 'fulfilled') topDomains = results[1].value.domains;
 		if (results[2].status === 'fulfilled') nxdomains = results[2].value.nxdomains;
+		// Each replaced list's window; a pick from it follows it, so its askers count what the list now shows
+		const replaced = { top: results[1].status === 'fulfilled', nx: results[2].status === 'fulfilled', suspicious: results[5].status === 'fulfilled' };
+		listWindow = {
+			...listWindow,
+			...Object.fromEntries(Object.entries(replaced).filter(([, ok]) => ok).map(([k]) => [k, { from, to }])),
+		};
+		if (selected && selected.source !== 'device' && replaced[selected.source]) selected = { ...selected, from, to };
 		if (results[3].status === 'fulfilled') queryTypes = results[3].value.types;
 		// OLD CODE: if (results[4].status === 'fulfilled') timeline = results[4].value.series; (NET-249: the reply whole)
 		if (results[4].status === 'fulfilled') {
@@ -412,7 +438,10 @@
 		// const ok = results.filter((r) => r.status === 'fulfilled').length;
 		// return ok === results.length ? 'ok' : ok === 0 ? 'failed' : 'partial';
 		// OLD CODE END
-		return outcome(results);
+		// OLD CODE: return outcome(results); (a pick's askers refresh with the page and count in its outcome)
+		const picked = selected ? await Promise.allSettled([loadAskers()]) : [];
+		if (!guard.current(g)) return 'skipped';
+		return outcome([...results, ...picked]);
 	}
 
 	// OLD CODE START — I13: no guard, so the last range's slower answer could overwrite this range's
@@ -450,6 +479,8 @@
 			if (seq !== deviceLookupSeq) return;
 			deviceDns = result.domains;
 			deviceDnsFailed = false;
+			listWindow = { ...listWindow, device: { from, to } };
+			if (selected?.source === 'device') clearPick();
 		} catch {
 			if (seq !== deviceLookupSeq) return;
 			deviceDns = [];
@@ -463,9 +494,57 @@
 	// Interaction handlers
 	// ---------------------------------------------------------------------------
 
-	function selectDomain(domain: string) {
-		selectedDomain = selectedDomain === domain ? null : domain;
+	// OLD CODE START — a pick only highlighted its row; it now loads which devices looked it up
+	// function selectDomain(domain: string) {
+	// 	selectedDomain = selectedDomain === domain ? null : domain;
+	// }
+	// OLD CODE END
+	/** Pick a domain in one of the lists (again to clear it): its askers, over that list's window */
+	function selectDomain(domain: string, source: DomainSource) {
+		if (selected?.domain === domain) {
+			clearPick();
+			return;
+		}
+		selected = { domain, source, ...(listWindow[source] ?? getTimeRange()) };
+		askers = null;
+		void loadAskers().catch(() => {});
+		setTimeout(() => document.getElementById('domain-askers')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 50);
 	}
+
+	function clearPick() {
+		askersGen++;
+		selected = null;
+		askers = null;
+		askersFailed = null;
+		askersLoading = false;
+	}
+
+	/** The picked domain's askers; rejects when that request fails, so a refresh counts it */
+	async function loadAskers(): Promise<void> {
+		const pick = selected;
+		if (!pick) return;
+		const g = ++askersGen;
+		askersLoading = true;
+		const namesLoad = getRegistryDevices({ limit: 200 }).then(
+			(res) => namesByIp(res.devices),
+			() => null,
+		);
+		try {
+			const summary = await getDomainSummary(pick.domain, pick.from, pick.to);
+			const names = await namesLoad;
+			if (g !== askersGen) return;
+			askers = summary.dns;
+			askersFailed = null;
+			if (names) askerNames = names;
+		} catch (e) {
+			if (g !== askersGen) return;
+			askersFailed = e instanceof Error ? e.message : '';
+			throw e;
+		} finally {
+			if (g === askersGen) askersLoading = false;
+		}
+	}
+	onDestroy(() => askersGen++);
 
 	function selectDeviceIp(ip: string) {
 		deviceIpInput = ip;
@@ -547,6 +626,8 @@
 		timelineInterval = undefined;
 		suspicious = [];
 		suspiciousComplete = true;
+		// Another window: the pick and its askers belonged to the last one
+		clearPick();
 		// I13: the device table kept the last range's domains under this range's label
 		deviceDns = [];
 		if (selectedDeviceIp) lookupDevice();
@@ -669,7 +750,7 @@
 			value: d.count,
 			display: fmt(d.count),
 			detail: `${d.unique_clients} clients`,
-			onclick: () => selectDomain(d.domain),
+			onclick: () => selectDomain(d.domain, 'top'),
 		}))}
 	/>
 {/snippet}
@@ -683,7 +764,7 @@
 		ariaLabel="Domains"
 		rowKey={(d) => d.domain}
 		initialSort={{ key: 'count', dir: 'desc' }}
-		onrowactivate={(d) => selectDomain(d.domain)}
+		onrowactivate={(d) => selectDomain(d.domain, 'top')}
 		rowLabel={(d) => `Select ${d.domain}`}
 		selectedKey={selectedDomain ?? undefined}
 	>
@@ -708,7 +789,7 @@
 		ariaLabel="NXDOMAIN errors"
 		rowKey={(nx) => nx.domain}
 		initialSort={{ key: 'count', dir: 'desc' }}
-		onrowactivate={(nx) => selectDomain(nx.domain)}
+		onrowactivate={(nx) => selectDomain(nx.domain, 'nx')}
 		rowLabel={(nx) => `Select ${nx.domain}`}
 		selectedKey={selectedDomain ?? undefined}
 	/>
@@ -834,17 +915,30 @@
 		)}
 	</Card>
 
+	<DomainAskers
+		name={selectedDomain}
+		{askers}
+		loading={askersLoading}
+		failed={askersFailed}
+		names={askerNames}
+		words={rangeWords}
+		onretry={() => void loadAskers().catch(() => {})}
+		onclear={clearPick}
+		oncopy={copyDomain}
+	/>
+
 	<Card title="DNS by device" sub="Domains one device looked up · {rangeWords}" class="c-12">
 		<span id="device-section" class="anchor"></span>
+		<!-- OLD CODE START — the selected domain's chips moved to its "Devices that looked it up" card
 		{#if selectedDomain}
 			<div class="chips selected">
 				<span class="chip">Selected domain: <span class="mono">{selectedDomain}</span></span>
-				<!-- NET-160: the domain tables open this selection on their row, so the domain page link lives here -->
 				<a class="link" href={domainHref(selectedDomain)}>Open domain page</a>
 				<button class="link" type="button" onclick={() => copyDomain(selectedDomain ?? '')}>Copy</button>
 				<button class="link" type="button" onclick={() => (selectedDomain = null)}>Clear</button>
 			</div>
 		{/if}
+		OLD CODE END -->
 		<div class="toolbar">
 			<label class="sr-only" for="dns-device-ip">Device IP</label>
 			<input
@@ -881,7 +975,7 @@
 				rowKey={(e) => e.domain}
 				initialSort={{ key: deviceSortKey, dir: deviceSortDir }}
 				onsortchange={setDeviceSort}
-				onrowactivate={(e) => selectDomain(e.domain)}
+				onrowactivate={(e) => selectDomain(e.domain, 'device')}
 				rowLabel={(e) => `Select ${e.domain}`}
 				selectedKey={selectedDomain ?? undefined}
 			/>
@@ -937,7 +1031,7 @@
 							{#if isLevel(s.severity)}<SeverityPill level={s.severity} />{:else}<span class="chip">{s.severity}</span>{/if}
 							<b>{typeLabel(s.type)}</b>
 						</div>
-						<button class="link mono finding-domain" type="button" onclick={() => selectDomain(s.domain)}>{s.domain}</button>
+						<button class="link mono finding-domain" type="button" onclick={() => selectDomain(s.domain, 'suspicious')}>{s.domain}</button>
 						<p class="finding-desc">{s.description}</p>
 						<p class="dim num finding-meta">
 							{fmt(s.count)} queries{#if s.unique_clients} · {s.unique_clients} client(s){/if}{#if s.length} · {s.length} chars{/if}
@@ -963,7 +1057,7 @@
 	.anchor { display: block; scroll-margin-top: calc(var(--sp-8) * 3); }
 	/* OLD CODE: .stale { margin-bottom: var(--sp-3); } (NET-238: the capped-scan notice too) */
 	.stale, .capped { margin-bottom: var(--sp-3); }
-	.selected { align-items: center; margin-bottom: var(--sp-3); }
+	/* OLD CODE: .selected { align-items: center; margin-bottom: var(--sp-3); } (the chips moved to DomainAskers) */
 	.pick-hint { margin-top: var(--sp-2); }
 	.device-ip { flex: 0 1 20rem; }
 	.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
