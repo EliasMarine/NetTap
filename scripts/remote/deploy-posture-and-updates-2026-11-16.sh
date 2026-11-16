@@ -141,12 +141,18 @@ echo ""
 
 echo "→ Step 6: NET-311, what Apply updates will offer..."
 result "updates/available splits applicable and come-another-way updates" "$(daemon_py '
+# A recreated daemon has checked nothing yet (stale, empty), so run one check first. It only
+# asks GitHub and the registries what is new; it installs nothing.
 status, data = get("/api/system/updates/available")
+if data.get("stale", True) or not data.get("checked"):
+    call("POST", "/api/system/updates/check", "{}")
+    status, data = get("/api/system/updates/available")
 ups = data.get("updates", []) if isinstance(data, dict) else []
 own = [u.get("component") for u in ups if not u.get("applies_with")]
 other = [str(u.get("component")) + " (with " + str(u.get("applies_with")) + ")" for u in ups if u.get("applies_with")]
-print("OK" if status == 200 else "FAIL", status, "Review button shown:", "yes" if own else "no",
-      "| applicable", own or "none", "| listed as information", other or "none")')"
+ok = status == 200 and data.get("stale") is False and bool(data.get("checked"))
+print("OK" if ok else "FAIL", status, "checked", len(data.get("checked", [])), "Review button shown:",
+      "yes" if own else "no", "| applicable", own or "none", "| listed as information", other or "none")')"
 echo ""
 
 echo "→ Step 7: NET-312, the web image was built with the patched SvelteKit..."
