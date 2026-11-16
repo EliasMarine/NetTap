@@ -1,6 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-14 (Chain 36: any `br0` was treated as NetTap's; setup, teardown and bypass now refuse a bridge NetTap didn't make (NET-287, #296, verified on the G11). Chain 35, third round: the first-run allow-list became exact requests (NET-280, NET-290), update component names are checked before use (NET-291), the dead compose update path is gone (NET-288), count charts get whole-number ticks (NET-286), three small UI fixes (NET-283-285).)
+> **Last updated:** 2026-11-16 (Chain 37: on a fresh Ubuntu 22.04 box the installer stopped twice at needrestart's "Daemons using outdated libraries" dialog; apt now runs unattended (NET-297, #303, verified on a fresh 22.04 droplet).)
+<!-- previous: **Last updated:** 2026-11-14 (Chain 36: any `br0` was treated as NetTap's; setup, teardown and bypass now refuse a bridge NetTap didn't make (NET-287, #296, verified on the G11). Chain 35, third round: the first-run allow-list became exact requests (NET-280, NET-290), update component names are checked before use (NET-291), the dead compose update path is gone (NET-288), count charts get whole-number ticks (NET-286), three small UI fixes (NET-283-285).) -->
 <!-- previous: **Last updated:** 2026-11-14 (Chain 35: the 2026-11-14 bug triage. A fresh install's first daily index could get a replica a single node can't place (NET-252); validate-hardware.sh run on its own stopped at the first warning (NET-253). Same day, outside the install path: another site could start /api work with the owner's cookie (NET-257), the MAC device page had no bandwidth series (NET-260), DNS Lookup read "ns" as a type (NET-268). Second round: extreme years gave a 500 (NET-275), Go Live opened before the first admin (NET-277), Packets ran a URL search on open (NET-276).) -->
 <!-- previous: **Last updated:** 2026-11-13 (Chain 34: malcolm-config.sh's generate_auth put the admin password on htpasswd's and python3's command lines and in run's verbose log, and a quote in it broke the python fallback; it now goes on stdin. NET-251, install-time only.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 33: installer and Go Live bugs from the setup guide, NET-244 + NET-211: two-port --skip-bridge --non-interactive, a dry run that wrote, capture started on a missing br0, Go Live guessing ports, and a new uninstall.sh.) -->
@@ -2086,6 +2087,32 @@ The first-run Go Live path can't be shown on a box with an admin; CI's first-run
 **Verification (passed on the G11, 2026-11-14, `97793a93`):** the G11 runs mirror mode, so `scripts/remote/deploy-triage-fixes-4-2026-11-14.sh` adds a temporary empty, down `br0` through the daemon container (no ports, no address) and makes only read-only calls. Unmarked: readiness says `bridge_exists` failed with "didn't set up", the wizard's preview gets 400 naming `alias nettap`, and the installer's `nettap_bridge_owned` says foreign. After `ip link set br0 alias nettap`: readiness passes `bridge_exists`, the preview's 400 is the next check (a missing test NIC), and the shell check says owned. The script removes the bridge on exit; `/sys/class/net/br0` was gone afterwards. It skips the live check if a `br0` already exists, and never calls create, teardown or bypass.
 
 **Key insight:** a well-known interface name (`br0`, `eth0`, `docker0`) is not ownership. Mark what you create, and fail closed on anything you can't prove is yours.
+
+---
+
+## Chain 37: Ubuntu 22.04's needrestart dialog stopped the install
+
+### NET-297: a full-screen "Daemons using outdated libraries" checklist in step 2
+
+| Field | Value |
+|---|---|
+| **PR** | #303 |
+| **Status** | Fixed; verified on a fresh DigitalOcean 22.04 droplet 2026-11-16 (`e9872d58`) |
+| **Severity** | High (first-run experience on a supported release) |
+| **Date** | 2026-11-16 |
+| **Environment** | Fresh Ubuntu 22.04 whose image is behind the archive; 24.04 is unaffected |
+
+**Symptom:** the documented install (`sudo scripts/install/install.sh --skip-bridge`) stopped twice in "Installing system dependencies" with a whiptail checklist. It appeared once during the dependency `apt-get install` and once during `docker-compose-v2`. Pressing Enter carried on, and the install then passed every check. An unattended run would have waited forever.
+
+**Root cause:** needrestart runs from apt's hook after every install. On 22.04 it asks which services to restart when the install upgraded a library they use. On 24.04 it restarts them on its own, so the same day's 24.04 runs of the tag and `main` never saw it. The 2026-11-10 22.04 run didn't hit it, probably because that day's image was closer to the archive.
+
+**Fix:** `export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a` at the top of `install.sh`. The same line went into `setup-watchdog.sh` and `setup-firewall.sh`, which are standalone scripts `install.sh` never runs.
+
+**Verification:** two bats tests; the first fails without the export. bats 406 pass, shellcheck clean. A fresh 22.04 droplet installed `e9872d58` in 9 min with 5/5 checks, and a 2 s `whiptail` poll saw no dialog during the whole install.
+
+**Key insight:** test both supported Ubuntu releases on every release check, on images of the day. A prompt that only one release shows, and only when its image is behind, won't show up in a single-release run.
+
+**Still open:** the `v0.4.0-alpha.1` tag doesn't have the fix. README users on 22.04 will see the dialog until a new tag ships.
 
 ---
 
