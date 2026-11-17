@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://nettap.dev/sitemap.xml

@@ -68,5 +68,8 @@ HANDOFF-*.md
 # capture:media also writes the docs site's tour video here; only the untracked docs/ uses it
 /.github/assets/media/nettap-tour.mp4
 
+# nettap.dev site source and deploy scripts: kept on disk, not in the public repo
+/website/
+
 # scripts/fresh-install-cloud.sh: per-run keys, manifests and evidence
 /.fresh-install/
