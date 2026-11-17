@@ -996,6 +996,7 @@ OLD CODE END -->
 						onrowactivate={openDevice}
 						rowLabel={(d) => `Open ${deviceName(d)}`}
 						{columns}
+						resizeKey="devices"
 					/>
 				{/if}
 				<!-- OLD CODE: <p class="note table-note">Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.</p> (NET-317: Protocols are IPv4 only) -->

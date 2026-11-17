@@ -416,6 +416,15 @@ describe('Devices — All devices table', () => {
 			const index = within(table).getAllByRole('columnheader').indexOf(header(table, label));
 			return within(table).getAllByRole('row').slice(1).map((r) => r.querySelectorAll('td')[index]?.textContent?.trim());
 		};
+		// NET-318: every column of the All devices table can be resized, and keeps its header name
+		it('gives every All devices column a resize handle', async () => {
+			const table = await show();
+			const headers = within(table).getAllByRole('columnheader');
+			expect(within(table).getAllByRole('separator')).toHaveLength(headers.length);
+			expect(within(table).getByRole('separator', { name: 'Resize Protocols column' })).toBeInTheDocument();
+			expect(within(table).getByRole('columnheader', { name: 'MAC address' })).toBeInTheDocument();
+		});
+
 		const bothWays = async (table: HTMLElement, label: string) => {
 			const button = within(header(table, label)).getByRole('button');
 			await fireEvent.click(button);

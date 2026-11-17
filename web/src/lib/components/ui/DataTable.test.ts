@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
 import DataTable, { type Column, type TablePager } from './DataTable.svelte';
@@ -325,5 +325,184 @@ describe('DataTable pager', () => {
 		const pages = screen.getAllByRole('button', { name: /^Page / }).map((b) => b.textContent);
 		expect(pages).toEqual(['1', '2', '3']);
 		expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
+	});
+});
+
+describe('DataTable resizable columns (NET-318)', () => {
+	const KEY = 'nettap-col-widths:t';
+	// jsdom has no layout: each header reports a width by its label
+	const MEASURED: Record<string, number> = { Device: 200, Data: 1200, Port: 100 };
+
+	/** A pointer event as a browser sends it; jsdom has no PointerEvent (as AreaChart.test.ts does). */
+	function pointer(type: string, clientX: number, { pointerId = 1, isPrimary = true, button = 0 } = {}) {
+		const e = new MouseEvent(type, { clientX, bubbles: true, cancelable: true, button });
+		Object.defineProperties(e, { isPrimary: { value: isPrimary }, pointerId: { value: pointerId } });
+		return e;
+	}
+
+	const handle = (label: string) => screen.getByRole('separator', { name: `Resize ${label} column` });
+	const cols = (container: HTMLElement) => [...container.querySelectorAll('col')].map((c) => c.style.width);
+	const stored = () => JSON.parse(localStorage.getItem(KEY) ?? 'null');
+	const resizable = () => render(Table, { columns: COLUMNS, rows: ROWS, ariaLabel: 'Devices', rowKey, resizeKey: 't' });
+
+	async function drag(label: string, from: number, to: number) {
+		const el = handle(label);
+		await fireEvent(el, pointer('pointerdown', from));
+		await fireEvent(el, pointer('pointermove', to));
+		await fireEvent(el, pointer('pointerup', to));
+	}
+
+	beforeEach(() => {
+		localStorage.clear();
+		vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+			return { width: MEASURED[this.querySelector('.th-btn')?.textContent ?? ''] ?? 0 } as DOMRect;
+		});
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+		localStorage.clear();
+	});
+
+	it('has no handles and no reset button without resizeKey', () => {
+		render(Table, { columns: COLUMNS, rows: ROWS, ariaLabel: 'Devices', rowKey });
+		expect(screen.queryAllByRole('separator')).toHaveLength(0);
+		expect(screen.queryByRole('button', { name: 'Reset column widths' })).toBeNull();
+	});
+
+	it('names each handle and gives it the measured width, clamped, before any resize', () => {
+		const { container } = resizable();
+		expect(screen.getAllByRole('separator')).toHaveLength(3);
+		const device = handle('Device');
+		expect(device).toHaveAttribute('aria-orientation', 'vertical');
+		expect(device).toHaveAttribute('aria-valuemin', '72');
+		expect(device).toHaveAttribute('aria-valuemax', '960');
+		expect(device).toHaveAttribute('aria-valuenow', '200');
+		expect(device).toHaveAttribute('aria-valuetext', '200 pixels');
+		expect(handle('Data')).toHaveAttribute('aria-valuenow', '960');
+		expect(handle('Port')).toHaveAttribute('aria-valuenow', '100');
+		// the handle's label stays out of the header's name
+		expect(header('Device')).toBeInTheDocument();
+		// automatic layout until the first resize
+		expect(cols(container)).toEqual([]);
+		expect(screen.getByRole('table')).not.toHaveClass('is-resized');
+	});
+
+	it('freezes every column on the first drag, follows the pointer, saves, and never sorts', async () => {
+		const { container } = resizable();
+		await drag('Device', 100, 160);
+		expect(cols(container)).toEqual(['260px', '960px', '100px']);
+		const table = screen.getByRole('table');
+		expect(table).toHaveClass('is-resized');
+		expect(table.style.width).toBe('1320px');
+		expect(stored()).toEqual({ name: 260, bytes: 960, port: 100 });
+		expect(handle('Device')).toHaveAttribute('aria-valuenow', '260');
+		expect(header('Device')).toHaveAttribute('aria-sort', 'none');
+		expect(order()).toEqual(['Work laptop', 'Living-room TV', 'Kitchen iPad']);
+	});
+
+	it('keeps a drag between 72 and 960 pixels', async () => {
+		const { container } = resizable();
+		await drag('Port', 500, 0);
+		expect(cols(container)[2]).toBe('72px');
+		await drag('Port', 0, 3000);
+		expect(cols(container)[2]).toBe('960px');
+	});
+
+	it('ignores a second pointer while a drag runs, and a cancel or lost capture ends it', async () => {
+		const { container } = resizable();
+		const device = handle('Device');
+		const port = handle('Port');
+		await fireEvent(device, pointer('pointerdown', 100, { pointerId: 1 }));
+		await fireEvent(port, pointer('pointerdown', 50, { pointerId: 2, isPrimary: false }));
+		await fireEvent(port, pointer('pointerdown', 50, { pointerId: 3 }));
+		await fireEvent(port, pointer('pointermove', 400, { pointerId: 3 }));
+		await fireEvent(device, pointer('pointermove', 400, { pointerId: 2 }));
+		await fireEvent(device, pointer('pointerup', 400, { pointerId: 2 }));
+		expect(cols(container)).toEqual(['200px', '960px', '100px']);
+		await fireEvent(device, pointer('pointermove', 140, { pointerId: 1 }));
+		expect(cols(container)[0]).toBe('240px');
+		await fireEvent(device, pointer('pointercancel', 140, { pointerId: 1 }));
+		await fireEvent(device, pointer('pointermove', 300, { pointerId: 1 }));
+		expect(cols(container)[0]).toBe('240px');
+		expect(stored()).toEqual({ name: 240, bytes: 960, port: 100 });
+		// a new drag can start after the cancel; losing capture ends it too
+		await fireEvent(port, pointer('pointerdown', 0, { pointerId: 4 }));
+		await fireEvent(port, pointer('pointermove', 20, { pointerId: 4 }));
+		await fireEvent(port, pointer('lostpointercapture', 20, { pointerId: 4 }));
+		await fireEvent(port, pointer('pointermove', 200, { pointerId: 4 }));
+		expect(cols(container)[2]).toBe('120px');
+	});
+
+	it('resizes from the keyboard: arrows by 16, Home and End to the bounds, each saved', async () => {
+		const { container } = resizable();
+		const device = handle('Device');
+		await fireEvent.keyDown(device, { key: 'ArrowRight' });
+		expect(cols(container)[0]).toBe('216px');
+		await fireEvent.keyDown(device, { key: 'ArrowLeft' });
+		await fireEvent.keyDown(device, { key: 'ArrowLeft' });
+		expect(cols(container)[0]).toBe('184px');
+		expect(stored().name).toBe(184);
+		await fireEvent.keyDown(device, { key: 'Home' });
+		expect(cols(container)[0]).toBe('72px');
+		await fireEvent.keyDown(device, { key: 'End' });
+		expect(cols(container)[0]).toBe('960px');
+		expect(stored().name).toBe(960);
+		// other keys pass through
+		expect(await fireEvent.keyDown(device, { key: 'Tab' })).toBe(true);
+	});
+
+	it('freezes an untouched column measured past 960 at 960 in its width, its value and storage, also after a remount', async () => {
+		const first = resizable();
+		await fireEvent.keyDown(handle('Port'), { key: 'ArrowRight' });
+		expect(cols(first.container)[1]).toBe('960px');
+		expect(handle('Data')).toHaveAttribute('aria-valuenow', '960');
+		expect(stored().bytes).toBe(960);
+		first.unmount();
+		const again = resizable();
+		expect(cols(again.container)).toEqual(['200px', '960px', '116px']);
+		expect(handle('Data')).toHaveAttribute('aria-valuenow', '960');
+	});
+
+	it('shows Reset column widths once resized; it restores automatic widths, clears storage and focuses the first handle', async () => {
+		const { container } = resizable();
+		expect(screen.queryByRole('button', { name: 'Reset column widths' })).toBeNull();
+		await fireEvent.keyDown(handle('Port'), { key: 'ArrowRight' });
+		await fireEvent.click(screen.getByRole('button', { name: 'Reset column widths' }));
+		await vi.waitFor(() => expect(document.activeElement).toBe(handle('Device')));
+		expect(cols(container)).toEqual([]);
+		expect(screen.getByRole('table')).not.toHaveClass('is-resized');
+		expect(localStorage.getItem(KEY)).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Reset column widths' })).toBeNull();
+		expect(handle('Port')).toHaveAttribute('aria-valuenow', '100');
+	});
+
+	it('applies saved widths on mount, clamped to 72..960', () => {
+		localStorage.setItem(KEY, JSON.stringify({ name: 10, bytes: 5000, port: 90 }));
+		const { container } = resizable();
+		expect(cols(container)).toEqual(['72px', '960px', '90px']);
+		expect(screen.getByRole('button', { name: 'Reset column widths' })).toBeInTheDocument();
+	});
+
+	it.each([
+		['a column missing', '{"name":300,"bytes":400}'],
+		['a width that is not a number', '{"name":"wide","bytes":400,"port":90}'],
+		['not JSON', 'not json'],
+		['not an object', '42'],
+	])('ignores saved widths with %s', (_, value) => {
+		localStorage.setItem(KEY, value);
+		const { container } = resizable();
+		expect(cols(container)).toEqual([]);
+	});
+
+	it('still resizes, for this visit, when storage is blocked', async () => {
+		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+			throw new Error('blocked');
+		});
+		vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+			throw new Error('blocked');
+		});
+		const { container } = resizable();
+		await fireEvent.keyDown(handle('Device'), { key: 'ArrowRight' });
+		expect(cols(container)[0]).toBe('216px');
 	});
 });

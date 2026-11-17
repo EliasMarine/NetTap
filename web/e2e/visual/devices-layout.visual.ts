@@ -26,12 +26,14 @@ import { BY_TYPE_LAYOUT } from './fixtures/devices.ts';
 // OLD CODE END
 
 /** The fixture's capture mode is bridge; this serves mirror mode, and the registry and list with the band. */
-async function open(page: Page): Promise<void> {
+// OLD CODE: async function open(page: Page): Promise<void> { (NET-318: a test serves its own list)
+async function open(page: Page, list: typeof BY_TYPE_LAYOUT.list = BY_TYPE_LAYOUT.list): Promise<void> {
 	await setMode('populated');
 	await stubUpstreams(page, 'populated');
 	await page.route((url) => url.pathname === '/api/capture/mode', (r) => r.fulfill({ json: BY_TYPE_LAYOUT.mode }));
 	await page.route((url) => url.pathname === '/api/devices/registry', (r) => r.fulfill({ json: BY_TYPE_LAYOUT.registry }));
-	await page.route((url) => url.pathname === '/api/devices', (r) => r.fulfill({ json: BY_TYPE_LAYOUT.list }));
+	// OLD CODE: await page.route((url) => url.pathname === '/api/devices', (r) => r.fulfill({ json: BY_TYPE_LAYOUT.list })); (NET-318)
+	await page.route((url) => url.pathname === '/api/devices', (r) => r.fulfill({ json: list }));
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const apiIdle = watchApi(page);
 	await page.goto('/devices');
@@ -132,5 +134,94 @@ test.describe('Devices layout in mirror mode (NET-180, NET-296)', () => {
 				await page.screenshot({ path: testInfo.outputPath(`all-devices-${variant}-${width}.png`), fullPage: true });
 			}
 		}
+	});
+});
+
+/** NET-318: resizable columns, and Copy to the right of the MAC. */
+test.describe('Devices table columns (NET-318)', () => {
+	// every fixture MAC is locally administered (02:…); this one is a maker's address, so it has no Private tag
+	const MAKER_MAC = '00:1b:63:10:00:99';
+	const LIST = { ...BY_TYPE_LAYOUT.list, devices: BY_TYPE_LAYOUT.list.devices.map((d, i) => (i === 0 ? { ...d, mac: MAKER_MAC } : d)) };
+	const TABLE = 'main table[aria-label="All devices"]';
+
+	/** Each MAC cell: its text, its Copy button and its cell, as boxes. Runs in the page. */
+	function macBoxes(table: string) {
+		return [...document.querySelectorAll(`${table} .mac`)].map((mac) => {
+			const box = (el: Element | null) => {
+				const r = el!.getBoundingClientRect();
+				return { left: r.left, right: r.right, mid: r.top + r.height / 2 };
+			};
+			return {
+				mac: mac.querySelector('.mono')!.textContent,
+				text: box(mac.querySelector('.mono')),
+				copy: box(mac.querySelector('button')),
+				cell: box(mac.closest('td')),
+			};
+		});
+	}
+
+	const headerWidth = async (page: Page, label: string) =>
+		(await page.getByRole('columnheader', { name: label, exact: true }).boundingBox())!.width;
+
+	test('Copy sits to the right of each MAC, on its line, at 1440 px', async ({ page }) => {
+		await open(page, LIST);
+		const boxes = await page.evaluate(macBoxes, TABLE);
+		expect(boxes.length).toBeGreaterThan(1);
+		for (const { mac, text, copy } of boxes) {
+			expect.soft(copy.left, `${mac}: Copy starts after the address`).toBeGreaterThanOrEqual(text.right);
+			expect.soft(Math.abs(copy.mid - text.mid), `${mac}: Copy is on the address's line`).toBeLessThanOrEqual(2);
+		}
+	});
+
+	test("a drag on a handle widens its column by the pointer's distance", async ({ page }) => {
+		await open(page, LIST);
+		// Name is on screen at 1440 px; later columns sit past the card's edge until the table scrolls
+		const before = await headerWidth(page, 'Name');
+		const handle = (await page.getByRole('separator', { name: 'Resize Name column' }).boundingBox())!;
+		const x = handle.x + handle.width / 2;
+		const y = handle.y + handle.height / 2;
+		await page.mouse.move(x, y);
+		await page.mouse.down();
+		await page.mouse.move(x + 30, y);
+		await page.mouse.move(x + 60, y);
+		await page.mouse.up();
+		expect(Math.abs((await headerWidth(page, 'Name')) - before - 60)).toBeLessThanOrEqual(2);
+	});
+
+	test('at the narrowest MAC column Copy stays whole and works, private or not; widths survive a reload and Reset clears them', async ({ page }) => {
+		await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+		await open(page, LIST);
+		await page.getByRole('separator', { name: 'Resize MAC address column' }).focus();
+		await page.keyboard.press('Home');
+		expect(Math.round(await headerWidth(page, 'MAC address'))).toBe(72);
+		const boxes = await page.evaluate(macBoxes, TABLE);
+		const maker = boxes.find((b) => b.mac === MAKER_MAC);
+		const privateMac = boxes.find((b) => b.mac?.startsWith('02:'));
+		for (const [what, b] of [['maker MAC', maker], ['private MAC', privateMac]] as const) {
+			expect(b, what).toBeDefined();
+			expect.soft(b!.copy.left, `${what}: Copy inside its cell`).toBeGreaterThanOrEqual(b!.cell.left);
+			expect.soft(b!.copy.right, `${what}: Copy inside its cell`).toBeLessThanOrEqual(b!.cell.right);
+		}
+		const row = page.locator(`${TABLE} tr`).filter({ hasText: MAKER_MAC });
+		await row.getByRole('button', { name: 'Copy MAC address' }).click();
+		await expect(row.getByRole('button', { name: 'Copied' })).toBeVisible();
+		await expect(page).toHaveURL(/\/devices$/);
+
+		await page.reload();
+		await expect(page.getByRole('table', { name: 'All devices' })).toBeVisible();
+		expect(Math.round(await headerWidth(page, 'MAC address'))).toBe(72);
+		await page.getByRole('button', { name: 'Reset column widths' }).click();
+		await expect(page.locator(TABLE)).not.toHaveClass(/is-resized/);
+		expect(await headerWidth(page, 'MAC address')).toBeGreaterThan(72);
+		await expect(page.getByRole('separator', { name: 'Resize IP address column' })).toBeFocused();
+	});
+
+	test('saved wide columns scroll inside the card, never the page, at 390 px', async ({ page }) => {
+		await open(page, LIST);
+		await page.getByRole('separator', { name: 'Resize Name column' }).focus();
+		await page.keyboard.press('End');
+		await page.setViewportSize({ width: 390, height: 900 });
+		await settle(page);
+		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 	});
 });
