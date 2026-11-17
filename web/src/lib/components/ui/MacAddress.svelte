@@ -71,12 +71,16 @@
 </span>
 
 <style>
-	/* wraps, so a device page's narrow identity column on a phone breaks the line, not the page */
-	.mac { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); max-width: 100%; }
+	/* OLD CODE: .mac { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); max-width: 100%; } (NET-318: a squeezed table column wrapped Copy under the MAC) */
+	.mac { display: inline-flex; align-items: center; gap: var(--sp-1); max-width: 100%; }
+	/* a device page's narrow identity column on a phone breaks the line, not the page */
+	:global(.meta-v) .mac { flex-wrap: wrap; }
+	/* NET-318: in a narrowed table column the address and tag ellipsise first, so Copy stays whole */
+	.mac > .mono, .mac > .tag { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 	/* a table row's size, not the 36px toolbar button; 24px is still a full touch target (WCAG 2.5.8) */
 	/* in a device page's identity list .meta-v sets the size, as it did for the plain MAC */
 	:global(.meta-v) .mono { font-size: inherit; }
-	.copy { width: var(--sp-6); height: var(--sp-6); color: var(--text-3); }
+	.copy { flex: none; width: var(--sp-6); height: var(--sp-6); color: var(--text-3); }
 	.copy:hover, .copy:focus-visible { color: var(--text-1); }
 	.copy.is-copied { color: var(--ok); }
 	.copy.is-failed { color: var(--sev-high); }
