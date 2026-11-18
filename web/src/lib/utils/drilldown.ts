@@ -319,16 +319,22 @@ export function windowWords(from: string, to: string): string {
  * A slot is [start, start + step); the daemon's windows are `gte from, lte to`, so the end is the
  * slot end − 1 ms. Edge slots are clipped to the reply's own window, whose slots the daemon counted
  * only inside it. A trailing slot that starts at `reply.to` gives `from == to`, which is valid.
+ * A point with its own exclusive `end` (F4: a local day, 23 or 25 hours long across a daylight-saving
+ * change) ends there instead of at `timestamp + stepMs`.
  */
-export function bucketWindow(points: readonly { timestamp: string }[], i: number, j: number, stepMs: number, reply: DrillWindow): DrillWindow {
+// OLD CODE: export function bucketWindow(points: readonly { timestamp: string }[], i: number, j: number, stepMs: number, reply: DrillWindow): DrillWindow { (F4: a point may carry its end)
+export function bucketWindow(points: readonly { timestamp: string; end?: string }[], i: number, j: number, stepMs: number, reply: DrillWindow): DrillWindow {
 	const from = Math.max(Date.parse(points[Math.min(i, j)].timestamp), Date.parse(reply.from));
-	const to = Math.min(Date.parse(points[Math.max(i, j)].timestamp) + stepMs, Date.parse(reply.to) + 1) - 1;
+	// OLD CODE: const to = Math.min(Date.parse(points[Math.max(i, j)].timestamp) + stepMs, Date.parse(reply.to) + 1) - 1; (F4: a point's own end)
+	const last = points[Math.max(i, j)];
+	const to = Math.min(last.end ? Date.parse(last.end) : Date.parse(last.timestamp) + stepMs, Date.parse(reply.to) + 1) - 1;
 	return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
 }
 
 /** A bandwidth chart's reply, held whole so a pick's indices and its timestamps come from one answer (NET-249). */
 export interface BandwidthChart extends DrillWindow {
-	series: readonly Pick<BandwidthPoint, 'timestamp' | 'download_bytes' | 'upload_bytes' | 'local_bytes'>[];
+	// OLD CODE: series: readonly Pick<BandwidthPoint, 'timestamp' | 'download_bytes' | 'upload_bytes' | 'local_bytes'>[]; (F4: + a day's own end)
+	series: readonly (Pick<BandwidthPoint, 'timestamp' | 'download_bytes' | 'upload_bytes' | 'local_bytes'> & { end?: string })[];
 	/** The bucket the request asked for, in ms. */
 	step: number;
 }
@@ -343,9 +349,17 @@ export function momentHref(chart: BandwidthChart, i: number, j: number, range?: 
 	const sum = (key: 'download_bytes' | 'upload_bytes' | 'local_bytes') => String(picked.reduce((total, p) => total + p[key], 0));
 	const q = new URLSearchParams({ from: win.from, to: win.to });
 	if (range) q.set('range', range);
-	q.set('down', sum('download_bytes'));
-	q.set('up', sum('upload_bytes'));
-	q.set('local', sum('local_bytes'));
+	// OLD CODE START — F4: a day with no figures (NaN, not counted) summed in as NaN or 0, so the moment page said "you clicked 0 B"
+	// q.set('down', sum('download_bytes'));
+	// q.set('up', sum('upload_bytes'));
+	// q.set('local', sum('local_bytes'));
+	// OLD CODE END
+	// the figures clicked, only when every picked point has them: nothing is better than a wrong comparison
+	if (picked.every((p) => Number.isFinite(p.download_bytes) && Number.isFinite(p.upload_bytes) && Number.isFinite(p.local_bytes))) {
+		q.set('down', sum('download_bytes'));
+		q.set('up', sum('upload_bytes'));
+		q.set('local', sum('local_bytes'));
+	}
 	q.set('chart_from', chartWin.from);
 	q.set('chart_to', chartWin.to);
 	return `/moment?${q.toString()}`;

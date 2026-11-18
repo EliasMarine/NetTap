@@ -403,6 +403,57 @@ describe('chart buckets and the windows they open (NET-249)', () => {
 		expect(bucketWindow(points, k + 2, k, 5 * MIN, reply)).toEqual({ from: '2026-11-12T09:05:00.000Z', to: '2026-11-12T09:19:59.999Z' });
 	});
 
+	// F4 (NET-329): the daily chart's points are local days, each with its own exclusive end
+	describe('a point with its own end (local days in America/Los_Angeles)', () => {
+		const DAY = 24 * HOUR;
+		/** Ledger days: each local midnight in UTC, and the next one as the exclusive end */
+		const days = (...starts: string[]) => starts.slice(0, -1).map((timestamp, k) => ({ timestamp, end: starts[k + 1] }));
+
+		it('opens a 23-hour day (clocks forward, 8 March 2026) as exactly its own window', () => {
+			const points = days('2026-03-07T08:00:00.000Z', '2026-03-08T08:00:00.000Z', '2026-03-09T07:00:00.000Z', '2026-03-10T07:00:00.000Z');
+			const reply = { from: points[0].timestamp, to: '2026-03-10T07:00:00.000Z' };
+			const win = bucketWindow(points, 1, 1, DAY, reply);
+			expect(win).toEqual({ from: '2026-03-08T08:00:00.000Z', to: '2026-03-09T06:59:59.999Z' });
+			expect(Date.parse(win.to) + 1 - Date.parse(win.from)).toBe(23 * HOUR);
+			// timestamp + 24 h would have run an hour into 9 March
+			expect(Date.parse(points[1].timestamp) + DAY).toBeGreaterThan(Date.parse(points[1].end));
+		});
+
+		it('opens a 25-hour day (clocks back, 1 November 2026) as exactly its own window', () => {
+			const points = days('2026-10-31T07:00:00.000Z', '2026-11-01T07:00:00.000Z', '2026-11-02T08:00:00.000Z', '2026-11-03T08:00:00.000Z');
+			const reply = { from: points[0].timestamp, to: '2026-11-03T08:00:00.000Z' };
+			const win = bucketWindow(points, 1, 1, DAY, reply);
+			expect(win).toEqual({ from: '2026-11-01T07:00:00.000Z', to: '2026-11-02T07:59:59.999Z' });
+			expect(Date.parse(win.to) + 1 - Date.parse(win.from)).toBe(25 * HOUR);
+		});
+
+		it('a drag across the change runs from the first day\'s start to the last day\'s end, either way round', () => {
+			const points = days('2026-10-31T07:00:00.000Z', '2026-11-01T07:00:00.000Z', '2026-11-02T08:00:00.000Z', '2026-11-03T08:00:00.000Z');
+			const reply = { from: points[0].timestamp, to: '2026-11-03T08:00:00.000Z' };
+			const win = { from: '2026-10-31T07:00:00.000Z', to: '2026-11-03T07:59:59.999Z' };
+			expect(bucketWindow(points, 0, 2, DAY, reply)).toEqual(win);
+			expect(bucketWindow(points, 2, 0, DAY, reply)).toEqual(win);
+			expect(Date.parse(win.to) + 1 - Date.parse(win.from)).toBe(3 * DAY + HOUR);
+		});
+
+		it("clips today at its cutoff, the end of what was counted", () => {
+			const points = days('2026-11-17T08:00:00.000Z', '2026-11-18T08:00:00.000Z', '2026-11-19T08:00:00.000Z');
+			const cutoff = '2026-11-18T20:15:00.000Z';
+			const reply = { from: points[0].timestamp, to: cutoff };
+			expect(bucketWindow(points, 1, 1, DAY, reply)).toEqual({ from: '2026-11-18T08:00:00.000Z', to: cutoff });
+			expect(bucketWindow(points, 0, 1, DAY, reply)).toEqual({ from: '2026-11-17T08:00:00.000Z', to: cutoff });
+			// yesterday is whole
+			expect(bucketWindow(points, 0, 0, DAY, reply)).toEqual({ from: '2026-11-17T08:00:00.000Z', to: '2026-11-18T07:59:59.999Z' });
+		});
+
+		it('points without an end keep timestamp + step, exactly as before', () => {
+			const reply = { from: '2026-11-01T07:00:00.000Z', to: '2026-11-03T08:00:00.000Z' };
+			const plain = [{ timestamp: '2026-11-01T07:00:00.000Z' }, { timestamp: '2026-11-02T07:00:00.000Z' }];
+			expect(bucketWindow(plain, 0, 0, DAY, reply)).toEqual({ from: '2026-11-01T07:00:00.000Z', to: '2026-11-02T06:59:59.999Z' });
+			expect(bucketWindow(plain, 1, 1, DAY, reply)).toEqual({ from: '2026-11-02T07:00:00.000Z', to: '2026-11-03T06:59:59.999Z' });
+		});
+	});
+
 	it("clips the first and last slots to the reply's own window", () => {
 		const reply = { from: '2026-11-11T14:02:00.000Z', to: '2026-11-12T14:02:00.000Z' };
 		const points = slots(reply.from, reply.to, 5 * MIN);
@@ -469,6 +520,21 @@ describe('chart buckets and the windows they open (NET-249)', () => {
 		const outer = { from: 'a', to: 'b' };
 		expect(new URL(momentHref(chart, 0, 0, undefined, outer), 'http://x').searchParams.get('chart_from')).toBe('a');
 		expect(new URL(momentHref(chart, 0, 0), 'http://x').searchParams.has('range')).toBe(false);
+	});
+
+	it('F4: leaves the clicked figures off when a picked point has none (a day not counted), so nothing reads as 0 B', () => {
+		const series = [
+			{ timestamp: '2026-11-01T00:00:00.000Z', download_bytes: 100, upload_bytes: 10, local_bytes: 1 },
+			{ timestamp: '2026-11-02T00:00:00.000Z', download_bytes: Number.NaN, upload_bytes: Number.NaN, local_bytes: Number.NaN },
+		];
+		const chart = { from: series[0].timestamp, to: '2026-11-02T12:00:00.000Z', step: 24 * HOUR, series };
+		const params = (i: number, j: number) => new URL(momentHref(chart, i, j), 'http://x').searchParams;
+		for (const [i, j] of [[1, 1], [0, 1]]) {
+			expect(['down', 'up', 'local'].filter((k) => params(i, j).has(k))).toEqual([]);
+			expect(params(i, j).get('from')).toBe(series[i].timestamp);
+		}
+		// a counted day alone still carries its figures
+		expect(Object.fromEntries(params(0, 0))).toMatchObject({ down: '100', up: '10', local: '1' });
 	});
 
 	it("links a protocol bar to the conn records behind it, with the endpoint's whole predicate", () => {

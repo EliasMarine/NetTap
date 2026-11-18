@@ -524,4 +524,28 @@ describe('AreaChart', () => {
 		expect(container.querySelector('rect.band')).toBeNull();
 		expect(container.querySelector('.tip-bg')).toBeNull();
 	});
+
+	// F4 (NET-329): a day the usage ledger hasn't made final is marked above its point
+	describe('flagged', () => {
+		it('draws one marker above each flagged point, at that point, and none without the prop', () => {
+			const series = [toSeries('down', 1, [1, 2, 3, 4, 5])];
+			const { container } = draw(series, { flagged: (i: number) => i === 1 || i === 3 });
+			const flags = [...container.querySelectorAll('path.flag')];
+			expect(flags).toHaveLength(2);
+			// each sits over its point's x, above the plot (PAD.t is 18)
+			const xs = flags.map((f) => Number(/^M([\d.]+),(\d+)/.exec(f.getAttribute('d') ?? '')?.[1]));
+			const ys = flags.map((f) => Number(/^M[\d.]+,(\d+)/.exec(f.getAttribute('d') ?? '')?.[1]));
+			expect(xs[0]).toBeLessThan(xs[1]);
+			expect(ys.every((y) => y < 18)).toBe(true);
+			noNaN(container);
+			expect(draw(series).container.querySelector('path.flag')).toBeNull();
+		});
+
+		it('flags a point with no value too, inside its "No data" band', () => {
+			const { container } = draw([toSeries('down', 1, [1, Number.NaN, 3])], { gaps: true, flagged: (i: number) => i === 1 });
+			expect(container.querySelectorAll('path.flag')).toHaveLength(1);
+			expect(container.querySelectorAll('rect.nodata')).toHaveLength(1);
+			noNaN(container);
+		});
+	});
 });

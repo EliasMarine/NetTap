@@ -205,6 +205,12 @@ Lane A (F1) does not wait for P1 or P2: it is daemon-only, and its two new label
 
 ### F4: Durable usage ledger (foundation)
 
+- [x] **Done 2026-11-18 (NET-329, `feature/f4-usage-ledger`).** As the slice plan `plans/2026-11-18-f4-usage-ledger.md` (Codex-approved in round 5) changed it:
+  - **One writer.** A single `usage-ledger` job runs every 15 min: the last 3 days, then a saved sweep cursor through the older days. There is no separate nightly job.
+  - **Coverage loss is permanent evidence.** Indices are tracked by UUID. The time zone defaults to UTC until the owner picks one.
+  - **The whole Bandwidth page uses the owner's month,** and `/api/bandwidth/cap` reads the ledger.
+  - **Not done here:** the data-cap warning, the weekly report and Prometheus read the ledger in #6, #1 and #12a.
+
 - **What the owner gets:** monthly usage that never goes down when old raw data is pruned, counted in the owner's own time zone, and an honest "counted since" date when history is incomplete.
 - **Scope:**
   - **Why not count each record once as it arrives:**

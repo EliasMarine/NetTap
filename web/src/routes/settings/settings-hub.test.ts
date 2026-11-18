@@ -158,6 +158,19 @@ describe('Settings hub — unsaved edits', () => {
 		expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
 	}
 
+	// F4 (NET-329): the time zone is saved on NetTap, and an unsaved pick holds the tab like any other edit
+	it('holds a tab switch on an unsaved time zone alone', async () => {
+		resetNavigation('http://localhost/settings?tab=display');
+		stubFetch({ '/api/settings/timezone': () => ({ body: { tz: 'UTC', set: true } }) });
+		render(Page);
+		await flush();
+		await fireEvent.change(screen.getByLabelText('Your time zone'), { target: { value: 'Europe/London' } });
+
+		await fireEvent.click(tab('About'));
+		expect(screen.getByText('You have unsaved changes in Display.')).toBeInTheDocument();
+		expect(panel()).toHaveAttribute('id', 'settings-panel-display');
+	});
+
 	it('holds a tab switch: Keep editing stays, Discard and continue goes', async () => {
 		await openDirtyDisplay();
 

@@ -7,6 +7,7 @@
   picks a range, and the arrow keys (Shift for a range) and Enter do the same from the keyboard.
   With `gaps`, a stretch where no series has a value is a hatched "No data" band whose tooltip says
   why, and the chart is a focusable group too, so the arrow keys can read every point (chart gaps).
+  With `flagged`, an amber triangle above a point marks it as not final; its tooltip and the page say why (F4).
 -->
 <script lang="ts" module>
 	export interface AreaSeries {
@@ -34,6 +35,7 @@
 		bytes = false,
 		gaps = false,
 		onpick,
+		flagged,
 	}: {
 		series: AreaSeries[];
 		formatX?: (t: number | string) => string;
@@ -51,6 +53,8 @@
 		gaps?: boolean;
 		/** Points `from..to` (inclusive indices into `series`) were picked by click, drag or keyboard (NET-249). Without it the chart is a picture. */
 		onpick?: (from: number, to: number) => void;
+		/** Point `i` isn't final (F4: a day not yet counted, or counted with a caveat): a marker above it. */
+		flagged?: (i: number) => boolean;
 	} = $props();
 
 	const PAD = { l: 50, r: 12, t: 18, b: 28 };
@@ -347,6 +351,11 @@
 				<path d={area} fill="url(#{uid}-g{k})" />
 				<path class="line ln-{colour}" d={line} />
 			{/each}
+			{#if flagged}
+				{#each ts as _, i (i)}
+					{#if flagged(i)}<path class="flag" d="M{X(i).toFixed(1)},{PAD.t - 13}l5,9h-10z" />{/if}
+				{/each}
+			{/if}
 			<!-- OLD CODE: {#if hoverIndex !== null} (NET-249: the keyboard's point gets the guide too) -->
 			{#if hoverIndex !== null || focusIndex !== null}
 				{@const gi = (hoverIndex ?? focusIndex)!}
@@ -390,6 +399,8 @@
 	.chart:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-md); }
 	/* chart gaps: the "No data" band's hatching */
 	.hatch { stroke: var(--line); stroke-width: 1.5; }
+	/* F4: a point that isn't final */
+	.flag { fill: var(--sev-medium); }
 	/* NET-226: a third series; system.css colours the gradient and dot of 1 and 2 only */
 	.chart :global(.g-3 stop) { stop-color: var(--data-3); }
 	.chart :global(.dot-3) { fill: var(--data-3); }

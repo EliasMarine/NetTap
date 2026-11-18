@@ -9,7 +9,7 @@ Endpoints:
     GET  /api/bandwidth/daily      Daily usage totals
     GET  /api/bandwidth/devices    Per-device bandwidth breakdown
     GET  /api/bandwidth/heatmap    Hour x day-of-week matrix
-    GET  /api/bandwidth/cap        Configured cap + usage %
+    GET  /api/bandwidth/cap        Configured cap + usage % (this owner-local month, from the usage ledger)
     PUT  /api/settings/bandwidth-cap  Set monthly bandwidth cap
 """
 
@@ -24,10 +24,11 @@ from api.error_replies import public_json
 from api.devices import _accounted_devices, _ip_order
 from api.offload import in_thread
 from api.time_range import parse_time_range, slot_interval
+from api.usage import month_reply
 from services.bandwidth_tracker import (
     MAX_MONTHLY_CAP_BYTES,
     BandwidthTracker,
-    internet_bytes,
+    # OLD CODE: internet_bytes, (F4: handle_cap reads the usage ledger)
 )
 from storage.snapshot_search import QueryFailed
 
@@ -302,25 +303,29 @@ def handle_cap(request: web.Request) -> web.Response:
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     cap = tracker.get_cap()
-    excluded_ips_list = request.app.get("excluded_ips", [])
-
-    # Get current month usage for percentage
-    now = datetime.now(timezone.utc)
-    try:
-        # OLD CODE: usage = tracker.get_monthly_usage(now.year, now.month, excluded_ips=excluded_ips_list)
-        usage = tracker.get_monthly_usage(
-            now.year,
-            now.month,
-            excluded_ips=excluded_ips_list,
-            lan_filter=request.app.get("lan_filter"),
-        )
-    except QueryFailed as exc:
-        return _incomplete("bandwidth/cap", exc)
-    except OpenSearchException as exc:
-        logger.error("OpenSearch error in bandwidth/cap: %s", exc)
-        return web.json_response(
-            {"error": f"OpenSearch query failed: {exc}"}, status=502
-        )
+    # OLD CODE START — F4 (NET-329): the current UTC month recounted from raw records, which
+    # went down when old indices were pruned; the usage ledger's owner-local month now
+    # excluded_ips_list = request.app.get("excluded_ips", [])
+    #
+    # # Get current month usage for percentage
+    # now = datetime.now(timezone.utc)
+    # try:
+    #     # OLD CODE: usage = tracker.get_monthly_usage(now.year, now.month, excluded_ips=excluded_ips_list)
+    #     usage = tracker.get_monthly_usage(
+    #         now.year,
+    #         now.month,
+    #         excluded_ips=excluded_ips_list,
+    #         lan_filter=request.app.get("lan_filter"),
+    #     )
+    # except QueryFailed as exc:
+    #     return _incomplete("bandwidth/cap", exc)
+    # except OpenSearchException as exc:
+    #     logger.error("OpenSearch error in bandwidth/cap: %s", exc)
+    #     return web.json_response(
+    #         {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #     )
+    # OLD CODE END
+    month = month_reply(request.app["usage_ledger"])
 
     # OLD CODE START — NET-226 follow-up: traffic between your own devices counted against the cap
     # cap["current_usage_bytes"] = usage["total_bytes"]
@@ -329,7 +334,13 @@ def handle_cap(request: web.Request) -> web.Response:
     #         usage["total_bytes"] / cap["monthly_cap_bytes"] * 100, 1
     #     )
     # OLD CODE END
-    cap["current_usage_bytes"] = internet_bytes(usage)
+    # OLD CODE: cap["current_usage_bytes"] = internet_bytes(usage) (F4: the ledger's total is upload + download)
+    cap["current_usage_bytes"] = month["bytes"]["total"]
+    cap["tz"], cap["since"], cap["complete"] = (
+        month["tz"],
+        month["since"],
+        month["complete"],
+    )
     if cap["monthly_cap_bytes"] > 0:
         cap["usage_percent"] = round(
             cap["current_usage_bytes"] / cap["monthly_cap_bytes"] * 100, 1

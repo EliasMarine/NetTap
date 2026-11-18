@@ -15,7 +15,7 @@ import os
 from typing import Any
 
 from services.excluded_ips import RFC1918_CIDRS, cidr, lan_subnets_of
-from storage.snapshot_search import QueryFailed, checked
+from storage.snapshot_search import Budget, QueryFailed, checked
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
@@ -195,12 +195,14 @@ def ipv6_by_mac(
     return out
 
 
+# OLD CODE: def gateway_macs(client, filters, lan_filter, candidates, what) (F4: + budget)
 def gateway_macs(
     client,
     filters: list[dict],
     lan_filter: dict | None,
     candidates: list[str],
     what: str,
+    budget: Budget | None = None,
 ) -> set[str] | None:
     """Which `candidates` the LAN sent internet-bound IPv4 frames to in the window; None when
     there are no candidates or the LAN sent no such frame at all (no gateway known).
@@ -209,6 +211,7 @@ def gateway_macs(
     inbound connections start outside the LAN, so a LAN server never is. One existence check
     per MAC (a first match is enough), all in one _msearch: on the G11 over 30 days about
     0.5 s where a terms list of every next hop took 1-1.6 s. QueryFailed if any check fails.
+    With `budget` (an ExactTermsOpenSearch client), the msearch runs inside it (TooSlow once spent).
     """
     if not candidates:
         return None
@@ -235,7 +238,10 @@ def gateway_macs(
                 "query": {"bool": {"filter": [outbound, *extra]}},
             },
         ]
-    replies = client.msearch(body=body).get("responses")
+    # OLD CODE: replies = client.msearch(body=body).get("responses") (F4: + budget)
+    # no budget keyword without one: every other caller's client and mocks stay as they were
+    sized = {} if budget is None else {"budget": budget}
+    replies = client.msearch(body=body, **sized).get("responses")
     if not isinstance(replies, list) or len(replies) != len(checks):
         raise QueryFailed(f"{what}: malformed next-hop reply")
     if any("error" in r for r in replies if isinstance(r, dict)):
@@ -420,11 +426,18 @@ def _pair_macs(buckets: list[dict]) -> list[str]:
     return sorted(macs)
 
 
+# OLD CODE: def gateways_if_needed(client, buckets, filters, lan_filter, what) (F4: + budget)
 def gateways_if_needed(
-    client, buckets: list[dict], filters: list[dict], lan_filter: dict | None, what: str
+    client,
+    buckets: list[dict],
+    filters: list[dict],
+    lan_filter: dict | None,
+    what: str,
+    budget: Budget | None = None,
 ) -> set[str] | None:
     """gateway_macs() over the MACs of the buckets' global IPv6 pairs; None when there are none."""
-    return gateway_macs(client, filters, lan_filter, _pair_macs(buckets), what)
+    # OLD CODE: return gateway_macs(client, filters, lan_filter, _pair_macs(buckets), what)
+    return gateway_macs(client, filters, lan_filter, _pair_macs(buckets), what, budget)
 
 
 def split_direction(
