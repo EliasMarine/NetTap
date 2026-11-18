@@ -148,6 +148,74 @@ def test_a_failing_channel_keeps_its_events_and_never_gives_up(h):
     assert msg[1] == "New device: Acme"
 
 
+def test_a_refused_event_past_the_back_off_retries_hourly_not_every_15_minutes(h):
+    h.refuse = {h.all}  # a wrong password: each try counts against the account
+    h.device(1)
+    minute = 1
+    for _ in range(4):  # the alerts' back-off: 1, 5, 15 minutes
+        h.poll(minute)
+        minute += 16
+    tries = len(h.sent_to(h.all))
+    h.poll(minute + 16)  # past 15 minutes, before the hour
+    assert len(h.sent_to(h.all)) == tries
+    h.poll(minute + 61)
+    assert len(h.sent_to(h.all)) == tries + 1
+    assert h.dispatcher._events["channels"][h.all]["events"]  # still queued, not lost
+
+
+def test_a_journal_that_restarts_its_numbering_is_read_again(h):
+    for n in range(3):
+        h.device(n)
+    h.poll(1)
+    assert h.events_state()["journal_seq"] == 3
+    (h.tmp / "events.jsonl").unlink()  # deleted by hand: numbering restarts at 1
+    h.restart()
+    h.take()
+    h.device(9)
+    h.poll(2)
+    assert [s[1] for s in h.sent_to(h.all)] == ["New device: Acme"]
+    assert h.events_state()["journal_seq"] == 1
+
+
+def test_past_the_daily_budget_events_wait_for_the_hourly_digest(h):
+    with patch.object(nd, "DAILY_BUDGET", 1):
+        h.device(1)
+        h.poll(1)  # the day's one message
+        h.device(2)
+        h.poll(2)
+        h.poll(30)
+        assert len(h.sent_to(h.all)) == 1
+        assert "and 1 other event waiting" in h.hub.last_delivery(h.all)["error"]
+        h.poll(61)  # an hour after the last message
+    sends = h.sent_to(h.all)
+    assert len(sends) == 2
+    assert "AA:BB:CC:00:00:02" in sends[-1][2]
+
+
+def test_queued_events_never_push_alerts_out_of_the_pending_cap(h):
+    h.fail = {h.all}
+    for n in range(20):
+        h.device(n)
+    h.groups = [group(1000 + n, 4, 0.5) for n in range(nd.MAX_PENDING)]
+    h.poll(1)
+    assert len(h.dispatcher._state["channels"][h.all]["pending"]) == nd.MAX_PENDING
+    assert len(h.dispatcher._events["channels"][h.all]["events"]) == 20
+
+
+def test_the_compact_job_keeps_what_the_dispatcher_has_not_saved_as_taken(h):
+    path = h.tmp / "events.jsonl"
+    h.journal = EventJournal(
+        str(path), keep_days=0
+    )  # every line is past its keep period
+    h.dispatcher = h.new_dispatcher()
+    h.device(1)
+    h.poll(1)  # taken and saved
+    h.device(2)
+    h.device(3)  # not taken yet
+    assert h.dispatcher.compact_journal(0.0) == {"dropped": 1}
+    assert [json.loads(line)["seq"] for line in path.read_text().splitlines()] == [2, 3]
+
+
 def test_overflow_past_the_queue_cap_is_counted_and_reported(h):
     h.fail = {h.all}
     for n in range(600):

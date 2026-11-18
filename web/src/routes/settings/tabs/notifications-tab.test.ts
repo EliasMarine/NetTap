@@ -220,6 +220,29 @@ describe('Notification settings delivery results', () => {
 		}
 	});
 
+	it('creates a new-device rule at All (4), the only minimum its medium events fire at, and hides the severity field', async () => {
+		const fn = vi.fn(async (url: string, init?: RequestInit) => {
+			if (url === '/api/notifications/rules' && init?.method === 'POST') {
+				return { ok: true, status: 201, json: async () => ({ id: 'r1', ...JSON.parse(String(init.body)) }) };
+			}
+			const body = LISTS[url];
+			return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 500, json: async () => ({}) };
+		});
+		vi.stubGlobal('fetch', fn);
+		render(Page);
+		await screen.findByText('Home Discord');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+		expect(screen.getByLabelText('Minimum severity')).toBeInTheDocument();
+		await fireEvent.change(screen.getByLabelText('Event type'), { target: { value: 'new_device' } });
+		expect(screen.queryByLabelText('Minimum severity')).not.toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('checkbox', { name: /Home Discord/ }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Create rule' }));
+
+		const post = fn.mock.calls.find(([url, init]) => url === '/api/notifications/rules' && init?.method === 'POST');
+		expect(JSON.parse(String(post?.[1]?.body))).toEqual({ event_type: 'new_device', channels: ['ch1'], min_severity: 4 });
+	});
+
 	it('marks a rule that is off, and only that one (NET-319)', async () => {
 		const rule = { channels: ['ch1'], min_severity: 4, created_at: '2026-11-18T10:00:00Z' };
 		stubFetch({
@@ -244,6 +267,7 @@ describe('Notification settings delivery results', () => {
 // NET-319: the daemon's background checks, with Run now
 describe('Notification settings background checks', () => {
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.unstubAllGlobals();
 	});
 
@@ -321,50 +345,123 @@ describe('Notification settings background checks', () => {
 		expect(within(result('New check')).getByText('Never')).toBeInTheDocument();
 		expect(within(result('New check')).getByText('—')).toBeInTheDocument();
 		// a running check can't be started again
-		expect(within(result('Busy check')).getByRole('button', { name: 'Run now' })).toBeDisabled();
-		expect(within(result('Partial check')).getByRole('button', { name: 'Run now' })).toBeEnabled();
+		// OLD CODE: { name: 'Run now' } (each row's button is named after its check now)
+		expect(within(result('Busy check')).getByRole('button', { name: 'Run now: Busy check' })).toBeDisabled();
+		expect(within(result('Partial check')).getByRole('button', { name: 'Run now: Partial check' })).toBeEnabled();
 	});
 
+	// OLD CODE START — only checked aria-sort, never the rows' order
+	// it('sorts on every column, both ways', async () => {
+	// 	stubJobs([[job(), job({ name: 'b', label: 'Another check', last_duration_ms: 5 })]]);
+	// 	render(Page);
+	// 	await screen.findByText('Another check');
+	//
+	// 	for (const label of ['Check', 'Last run', 'Took', 'Result', 'Skipped overlaps', 'Action']) {
+	// 		const header = within(table()).getByRole('button', { name: label });
+	// 		await fireEvent.click(header);
+	// 		expect(header.closest('th')).toHaveAttribute('aria-sort', 'descending');
+	// 		await fireEvent.click(header);
+	// 		expect(header.closest('th')).toHaveAttribute('aria-sort', 'ascending');
+	// 	}
+	// });
+	// OLD CODE END
 	it('sorts on every column, both ways', async () => {
-		stubJobs([[job(), job({ name: 'b', label: 'Another check', last_duration_ms: 5 })]]);
+		// the slower check ran longer ago, so Took and Last run order the rows oppositely
+		const older = job();
+		const newer = job({ name: 'b', label: 'Another check', last_duration_ms: 5, last_run: new Date(Date.now() - 10 * 60_000).toISOString() });
+		stubJobs([[older, newer]]);
 		render(Page);
 		await screen.findByText('Another check');
+		const order = () => within(table()).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent?.trim());
+		const expected: Record<string, [string[], string[]]> = {
+			Took: [['Event journal clean-up', 'Another check'], ['Another check', 'Event journal clean-up']],
+			'Last run': [['Another check', 'Event journal clean-up'], ['Event journal clean-up', 'Another check']],
+		};
 
 		for (const label of ['Check', 'Last run', 'Took', 'Result', 'Skipped overlaps', 'Action']) {
 			const header = within(table()).getByRole('button', { name: label });
 			await fireEvent.click(header);
 			expect(header.closest('th')).toHaveAttribute('aria-sort', 'descending');
+			if (expected[label]) expect(order()).toEqual(expected[label][0]);
 			await fireEvent.click(header);
 			expect(header.closest('th')).toHaveAttribute('aria-sort', 'ascending');
+			if (expected[label]) expect(order()).toEqual(expected[label][1]);
 		}
 	});
 
-	it('Run now starts the check, says so, and reloads the list', async () => {
-		const fn = stubJobs([[job()], [job({ running: true, running_for_s: 1 })]], {
+	// OLD CODE START — a 202 only queues the run; the message said "started" and the list was read once
+	// it('Run now starts the check, says so, and reloads the list', async () => {
+	// 	const fn = stubJobs([[job()], [job({ running: true, running_for_s: 1 })]], {
+	// 		status: 202,
+	// 		body: { accepted: true, name: 'journal-compact' },
+	// 	});
+	// 	render(Page);
+	// 	await screen.findByText('OK');
+	//
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Run now' }));
+	//
+	// 	expect(await screen.findByText('Running…')).toBeInTheDocument();
+	// 	expect(screen.getByRole('status')).toHaveTextContent('"Event journal clean-up" started.');
+	// 	expect(fn.mock.calls.filter(([url]) => url === '/api/jobs/journal-compact/run')).toHaveLength(1);
+	// 	expect(fn.mock.calls.filter(([url]) => url === '/api/jobs')).toHaveLength(2);
+	// });
+	// OLD CODE END
+	it('Run now asks for the check, says so, and keeps looking until the queued run starts', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		// the reload right after the 202 still shows it idle: the scheduler hasn't started it yet
+		const fn = stubJobs([[job()], [job()], [job({ running: true, running_for_s: 1 })]], {
 			status: 202,
 			body: { accepted: true, name: 'journal-compact' },
 		});
 		render(Page);
 		await screen.findByText('OK');
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Run now' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Run now: Event journal clean-up' }));
 
-		expect(await screen.findByText('Running…')).toBeInTheDocument();
-		expect(screen.getByRole('status')).toHaveTextContent('"Event journal clean-up" started.');
+		expect(await screen.findByRole('status')).toHaveTextContent(
+			'Asked NetTap to run "Event journal clean-up". Its result shows under Background checks when it finishes.',
+		);
 		expect(fn.mock.calls.filter(([url]) => url === '/api/jobs/journal-compact/run')).toHaveLength(1);
 		expect(fn.mock.calls.filter(([url]) => url === '/api/jobs')).toHaveLength(2);
+
+		await vi.advanceTimersByTimeAsync(3_000);
+		expect(await screen.findByText('Running…')).toBeInTheDocument();
+		expect(fn.mock.calls.filter(([url]) => url === '/api/jobs')).toHaveLength(3);
 	});
 
-	it('Run now says why when the check is already running (409)', async () => {
-		stubJobs([[job()]], { status: 409, body: { error: 'journal-compact is already running' } });
+	it('reads a running check again every 3 s until it finishes, then stops', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const fn = stubJobs([[job({ running: true, running_for_s: 1 })], [job({ running: true, running_for_s: 4 })], [job()]]);
+		const reads = () => fn.mock.calls.filter(([url]) => url === '/api/jobs').length;
+		render(Page);
+		await screen.findByText('Running…');
+		expect(reads()).toBe(1);
+
+		await vi.advanceTimersByTimeAsync(3_000);
+		expect(reads()).toBe(2);
+		expect(screen.getByText('Running…')).toBeInTheDocument();
+
+		await vi.advanceTimersByTimeAsync(3_000);
+		expect(await screen.findByText('OK')).toBeInTheDocument();
+		expect(reads()).toBe(3);
+
+		// finished: the polling stops
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(reads()).toBe(3);
+	});
+
+	// OLD CODE: one 409 test, with a made-up reason after a colon (the daemon's reasons are capitalised sentences)
+	it.each([
+		[409, 'That check is already running'],
+		[404, 'No background check has that name'],
+	])('Run now says why the daemon refused it (%i)', async (status, error) => {
+		stubJobs([[job()]], { status, body: { error } });
 		render(Page);
 		await screen.findByText('OK');
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Run now' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Run now: Event journal clean-up' }));
 
-		expect(await screen.findByRole('alert')).toHaveTextContent(
-			'Couldn\'t start "Event journal clean-up": journal-compact is already running.',
-		);
+		expect(await screen.findByRole('alert')).toHaveTextContent(`Couldn't start "Event journal clean-up". ${error}.`);
 	});
 
 	it('keeps the last list when a refresh of the checks fails', async () => {

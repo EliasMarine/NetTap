@@ -342,6 +342,16 @@ class AlertDispatcher:
         seq = self._events["journal_seq"]
         if self._journal is None:
             return queues, seq
+        if self._journal.last_seq < seq:
+            # the journal restarted its numbering (deleted or unreadable): `seq > N` would skip
+            # the next N events, so read it from the start, a day back, as after a lost state
+            logger.warning(
+                "Notification events: the journal ends at %d, before the saved %d; re-reading it",
+                self._journal.last_seq,
+                seq,
+            )
+            seq = 0
+            self._replay_floor = now - REPLAY
         try:
             entries = await asyncio.to_thread(self._journal.after, seq, INTAKE)
         except OSError as exc:
@@ -370,6 +380,13 @@ class AlertDispatcher:
         return queues, entries[-1]["seq"] if entries else seq
 
     # --- one poll ----------------------------------------------------------
+
+    def compact_journal(self, _deadline: float) -> dict:
+        """The journal-compact job: drops only what this dispatcher has saved as taken."""
+        if self._journal is None:
+            return {"dropped": 0}
+        dropped = self._journal.compact(datetime.now(timezone.utc), self.committed_seq)
+        return {"dropped": dropped}
 
     def _routed(self, severity: int) -> set[str]:
         return set(self._hub.channels_for("alert", severity))
@@ -704,7 +721,18 @@ class AlertDispatcher:
         paces = [min(i["attempts"], len(RETRY_AFTER)) for i in [*kept, *tried_events]]
         delay = RETRY_AFTER[min(paces) - 1] if paces else None
         # past the budget a refusal waits for the hourly slot, like a digest
-        if outcome == "refused" and today["sent"] >= DAILY_BUDGET:
+        # OLD CODE: if outcome == "refused" and today["sent"] >= DAILY_BUDGET:
+        # (NET-319 review: events never give up, so a wrong password would be tried every 15
+        # minutes for ever, under the budget; once only events past the back-off are left, a
+        # refusal waits for the hourly slot too)
+        events_only_past_backoff = (
+            not kept
+            and tried_events
+            and all(e["attempts"] > len(RETRY_AFTER) for e in tried_events)
+        )
+        if outcome == "refused" and (
+            today["sent"] >= DAILY_BUDGET or events_only_past_backoff
+        ):
             retry = _next_digest_at(now)
         else:
             retry = now + delay if delay else None

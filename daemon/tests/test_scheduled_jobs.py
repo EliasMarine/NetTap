@@ -1,10 +1,12 @@
 """The background job runner's contract (NET-319)."""
 
 import asyncio
+import contextlib
 import json
 import threading
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -213,5 +215,36 @@ def test_jobs_api(tmp_path):
             assert "<script>" not in await resp.text()
             release.set()
             await _settle(s, "journal-compact")
+
+    asyncio.run(go())
+
+
+def test_a_requested_run_starts_at_once_not_at_the_next_tick(tmp_path):
+    async def go() -> None:
+        ran = threading.Event()
+        s = _sched(tmp_path, [Job("a", "A", 86400, 30, lambda _d: ran.set())], Clock())
+        runner = s.ctx(web.Application())
+        await (
+            runner.__anext__()
+        )  # the background task is up; its first tick is 30 s away
+        try:
+            assert s.request_run("a") == "accepted"
+            assert await asyncio.to_thread(ran.wait, 5)
+            await _settle(s, "a")
+            assert s.view()[0]["last_run"] == T0.isoformat()
+        finally:
+            with contextlib.suppress(StopAsyncIteration):
+                await runner.__anext__()
+
+    asyncio.run(go())
+
+
+def test_a_job_that_cannot_get_a_thread_does_not_keep_its_slot(tmp_path):
+    async def go() -> None:
+        s = _sched(tmp_path, [Job("a", "A", 60, 30, lambda _d: None)], Clock())
+        s._executor.shutdown()  # refuses new work, as when no thread can be started
+        with pytest.raises(RuntimeError):
+            s.tick()
+        assert s.request_run("a") == "accepted"  # not "running" until a restart
 
     asyncio.run(go())

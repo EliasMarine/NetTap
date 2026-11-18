@@ -1441,12 +1441,15 @@ def create_app(
                 "Event journal clean-up",
                 every_s=86400,
                 deadline_s=60,
+                # OLD CODE START — NET-319 review: the cursor was passed here, untested
+                # run=lambda _deadline: {
+                #     "dropped": event_journal.compact(
+                #         datetime.now(timezone.utc), alert_dispatcher.committed_seq
+                #     )
+                # },
+                # OLD CODE END
                 # keeps every event the dispatcher hasn't saved as taken
-                run=lambda _deadline: {
-                    "dropped": event_journal.compact(
-                        datetime.now(timezone.utc), alert_dispatcher.committed_seq
-                    )
-                },
+                run=alert_dispatcher.compact_journal,
             )
         ]
     )

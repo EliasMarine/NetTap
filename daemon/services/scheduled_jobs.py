@@ -138,8 +138,8 @@ class Scheduler:
             if not self._due(job, now):
                 continue
             if job.name in self._running:
-                # due is measured from the last finished run: an overlap is only once this run
-                # has gone a whole interval
+                # due is measured from the start of the last finished run: an overlap is only
+                # once this run has gone a whole interval
                 if self._monotonic() - self._running[job.name] < job.every_s:
                     continue
                 entry = self._state.get(job.name, {})
@@ -159,12 +159,18 @@ class Scheduler:
 
     def _start(self, job: Job, now: datetime) -> None:
         begun = self._monotonic()
-        self._running = {**self._running, job.name: begun}
-        self._requested = self._requested - {job.name}
         rss_before = _status_mb("VmRSS")
+        # OLD CODE START — NET-319 review: a submit that raised (no thread to start) left the
+        # slot taken for ever, so the job answered 409 until a restart
+        # self._running = {**self._running, job.name: begun}
+        # self._requested = self._requested - {job.name}
+        # OLD CODE END
         future = asyncio.get_running_loop().run_in_executor(
             self._executor, job.run, begun + job.deadline_s
         )
+        # the done-callback runs on a later loop turn, so the slot is taken before it frees it
+        self._running = {**self._running, job.name: begun}
+        self._requested = self._requested - {job.name}
         future.add_done_callback(lambda f: self._finish(job, f, now, begun, rss_before))
 
     def _finish(

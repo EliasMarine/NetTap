@@ -61,7 +61,21 @@
 - `/ponytail-review` found two things, both fixed:
   1. **Skipped runs were counted wrongly.** The runner counted a skipped overlap on every tick of a run that started because it was due, since "due" is measured from the last finished run. Now a skip counts only after the run has lasted a whole interval.
   2. **An unused `SENT_EVENTS` constant.** Deleted.
-- The two-angle review runs on the PR.
+- The two-angle review on PR #336 (security engineer, Python reviewer and TypeScript reviewer) found nothing critical, high or medium. Everything below was fixed in the second commit:
+  - **A wrong password was retried every 15 minutes forever** (security, LOW). Events never give up, and 96 retries a day stay under the 100-message budget. Now a refused send, once only events past the back-off are left, waits for the hourly slot.
+  - **A journal that restarts its numbering silently skipped events** (security LOW / Python). This happens when `events.jsonl` is deleted or unreadable while the dispatcher has saved seq N. `_take_events` now re-reads it from the start, a day back.
+  - **The compaction cursor was wired in an untested lambda** in `server.py`. The job is now `AlertDispatcher.compact_journal`, and it is tested.
+  - **A slot leaked when no thread could start.** It is now taken only after the executor accepts the job.
+  - **Missing tests** for:
+    - events under the daily budget;
+    - events not pushing alerts out of the pending cap;
+    - the runner task waking on Run now.
+  - **Web:**
+    - A New device rule saved with a stricter severity never fired. The form now hides the severity field for it and sends 4.
+    - Run now refreshed only once. It now keeps refreshing while a check runs, and for 30 s after a 202.
+    - Each Run now button has its own accessible name, "Run now: <check>".
+    - The sort test now checks row order.
+- Accepted, not changed: a LAN device inventing MAC addresses can use up the shared daily budget (security, LOW). This follows the approved design ("same limits as alerts"), and critical alerts still go out in the hourly digest, worst first.
 
 ## Lessons
 

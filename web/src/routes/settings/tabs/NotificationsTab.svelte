@@ -201,6 +201,9 @@
 	// const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert');
 	// OLD CODE END
 	const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert' || e.value === 'new_device');
+	// The daemon sends new-device events at medium (3) and a rule fires only at or below its minimum, so a
+	// new-device rule takes 4 (All), as the daemon's own quick rule does; the form doesn't offer the choice
+	const NEW_DEVICE_MIN_SEVERITY = 4;
 
 	// OLD CODE START — the page refresh contract (PLAN §5.5): every load goes through refresh.run()
 	// // Load data on mount
@@ -337,7 +340,9 @@
 	// Rule actions
 	async function handleAddRule() {
 		addingRule = true;
-		const result = await createRule(newRuleEventType, newRuleChannels, newRuleSeverity);
+		// OLD CODE: const result = await createRule(newRuleEventType, newRuleChannels, newRuleSeverity); (a new-device rule at 1–3 never fired)
+		const minSeverity = newRuleEventType === 'new_device' ? NEW_DEVICE_MIN_SEVERITY : newRuleSeverity;
+		const result = await createRule(newRuleEventType, newRuleChannels, minSeverity);
 		// OLD CODE: if (result) { … } else { showMessage('Failed to create rule.', 'error'); } (NET-224: no reason)
 		if (result.ok) {
 			showMessage('Routing rule created.', 'success');
@@ -364,13 +369,38 @@
 	// NET-319: the daemon queues the run (202) or says why not (409 running, 404 unknown); the list then shows its state
 	async function handleRunJob(job: JobState) {
 		const result = await runJob(job.name);
+		// OLD CODE START — a 202 only queues the run, and the daemon's reason is a capitalised sentence
+		// if (result.ok) {
+		// 	showMessage(`"${job.label}" started. Its result shows under Background checks when it finishes.`, 'success');
+		// } else {
+		// 	showMessage(`Couldn't start "${job.label}": ${result.error}.`, 'error');
+		// }
+		// OLD CODE END
 		if (result.ok) {
-			showMessage(`"${job.label}" started. Its result shows under Background checks when it finishes.`, 'success');
+			queuedPolls = QUEUED_POLLS;
+			showMessage(`Asked NetTap to run "${job.label}". Its result shows under Background checks when it finishes.`, 'success');
 		} else {
-			showMessage(`Couldn't start "${job.label}": ${result.error}.`, 'error');
+			// the client's own fallback ("couldn't reach NetTap") is lower case
+			const reason = result.error.charAt(0).toUpperCase() + result.error.slice(1);
+			showMessage(`Couldn't start "${job.label}". ${reason}.`, 'error');
 		}
 		await refresh.run();
 	}
+
+	// Keep the list fresh while a check runs, and for one scheduler tick (30 s) after a 202 so a
+	// queued run is seen starting. runIfIdle: a slow load isn't cancelled by the next tick.
+	const JOB_POLL_MS = 3_000;
+	const QUEUED_POLLS = 10;
+	let queuedPolls = $state(0);
+	const watchingJobs = $derived(queuedPolls > 0 || jobs.some((j) => j.running));
+	$effect(() => {
+		if (!watchingJobs) return;
+		const poll = setInterval(() => {
+			if (queuedPolls > 0) queuedPolls--;
+			void refresh.runIfIdle();
+		}, JOB_POLL_MS);
+		return () => clearInterval(poll);
+	});
 
 	/** What a check's last run came to, or that it is running now; `tone` is the .res class. */
 	function jobResult(job: JobState): { text: string; tone: string } {
@@ -444,7 +474,8 @@
 	<span class={['res', result.tone]}>{result.text}</span>
 {/snippet}
 {#snippet runCell(job: JobState)}
-	<button class="btn" type="button" onclick={() => serial(() => handleRunJob(job))} disabled={locked || job.running}>Run now</button>
+	<!-- OLD CODE: no aria-label, so every row's button was named "Run now" -->
+	<button class="btn" type="button" aria-label={`Run now: ${job.label}`} onclick={() => serial(() => handleRunJob(job))} disabled={locked || job.running}>Run now</button>
 {/snippet}
 
 <!-- OLD CODE START — NET-273: a tab of Settings now; the page's title, heading and intro line say it
@@ -581,15 +612,18 @@ OLD CODE END -->
 							{/each}
 						</select>
 					</div>
-					<div class="field">
-						<label class="label" for="rule-severity">Minimum severity</label>
-						<select class="select" id="rule-severity" bind:value={newRuleSeverity}>
-							<option value={1}>Critical only</option>
-							<option value={2}>High and above</option>
-							<option value={3}>Medium and above</option>
-							<option value={4}>All (including low)</option>
-						</select>
-					</div>
+					<!-- OLD CODE: the severity field showed for every event type (a new-device rule always takes NEW_DEVICE_MIN_SEVERITY) -->
+					{#if newRuleEventType !== 'new_device'}
+						<div class="field">
+							<label class="label" for="rule-severity">Minimum severity</label>
+							<select class="select" id="rule-severity" bind:value={newRuleSeverity}>
+								<option value={1}>Critical only</option>
+								<option value={2}>High and above</option>
+								<option value={3}>Medium and above</option>
+								<option value={4}>All (including low)</option>
+							</select>
+						</div>
+					{/if}
 				</div>
 				<fieldset class="field channel-picks">
 					<legend class="label">Send to channels</legend>
