@@ -116,7 +116,30 @@
 6. The ledger file's size, start date and gaps.
 7. The daemon's settled memory.
 
-Results are recorded below after the run.
+### G11 results, 2026-11-18
+
+PR #337 was merged as `476f4c1d`. The script ran twice: first from `main`, then from `fix/f4-deploy-measurements` with corrected measurements.
+
+- **The recount:** a forced full sweep of every stored day finished in one run, in 1 chunk, with 0 failed chunks. The G11 holds 6 days: `since` is 2026-11-13, with no gaps.
+- **Agreement with raw data:** yesterday (2026-11-17, UTC) reads 120,291,776,434 bytes in the ledger and 120,291,776,434 in a fresh raw count. Both runs matched exactly.
+- **Stability:** a repeat run, a daemon restart and another run changed no total in the 4 days compared.
+- **Ledger file:** 2,479 bytes for 6 days.
+- **Swap:** 3,537 MB before, 3,540 MB peak during the sweep.
+- **API latency:** `/api/bandwidth/daily` stayed at 692 ms, with no rise.
+- **OpenSearch:** its heap is capped at `-Xms3g -Xmx3g`.
+  - The first run's ✗ ("4,231 → 4,601 MB") came from `docker stats`, which counts active file cache: the index pages the sweep had just read, which the kernel can reclaim.
+  - The cgroup's anonymous memory was 3,869 MB right after the sweep and 3,868 MB later.
+  - On the second run, the docker stats figure didn't move during the sweep (4,689 → 4,689 MB).
+- **Daemon:** 364 MB once settled, after 3 minutes of uptime, the same as F1's settled 364 MiB. So F4 adds no measurable daemon memory.
+  - Both runs showed a ✗ at about 1.2 GB. Step 9 measured the daemon right after step 8 restarted it, during the start-up peak, which F1 also recorded (VmHWM 1.21 GB).
+  - The first run's "before" figure of 6 MB was the script's own `sh -c`. The daemon shares the host's PID namespace.
+- **Script fixes (`fix/f4-deploy-measurements`):**
+  - the daemon is read through `docker top`;
+  - OpenSearch is judged on its cgroup's `anon` memory;
+  - a fresh daemon is read only after 5 minutes of uptime.
+
+  Each probe was checked on the G11. The 5-minute wait has not yet run inside a full deploy.
+- **Running a branch:** to deploy one, check it out on the device first, as in `git checkout <branch> && git pull`. The second run let the script pull itself mid-run, so step 1 ran the old version of its functions.
 
 ## Lessons
 

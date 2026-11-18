@@ -58,8 +58,18 @@ daemon_rss_mb() {  # the daemon process's resident memory, in MB (not docker sta
     sudo docker top nettap-storage-daemon -o pid,rss,args 2>/dev/null | awk '$3 ~ /python/ && / main\.py/ { if ($2 > m) m = $2 } END { printf "%d", m / 1024 }'
 }
 
+daemon_uptime_s() {
+    local started
+    started=$(sudo docker inspect -f '{{.State.StartedAt}}' nettap-storage-daemon 2>/dev/null)
+    echo $(( $(date +%s) - $(date -d "$started" +%s 2>/dev/null || date +%s) ))
+}
+
 settled_rss_mb() {  # wait until VmRSS moves under 10% across a minute (at most 5 minutes)
     local prev now i
+    # Start-up holds about 1.2 GB for its first minutes (F1 and F4 deploys), steady across a
+    # minute, so a fresh daemon is read only once it has run 5 minutes.
+    # OLD CODE: no wait (step 9 read 1,202 MB right after step 8's restart; 364 MB at 3 min)
+    while [ "$(daemon_uptime_s)" -lt 300 ]; do sleep 15; done
     prev=$(daemon_rss_mb)
     for i in 1 2 3 4 5; do
         sleep 60
