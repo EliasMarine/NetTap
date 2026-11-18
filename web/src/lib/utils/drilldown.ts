@@ -319,16 +319,22 @@ export function windowWords(from: string, to: string): string {
  * A slot is [start, start + step); the daemon's windows are `gte from, lte to`, so the end is the
  * slot end − 1 ms. Edge slots are clipped to the reply's own window, whose slots the daemon counted
  * only inside it. A trailing slot that starts at `reply.to` gives `from == to`, which is valid.
+ * A point with its own exclusive `end` (F4: a local day, 23 or 25 hours long across a daylight-saving
+ * change) ends there instead of at `timestamp + stepMs`.
  */
-export function bucketWindow(points: readonly { timestamp: string }[], i: number, j: number, stepMs: number, reply: DrillWindow): DrillWindow {
+// OLD CODE: export function bucketWindow(points: readonly { timestamp: string }[], i: number, j: number, stepMs: number, reply: DrillWindow): DrillWindow { (F4: a point may carry its end)
+export function bucketWindow(points: readonly { timestamp: string; end?: string }[], i: number, j: number, stepMs: number, reply: DrillWindow): DrillWindow {
 	const from = Math.max(Date.parse(points[Math.min(i, j)].timestamp), Date.parse(reply.from));
-	const to = Math.min(Date.parse(points[Math.max(i, j)].timestamp) + stepMs, Date.parse(reply.to) + 1) - 1;
+	// OLD CODE: const to = Math.min(Date.parse(points[Math.max(i, j)].timestamp) + stepMs, Date.parse(reply.to) + 1) - 1; (F4: a point's own end)
+	const last = points[Math.max(i, j)];
+	const to = Math.min(last.end ? Date.parse(last.end) : Date.parse(last.timestamp) + stepMs, Date.parse(reply.to) + 1) - 1;
 	return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
 }
 
 /** A bandwidth chart's reply, held whole so a pick's indices and its timestamps come from one answer (NET-249). */
 export interface BandwidthChart extends DrillWindow {
-	series: readonly Pick<BandwidthPoint, 'timestamp' | 'download_bytes' | 'upload_bytes' | 'local_bytes'>[];
+	// OLD CODE: series: readonly Pick<BandwidthPoint, 'timestamp' | 'download_bytes' | 'upload_bytes' | 'local_bytes'>[]; (F4: + a day's own end)
+	series: readonly (Pick<BandwidthPoint, 'timestamp' | 'download_bytes' | 'upload_bytes' | 'local_bytes'> & { end?: string })[];
 	/** The bucket the request asked for, in ms. */
 	step: number;
 }

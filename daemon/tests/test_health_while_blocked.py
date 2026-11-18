@@ -278,7 +278,8 @@ _ROUTES = [
     ("GET", "/api/bandwidth/daily", {}),
     ("GET", "/api/bandwidth/devices", {}),
     ("GET", "/api/bandwidth/heatmap", {}),
-    ("GET", "/api/bandwidth/cap", {}),
+    # OLD CODE: ("GET", "/api/bandwidth/cap", {}), (F4: it reads the usage ledger's snapshot,
+    # never OpenSearch, so it has no blocking step)
     ("GET", "/api/mac/randomized", {}),
     ("GET", "/api/mac/fingerprint/aa:bb:cc:dd:ee:ff", {}),
     ("GET", "/api/mac/merge-suggestions", {}),

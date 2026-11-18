@@ -54,7 +54,8 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
 	{
 		label: 'General',
 		tabs: [
-			{ id: 'display', label: 'Display', intro: 'The theme, the time range pages open on and the Live map, saved in this browser.' },
+			// OLD CODE: { id: 'display', label: 'Display', intro: 'The theme, the time range pages open on and the Live map, saved in this browser.' }, (F4: + the time zone, saved on NetTap)
+			{ id: 'display', label: 'Display', intro: 'The theme, the time range pages open on and the Live map, saved in this browser, and the time zone NetTap counts your usage in.' },
 			{ id: 'about', label: 'About', intro: 'The NetTap version and uptime of this appliance.' },
 		],
 	},

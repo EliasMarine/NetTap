@@ -497,7 +497,9 @@ class TestBandwidthApiQueryFailure(AioHTTPTestCase):
         return app
 
     async def test_every_reader_answers_502(self):
-        for path in ("monthly", "daily", "devices", "heatmap", "cap"):
+        # OLD CODE: for path in ("monthly", "daily", "devices", "heatmap", "cap"):
+        # (F4: the cap reads the usage ledger, never OpenSearch; test_usage_api.py covers it)
+        for path in ("monthly", "daily", "devices", "heatmap"):
             resp = await self.client.request("GET", f"/api/bandwidth/{path}")
             self.assertEqual(resp.status, 502, path)
             self.assertIn("error", await resp.json())
@@ -613,6 +615,153 @@ class TestHeatmapScriptsAndTimeZone(AioHTTPTestCase):
             self.assertEqual(resp.status, 400, tz)
             self.assertIn("error", await resp.json())
         self.mock_client.search.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# F4 (NET-329): usage_for_ranges, the usage ledger's recount
+# ---------------------------------------------------------------------------
+
+_RANGES = [
+    ("2026-11-17", "2026-11-17T08:00:00Z", "2026-11-18T08:00:00Z"),
+    ("2026-11-18", "2026-11-18T08:00:00Z", "2026-11-18T20:00:00Z"),
+]
+
+
+def _tracker() -> BandwidthTracker:
+    with patch("services.bandwidth_tracker._CAP_FILE", "/nonexistent/path"):
+        return BandwidthTracker()
+
+
+def test_usage_for_ranges_sends_one_date_range_search_inside_the_budget():
+    from storage.snapshot_search import Budget
+
+    client = MagicMock()
+    client.search.return_value = {
+        "_shards": {"total": 1, "failed": 0},
+        "aggregations": {
+            "days": {
+                "buckets": [
+                    {"key": k, "doc_count": 2, "orig_bytes": {"value": 30}}
+                    for k, _s, _e in _RANGES
+                ]
+            }
+        },
+    }
+    budget = Budget(100)
+    out = _tracker().usage_for_ranges(client, _RANGES, ["192.168.1.66"], None, budget)
+    kwargs = client.search.call_args.kwargs
+    body = kwargs["body"]
+    assert kwargs["budget"] is budget and kwargs["index"] == "arkime_sessions3-*"
+    assert (
+        body["timeout"] == "97s"
+    )  # what is left, less 2 s, so the cluster stops first
+    filters = body["query"]["bool"]["filter"]
+    assert {"term": {"event.provider": "zeek"}} in filters
+    assert {
+        "range": {
+            "@timestamp": {"gte": "2026-11-17T08:00:00Z", "lt": "2026-11-18T20:00:00Z"}
+        }
+    } in filters
+    assert body["query"]["bool"]["must_not"]  # the excluded IP
+    days = body["aggs"]["days"]
+    assert days["date_range"]["ranges"] == [
+        {"key": k, "from": s, "to": e} for k, s, e in _RANGES
+    ]
+    assert {"orig_bytes", "resp_bytes", "inbound", "local", "v6_pairs"} <= set(
+        days["aggs"]
+    )
+    assert out["2026-11-18"] == {
+        "download": 0,
+        "upload": 30,
+        "local": 0,
+        "total": 30,
+        "connections": 2,
+    }
+    client.msearch.assert_not_called()  # no IPv6 pairs: no gateway check
+
+
+def test_usage_for_ranges_splits_like_the_monthly_usage():
+    """The same records, filters and gateway evidence give the same upload/download/local."""
+    from storage.snapshot_search import Budget
+    from tests.fake_drill_opensearch import DrillOpenSearch
+    from tests.test_device_accounting import DOCS, LAN
+
+    client = DrillOpenSearch(DOCS)
+    tracker = _tracker()
+    tracker.set_client(client)
+    monthly = tracker.get_monthly_usage(2026, 11, lan_filter=LAN)
+    budget = Budget(60)
+    month = ("m", "2026-11-01T00:00:00Z", "2026-12-01T00:00:00Z")
+    out = tracker.usage_for_ranges(client, [month], [], LAN, budget)["m"]
+    assert (out["upload"], out["download"], out["local"]) == (
+        monthly["upload_bytes"],
+        monthly["download_bytes"],
+        monthly["local_bytes"],
+    )
+    assert out["total"] == monthly["upload_bytes"] + monthly["download_bytes"]
+    # the gateway check ran, inside the same budget
+    assert budget in client.budgets[1:]
+
+
+def test_usage_for_ranges_never_sends_a_longer_list_re_ask_after_the_budget():
+    """Codex r2 #4: a truncated first reply with the budget spent is TooSlow, not a 2nd send."""
+    import pytest
+    from opensearchpy import OpenSearch
+
+    from storage.exact_terms import ExactTermsOpenSearch
+    from storage.snapshot_search import Budget, TooSlow
+
+    now = [0.0]
+    budget = Budget(30, clock=lambda: now[0])
+
+    def cut_short_and_late(**_kw):
+        now[0] = 31.0
+        return {
+            "_shards": {"total": 1, "failed": 0},
+            "aggregations": {
+                "days": {
+                    "buckets": [
+                        {
+                            "key": "2026-11-17",
+                            "v6_pairs": {
+                                "src": {
+                                    "doc_count_error_upper_bound": -1,
+                                    "buckets": [],
+                                }
+                            },
+                        }
+                    ]
+                }
+            },
+        }
+
+    client = ExactTermsOpenSearch(hosts=[{"host": "localhost", "port": 9200}])
+    with (
+        patch.object(OpenSearch, "search", side_effect=cut_short_and_late) as search,
+        pytest.raises(TooSlow),
+    ):
+        _tracker().usage_for_ranges(client, _RANGES[:1], [], None, budget)
+    assert search.call_count == 1
+
+
+def test_usage_for_ranges_reads_no_index_as_zero_and_a_missing_bucket_as_a_failure():
+    import pytest
+
+    from storage.snapshot_search import Budget, QueryFailed
+
+    client = MagicMock()
+    client.search.return_value = {
+        "_shards": {"total": 0, "successful": 0, "failed": 0},
+        "hits": {"total": {"value": 0}},
+    }
+    out = _tracker().usage_for_ranges(client, _RANGES, [], None, Budget(60))
+    assert {k: v["total"] for k, v in out.items()} == {"2026-11-17": 0, "2026-11-18": 0}
+    client.search.return_value = {
+        "_shards": {"total": 1, "failed": 0},
+        "aggregations": {"days": {"buckets": [{"key": "2026-11-17"}]}},
+    }
+    with pytest.raises(QueryFailed, match="missing"):
+        _tracker().usage_for_ranges(client, _RANGES, [], None, Budget(60))
 
 
 if __name__ == "__main__":

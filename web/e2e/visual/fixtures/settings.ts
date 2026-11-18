@@ -1,3 +1,4 @@
+import type { OwnerTimezone } from '../../../src/lib/api/usage.ts';
 import type { FixtureRoute } from './types.ts';
 
 /** GET /api/settings/api-keys: which keys are set. The daemon never returns the values. */
@@ -41,8 +42,13 @@ const HOME_EMPTY = { home: null } satisfies HomeLocationResponse;
 const HOME_POPULATED = { home: { lat: 51.5074, lon: -0.1278, label: 'London' } } satisfies HomeLocationResponse;
 
 // `method` because both paths also take a POST/PUT with a different body.
+/** GET /api/settings/timezone (F4): the zone the usage ledger counts days in; UTC until the owner picks one. */
+const TZ_EMPTY = { tz: 'UTC', set: false } satisfies OwnerTimezone;
+const TZ_POPULATED = { tz: 'Europe/London', set: true } satisfies OwnerTimezone;
+
 export const SETTINGS_ROUTES: FixtureRoute[] = [
 	{ path: '/api/settings/home-location', method: 'GET', empty: HOME_EMPTY, populated: HOME_POPULATED },
 	{ path: '/api/settings/api-keys', method: 'GET', empty: KEYS_EMPTY, populated: KEYS_POPULATED },
 	{ path: '/api/settings/excluded-ips', method: 'GET', empty: EXCLUDED_EMPTY, populated: EXCLUDED_POPULATED },
+	{ path: '/api/settings/timezone', method: 'GET', empty: TZ_EMPTY, populated: TZ_POPULATED },
 ];

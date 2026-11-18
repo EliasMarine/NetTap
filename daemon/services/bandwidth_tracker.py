@@ -25,6 +25,8 @@ from services.excluded_ips import (
     # OLD CODE: RFC1918_SOURCE_FILTER, (NET-226: only the per-device read used it)
     build_excluded_ips_filter,
 )
+from services.usage_days import parse_iso
+from storage.snapshot_search import Budget, QueryFailed, checked
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.bandwidth_tracker")
@@ -55,6 +57,41 @@ _TOTAL_BYTES_SUM = {
 def internet_bytes(usage: dict) -> int:
     """What crossed the ISP link: upload + download, without traffic between your own devices."""
     return int(usage.get("upload_bytes", 0) + usage.get("download_bytes", 0))
+
+
+def _range_buckets(reply: Any, keys: list[str]) -> dict[str, dict]:
+    """{key: bucket} of a usage_for_ranges reply; QueryFailed if one is missing or malformed."""
+    shards = reply.get("_shards") if isinstance(reply, dict) else None
+    if (
+        isinstance(shards, dict)
+        and shards.get("total") == 0
+        and "aggregations" not in reply
+    ):
+        return {k: {"doc_count": 0} for k in keys}  # no index yet: complete and empty
+    aggs = checked(reply, "usage totals", ("days",))["aggregations"]
+    found = {
+        b.get("key"): b
+        for b in aggs["days"].get("buckets") or []
+        if isinstance(b, dict)
+    }
+    if any(k not in found for k in keys):
+        raise QueryFailed("usage totals: a day's bucket is missing")
+    return {k: found[k] for k in keys}
+
+
+def _range_usage(bucket: dict, gateways: set[str] | None) -> dict[str, int]:
+    """One usage_for_ranges bucket as {download, upload, local, total, connections}."""
+    orig = bucket.get("orig_bytes", {}).get("value", 0) or 0
+    resp = bucket.get("resp_bytes", {}).get("value", 0) or 0
+    split = split_direction(orig, resp, bucket, gateways)
+    up, down = split["upload_bytes"], split["download_bytes"]
+    return {
+        "download": down,
+        "upload": up,
+        "local": split["local_bytes"],
+        "total": up + down,
+        "connections": int(bucket.get("doc_count", 0) or 0),
+    }
 
 
 class BandwidthTracker:
@@ -219,6 +256,64 @@ class BandwidthTracker:
             "resp_bytes": resp,
             **split_direction(orig, resp, aggs, gateways),
         }
+
+    def usage_for_ranges(
+        self,
+        client: Any,
+        ranges: list[tuple[str, str, str]],
+        excluded_ips: list[str] | None,
+        lan_filter: dict | None,
+        budget: Budget,
+    ) -> dict[str, dict[str, int]]:
+        """{key: {download, upload, local, total, connections}} for each (key, start, end) range.
+
+        One search, a date_range bucket per range (start inclusive, end exclusive), with the
+        filters and the split of get_monthly_usage; total is upload + download, what crossed the
+        ISP link. Every send, the gateway check's too, runs inside `budget` (TooSlow once it is
+        spent), so `client` is an ExactTermsOpenSearch. The usage ledger's recount (F4, NET-329).
+        """
+        if not ranges:
+            return {}
+        start = min((r[1] for r in ranges), key=parse_iso)
+        end = max((r[2] for r in ranges), key=parse_iso)
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {
+            "filter": [
+                *self._base_filters(),
+                {"range": {"@timestamp": {"gte": start, "lt": end}}},
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+        body = {
+            "size": 0,
+            # the cluster stops too, a little before the client stops waiting
+            "timeout": f"{max(1, int(budget.remaining()) - 2)}s",
+            "query": {"bool": bool_clause},
+            "aggs": {
+                "days": {
+                    "date_range": {
+                        "field": "@timestamp",
+                        "format": "strict_date_optional_time",
+                        "ranges": [
+                            {"key": k, "from": s, "to": e} for k, s, e in ranges
+                        ],
+                    },
+                    "aggs": {**self._bytes_aggs(), **direction_aggs(lan_filter)},
+                }
+            },
+        }
+        reply = client.search(index=NETWORK_INDEX, body=body, budget=budget)
+        buckets = _range_buckets(reply, [k for k, _s, _e in ranges])
+        gateways = gateways_if_needed(
+            client,
+            list(buckets.values()),
+            bool_clause["filter"],
+            lan_filter,
+            "usage totals",
+            budget=budget,
+        )
+        return {key: _range_usage(b, gateways) for key, b in buckets.items()}
 
     def get_daily_usage(
         self,

@@ -77,10 +77,27 @@
     - The sort test now checks row order.
 - Accepted, not changed: a LAN device inventing MAC addresses can use up the shared daily budget (security, LOW). This follows the approved design ("same limits as alerts"), and critical alerts still go out in the hourly digest, worst first.
 
+## Deploy (G11, 2026-11-18)
+
+PR #336 was merged as `179db7cd` and deployed with `deploy-notification-foundation.sh`:
+
+- **Health:** both containers came up healthy.
+- **The forced `journal-compact` run** took 3 ms and added 0 MB (VmRSS 1,164.5 MB before and after).
+- **State files:**
+  - `notification-events.json`, `notification-dispatch.json` and `scheduled-jobs.json` are mode 600;
+  - the alert cursor was kept;
+  - `/api/jobs` lists the job;
+  - the quick settings report `new_device: true`.
+- **One ✗, a false alarm:** "daemon grew under 50 MB" read 1,071 → 1,171 MB. That was `docker stats` two minutes after the restart, during the daemon's start-up peak (VmHWM 1.21 GB).
+  - About ten minutes later the daemon was at 364 MiB, with no swap. Before the deploy, the 46-hour-old daemon had been at 1,071 MiB.
+  - Host swap went from 4,016 to 3,413 MB.
+- **Nothing sends on the G11 yet:** it has no Settings email or webhook. The journal fills as devices join.
+
 ## Lessons
 
 - **Keep event state in a file the old code doesn't own.** A rollback to the pre-change dispatcher would rewrite its own state file and wipe anything new kept in it.
 - **"Due" from the last finished run is not "overdue".** An overlap counter has to measure from the current run's start.
+- **A memory check right after a restart reads the start-up peak.** Deploy scripts should compare the daemon's `VmRSS` once it has settled, not `docker stats` two minutes in.
 - **Recovery cost grows with the journal.** At 200 lines a poll, a lost event state re-reads the whole journal. The online/offline slice, which writes many events, should start recovery at the first entry inside the 24-hour window.
 
 ## Next

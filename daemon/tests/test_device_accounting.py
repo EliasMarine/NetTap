@@ -5,7 +5,10 @@ behind a port forward read 720 connections and 168,900 B for an hour in which it
 in 5,059 connections and 2,175,804 B: only the connections it started counted.
 """
 
-from datetime import datetime, timezone
+import os
+import tempfile
+import time
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -14,7 +17,9 @@ from aiohttp.test_utils import AioHTTPTestCase
 from api.bandwidth import register_bandwidth_routes
 from api.devices import _category_basis, register_device_routes
 from api.traffic import register_traffic_routes
+from api.usage import register_usage_routes
 from services.bandwidth_tracker import BandwidthTracker
+from services.usage_ledger import UsageLedger
 from services.device_fingerprint import _OS_PATTERNS
 from services.excluded_ips import build_lan_filter
 from tests.fake_drill_opensearch import (
@@ -399,12 +404,37 @@ class TestCapLeavesOutLocal(AccountingCase):
     docs = [{**d, "@timestamp": _THIS_MONTH.isoformat()} for d in DOCS]
     INTERNET = TestNetworkDirection.UPLOAD + TestNetworkDirection.DOWNLOAD
 
+    async def get_application(self):
+        """F4 (NET-329): the cap reads the usage ledger, kept by a pass over the same records."""
+        app = await super().get_application()
+        tmp = tempfile.mkdtemp()
+        self._env = patch.dict(
+            os.environ, {"OWNER_TZ_FILE": os.path.join(tmp, "owner-timezone.json")}
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+        index = f"arkime_sessions3-{_THIS_MONTH:%y%m%d}"
+        self.os.cat = SimpleNamespace(
+            indices=lambda **_kw: [{"index": index, "uuid": "u1"}]
+        )
+        self.ledger = UsageLedger(
+            self.os,
+            app["bandwidth_tracker"],
+            excluded_ips=lambda: [],
+            lan_filter=lambda: LAN,
+            path=os.path.join(tmp, "usage-ledger.json"),
+            now=lambda: _THIS_MONTH + timedelta(hours=1),
+        )
+        register_usage_routes(app, self.ledger)
+        return app
+
     async def test_the_cap_and_the_projection_count_internet_bytes(self):
         month = f"year={_NOW.year}&month={_NOW.month}"
         status, body = await self.get(f"/api/bandwidth/monthly?{month}")
         self.assertEqual(status, 200, body)
         self.assertEqual(body["local_bytes"], TestNetworkDirection.LOCAL)
         self.assertEqual(body["projection"]["current_bytes"], self.INTERNET)
+        self.ledger.run(time.monotonic() + 240)
         status, body = await self.get("/api/bandwidth/cap")
         self.assertEqual(status, 200, body)
         self.assertEqual(body["current_usage_bytes"], self.INTERNET)

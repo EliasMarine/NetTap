@@ -341,3 +341,41 @@ def test_a_longer_list_re_ask_after_the_budget_is_spent_is_too_slow():
             budget=budget,
         )
     assert search.call_count == 1
+
+
+def test_a_budgeted_msearch_checks_the_budget_before_each_send():
+    """F4 (NET-329): the usage ledger's gateway check can't start a send past its deadline."""
+    import pytest
+
+    from storage.snapshot_search import Budget, TooSlow
+
+    body = [{"index": "x-*"}, {"size": 0, "aggs": {"t": {"terms": {"field": "f"}}}}]
+    now = [0.0]
+    budget = Budget(12, clock=lambda: now[0])
+
+    def cut_short_then_late(**_kw):
+        now[0] = 12.0
+        return {
+            "responses": [_reply(-1)]
+        }  # the client would ask again with longer lists
+
+    with (
+        patch.object(OpenSearch, "msearch", side_effect=cut_short_then_late) as msearch,
+        pytest.raises(TooSlow),
+    ):
+        _client().msearch(body=body, budget=budget)
+    assert msearch.call_count == 1
+    assert msearch.call_args.kwargs["request_timeout"] == 12  # what was left
+    with pytest.raises(TooSlow):  # spent before the first send: nothing is sent
+        _client().msearch(body=body, budget=budget)
+    assert msearch.call_count == 1
+
+
+def test_an_msearch_without_a_budget_sends_as_before():
+    body = [{"index": "x-*"}, {"size": 0}]
+    with patch.object(
+        OpenSearch, "msearch", return_value={"responses": [_WHOLE]}
+    ) as msearch:
+        _client().msearch(body=body, request_timeout=7)
+    assert msearch.call_count == 1
+    assert msearch.call_args.kwargs == {"body": body, "request_timeout": 7}

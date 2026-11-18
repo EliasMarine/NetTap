@@ -1,11 +1,15 @@
 <!--
   Settings › Display (NET-273: moved from the Settings page): the theme, the default time range and
-  the Live map, saved in this browser.
+  the Live map, saved in this browser; and the time zone NetTap counts days in, saved on NetTap (F4).
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import { getTimezone, setTimezone } from '$lib/api/usage';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import { DISPLAY_SETTINGS_KEY, DRILL_RANGES, savedDefaultRange, savedLiveMap, type DrillRangeValue, type LiveMap } from '$lib/utils/drilldown';
 	import Feedback from '../Feedback.svelte';
 
@@ -33,8 +37,50 @@
 	let displaySavedForm = $state(displayForm());
 	const displayUnsaved = $derived(displayForm() !== displaySavedForm);
 
+	// --- Time zone (F4, NET-329): the usage ledger counts days and months in it, on NetTap ---
+	/** Every zone this browser knows, plus UTC (NetTap's default, missing from some browsers' lists) */
+	const ZONES = [...new Set([...Intl.supportedValuesOf('timeZone'), 'UTC'])].sort();
+	const TZ_WARNING =
+		'Changing the time zone starts a new count in that zone. NetTap recounts every day it still has the raw data for; older days show as not counted, and Bandwidth says Still counting until it finishes.';
+	let tz = $state('');
+	/** The zone NetTap counts in; null until it loads */
+	let tzSaved = $state<string | null>(null);
+	let tzLoadFailed = $state(false);
+	let tzSaving = $state(false);
+	let tzMessage = $state('');
+	let tzError = $state(false);
+	const tzUnsaved = $derived(tzSaved !== null && tz !== tzSaved);
+	// a zone NetTap knows but this browser doesn't still shows as chosen
+	const zones = $derived(tzSaved && !ZONES.includes(tzSaved) ? [tzSaved, ...ZONES] : ZONES);
+
+	async function loadTimezone() {
+		tzLoadFailed = false;
+		try {
+			const owner = await getTimezone();
+			tz = owner.tz;
+			tzSaved = owner.tz;
+		} catch {
+			tzLoadFailed = true;
+		}
+	}
+
+	async function saveTimezone() {
+		tzSaving = true;
+		tzMessage = '';
+		const result = await setTimezone(tz);
+		tzSaving = false;
+		tzError = !result.ok;
+		if (!result.ok) {
+			tzMessage = `Couldn't save the time zone: ${result.error}`;
+			return;
+		}
+		tz = tzSaved = result.data.tz;
+		tzMessage = `NetTap counts days in ${result.data.tz} from now on.`;
+	}
+
 	$effect(() => {
-		dirty = displayUnsaved;
+		// OLD CODE: dirty = displayUnsaved; (F4: an unsaved time zone holds the tab too)
+		dirty = displayUnsaved || tzUnsaved;
 	});
 
 	// OLD CODE START — NET-195: auto-refresh and timezone are gone, and the range is read as the pages read it
@@ -90,6 +136,7 @@
 
 	onMount(() => {
 		loadDisplaySettings();
+		void loadTimezone();
 	});
 </script>
 
@@ -172,5 +219,42 @@
 				</button>
 			</div>
 		</div>
+	</Card>
+
+	<Card title="Time zone" sub="The days and months NetTap counts usage in · saved on NetTap" class="c-12">
+		{#if tzSaved !== null}
+			<div class="stack">
+				<Feedback message={tzMessage} isError={tzError} />
+				<div class="form-grid">
+					<div class="field">
+						<label class="label" for="owner-tz">Your time zone</label>
+						<select class="select" id="owner-tz" bind:value={tz}>
+							{#each zones as zone (zone)}
+								<option value={zone}>{zone}</option>
+							{/each}
+						</select>
+						<p class="field-help">Bandwidth counts each day and month in this zone. Until you choose one, NetTap counts in UTC.</p>
+					</div>
+				</div>
+				{#if tzUnsaved}
+					<p class="notice is-warn" role="status"><Icon name="warn" /><span>{TZ_WARNING}</span></p>
+				{/if}
+				<div class="form-actions">
+					{#if tzUnsaved}<span class="unsaved">Unsaved changes</span>{/if}
+					<button class="btn primary" type="button" onclick={saveTimezone} disabled={tzSaving || !tzUnsaved}>
+						{tzSaving ? 'Saving…' : 'Save time zone'}
+					</button>
+				</div>
+			</div>
+		{:else if tzLoadFailed}
+			<CardState
+				state="error"
+				title={loadFailed('your time zone')}
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={() => void loadTimezone()}
+			/>
+		{:else}
+			<CardState state="loading" title="Loading your time zone" />
+		{/if}
 	</Card>
 </div>

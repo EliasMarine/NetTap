@@ -143,7 +143,9 @@ from services.notification_hub import NotificationHub
 from services.notification_dispatcher import AlertDispatcher
 from services.event_journal import EventJournal
 from services.scheduled_jobs import Job, Scheduler
+from services.usage_ledger import UsageLedger
 from api.jobs import register_jobs_routes
+from api.usage import register_usage_routes
 from services.changelog import ChangelogService
 from services.cert_monitor import CertificateMonitor
 from services.suricata_rules import SuricataRuleManager
@@ -1410,6 +1412,18 @@ def create_app(
     # Bandwidth tracking (monthly/daily usage, data cap, heatmap)
     bandwidth_tracker = BandwidthTracker(client=storage._client)
     register_bandwidth_routes(app, bandwidth_tracker)
+    # F4 (NET-329): each local day's Internet total, kept after pruning. Its own exact-terms client
+    # without retries, as the moment page's, so a pass can't outlive its budget; the rules are
+    # read at each pass, so an exclusion or LAN change is seen
+    usage_ledger = UsageLedger(
+        ExactTermsOpenSearch(
+            **storage.client_kwargs(max_retries=0, retry_on_timeout=False)
+        ),
+        bandwidth_tracker,
+        excluded_ips=lambda: app.get("excluded_ips", []),
+        lan_filter=lambda: app.get("lan_filter"),
+    )
+    register_usage_routes(app, usage_ledger)
 
     # Live bandwidth per device: kernel byte counters on the capture interface (NET-205)
     register_live_bandwidth_routes(app)
@@ -1450,7 +1464,15 @@ def create_app(
                 # OLD CODE END
                 # keeps every event the dispatcher hasn't saved as taken
                 run=alert_dispatcher.compact_journal,
-            )
+            ),
+            # F4 (NET-329): the usage ledger's only writer; recent days, then the sweep
+            Job(
+                "usage-ledger",
+                "Usage totals",
+                every_s=900,
+                deadline_s=240,
+                run=usage_ledger.run,
+            ),
         ]
     )
     register_jobs_routes(app, scheduler)

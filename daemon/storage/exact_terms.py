@@ -280,13 +280,19 @@ class ExactTermsOpenSearch(OpenSearch):
             self._exact(send, body, budget=budget, **kwargs), body
         )
 
-    def msearch(self, *, body: Any = None, **kwargs: Any) -> Any:
+    # OLD CODE: def msearch(self, *, body: Any = None, **kwargs: Any) -> Any: (F4: + budget, as search)
+    def msearch(
+        self, *, body: Any = None, budget: Budget | None = None, **kwargs: Any
+    ) -> Any:
+        """An msearch with exact terms counts; with `budget`, inside it (TooSlow once spent)."""
+
         def send(body: Any, shard_size: int, **kw: Any) -> Any:
             if isinstance(body, list):
                 body = [exact_body(b, shard_size) for b in body]
             return super(ExactTermsOpenSearch, self).msearch(body=body, **kw)
 
-        return self._exact(send, body, **kwargs)
+        # OLD CODE: return self._exact(send, body, **kwargs) (F4: the usage ledger's gateway check)
+        return self._exact(send, body, budget=budget, **kwargs)
 
     def count(self, *, body: Any = None, **kwargs: Any) -> Any:
         # NET-237: a count answers from the shards that worked too
