@@ -200,6 +200,7 @@ class NotificationHub:
                 # OLD CODE: self._channels = channels if isinstance(channels, dict) else {}
                 self._channels = _usable_channels(channels)
                 self._rules = rules if isinstance(rules, dict) else {}
+                self._seed_event_rules()
                 logger.info(
                     "Loaded %d channels, %d rules from %s",
                     len(self._channels),
@@ -215,6 +216,19 @@ class NotificationHub:
                 "No notification config at %s, starting fresh", self._config_path
             )
             self._seed_from_env()
+
+    def _seed_event_rules(self) -> None:
+        """NET-319: new devices on by default for a setup that never chose (D1), saved once."""
+        rules = nc.with_default_event_rules(self._channels, self._rules, _now())
+        if rules is self._rules:
+            return
+        try:
+            self._commit(self._channels, rules)
+            logger.info(
+                "Notifications: new devices turned on for the Settings channels"
+            )
+        except OSError as exc:
+            logger.warning("Couldn't save the new-device rule: %s", exc)
 
     def _seed_from_env(self) -> None:
         """First start only: the email/webhook named in the environment (NET-224)."""
@@ -382,7 +396,8 @@ class NotificationHub:
                     isinstance(r, dict) for r in rules.values()
                 ):
                     raise ValueError("Notification rules in this backup aren't valid")
-            self._commit(channels, rules)
+            # OLD CODE: self._commit(channels, rules) (NET-319: a pre-NET-319 backup gets the default too)
+            self._commit(channels, nc.with_default_event_rules(channels, rules, _now()))
         return warnings
 
     # ------------------------------------------------------------------
@@ -929,6 +944,12 @@ class NotificationHub:
         with self._lock:
             if rule_id not in self._rules:
                 return False
+            if rule_id == nc.QUICK_NEWDEVICE:
+                # NET-319: absent means "never chose" and comes back on; deleting is turning off
+                rule = {**self._rules[rule_id], "enabled": False}
+                self._commit(self._channels, {**self._rules, rule_id: rule})
+                logger.info("Turned off the Settings new-device rule")
+                return True
             self._commit(
                 self._channels, {k: v for k, v in self._rules.items() if k != rule_id}
             )
@@ -948,8 +969,11 @@ class NotificationHub:
                     )
                 continue
             # severity 1 = critical ... 4 = low: send when at least as severe as the rule's minimum
-            if rule["event_type"] == event_type and severity <= rule.get(
-                "min_severity", 4
+            # OLD CODE: if rule["event_type"] == event_type and severity <= rule.get(…): (NET-319: + on/off)
+            if (
+                rule["event_type"] == event_type
+                and severity <= rule.get("min_severity", 4)
+                and nc.rule_on(rule)
             ):
                 matched.append(rule)
         return matched

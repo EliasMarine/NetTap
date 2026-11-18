@@ -144,6 +144,11 @@ Lane A (F1) does not wait for P1 or P2: it is daemon-only, and its two new label
 
 ### F1: Background jobs, notification events and the event journal (foundation)
 
+- [x] **Done 2026-11-18 (NET-319, `feature/f1-notification-foundation`).** As the slice plan `plans/2026-11-18-f1-notification-foundation.md` narrowed it:
+  - F1 sends `new_device` only. Each later slice adds its own event type when it adds the sender.
+  - `GET /api/events` moved to #1.
+  - The only job is `journal-compact`.
+
 - **What the owner gets:** offline, data-cap, new-device and report messages arrive on the same channels, with the same daily limits and retries as alerts. The rule builder offers only event types that actually fire. Settings shows when each background check last ran. Weekly reports can count incidents even across restarts.
 - **Scope:**
   - **Events:**

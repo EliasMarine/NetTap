@@ -694,6 +694,7 @@ def test_quick_settings_save_for_real_and_hide_the_url(hub, env_file):
 
     assert TOKEN not in json.dumps(view)
     assert view == {
+        "new_device": True,  # NET-319: on by default (D1)
         "min_severity": 3,
         "email": {
             "enabled": True,

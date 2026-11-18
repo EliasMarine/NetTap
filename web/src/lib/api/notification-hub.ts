@@ -46,6 +46,8 @@ export interface RoutingRule {
 	channels: string[];
 	min_severity: number;
 	created_at: string;
+	/** NET-319: false means the rule is off; absent means on */
+	enabled?: boolean;
 }
 
 export interface RulesResponse {
@@ -67,6 +69,28 @@ export interface DeliveryLogEntry {
 export interface DeliveryLogResponse {
 	log: DeliveryLogEntry[];
 	count: number;
+}
+
+/** NET-319: one of the daemon's background checks, as GET /api/jobs reports it. */
+export interface JobState {
+	name: string;
+	label: string;
+	every_s: number;
+	last_run: string | null;
+	last_duration_ms: number | null;
+	last_error: string | null;
+	partial: boolean;
+	running: boolean;
+	running_for_s: number | null;
+	overdue: boolean;
+	skipped_overlaps: number;
+	rss_mb_before: number | null;
+	rss_mb_after: number | null;
+	peak_rss_mb: number | null;
+}
+
+export interface JobsResponse {
+	jobs: JobState[];
 }
 
 // ---------------------------------------------------------------------------
@@ -268,5 +292,29 @@ export async function deleteRule(id: string): Promise<boolean> {
 		return res.ok;
 	} catch {
 		return false;
+	}
+}
+
+/**
+ * NET-319: the daemon's background checks and how each last ran. Throws on failure, so a failed
+ * request is never read as "no checks".
+ */
+export async function getJobs(): Promise<JobsResponse> {
+	const res = await fetch(`/api/jobs`);
+	if (!res.ok) throw new Error(`Background checks request failed: HTTP ${res.status}`);
+	return res.json();
+}
+
+/**
+ * NET-319: asks the daemon to run a background check now. 202 means it was queued; a refusal
+ * (409 already running, 404 unknown) carries the daemon's reason.
+ */
+export async function runJob(name: string): Promise<SaveResult<{ accepted: boolean; name: string }>> {
+	try {
+		const res = await fetch(`/api/jobs/${encodeURIComponent(name)}/run`, { method: 'POST' });
+		if (!res.ok) return { ok: false, error: await reasonOf(res) };
+		return { ok: true, data: await res.json() };
+	} catch {
+		return { ok: false, error: "couldn't reach NetTap" };
 	}
 }

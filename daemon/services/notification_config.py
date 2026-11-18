@@ -29,6 +29,8 @@ ENV_FILE = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/data/.env")
 QUICK_EMAIL = "settings-email"
 QUICK_WEBHOOK = "settings-webhook"
 QUICK_RULE = "settings-alerts"
+# NET-319: the Settings tab's "Tell me about new devices"; deleting it turns it off (hub)
+QUICK_NEWDEVICE = "settings-newdevice"
 DEFAULT_MIN_SEVERITY = 2  # high and above
 
 # The public view shows only these config keys as they are...
@@ -243,6 +245,11 @@ def public_channel(channel: dict, last_delivery: dict | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def rule_on(rule: Any) -> bool:
+    """A rule sends unless it was turned off (NET-319: the fixed new-device rule keeps an off)."""
+    return not (isinstance(rule, dict) and rule.get("enabled") is False)
+
+
 def quick_view(channels: dict, rules: dict, smtp_configured: bool) -> dict:
     """What the Settings tab shows: no URL or password, only whether one is saved."""
     email = channels.get(QUICK_EMAIL) or {}
@@ -250,6 +257,8 @@ def quick_view(channels: dict, rules: dict, smtp_configured: bool) -> dict:
     rule = rules.get(QUICK_RULE)
     url = (webhook.get("config") or {}).get("url", "")
     return {
+        # never set means on (decision D1); off is the rule kept with enabled: false
+        "new_device": rule_on(rules.get(QUICK_NEWDEVICE)),
         "min_severity": rule["min_severity"]
         if rule_ok(rule) and "min_severity" in rule
         else DEFAULT_MIN_SEVERITY,
@@ -280,9 +289,49 @@ def _quick_channel(
     }
 
 
-def _with_quick_rule(channels: dict, rules: dict, min_severity: int, now: str) -> dict:
-    """`rules` with the Settings rule sending alerts to whichever Settings channels exist."""
-    ids = [cid for cid in (QUICK_EMAIL, QUICK_WEBHOOK) if cid in channels]
+# OLD CODE START — NET-319: alerts only; the new-device rule is written alongside
+# def _with_quick_rule(channels: dict, rules: dict, min_severity: int, now: str) -> dict:
+#     """`rules` with the Settings rule sending alerts to whichever Settings channels exist."""
+#     ids = [cid for cid in (QUICK_EMAIL, QUICK_WEBHOOK) if cid in channels]
+#     others = {k: v for k, v in rules.items() if k != QUICK_RULE}
+#     if not ids:
+#         return others
+#     old = rules.get(QUICK_RULE) if isinstance(rules.get(QUICK_RULE), dict) else {}
+#     rule = {
+#         "id": QUICK_RULE,
+#         "event_type": "alert",
+#         "channels": ids,
+#         "min_severity": min_severity,
+#         "created_at": old.get("created_at", now),
+#     }
+#     return {**others, QUICK_RULE: rule}
+# OLD CODE END
+def _quick_ids(channels: dict) -> list[str]:
+    return [cid for cid in (QUICK_EMAIL, QUICK_WEBHOOK) if cid in channels]
+
+
+def _newdevice_rule(rules: dict, ids: list[str], on: bool, now: str) -> dict:
+    old = (
+        rules.get(QUICK_NEWDEVICE)
+        if isinstance(rules.get(QUICK_NEWDEVICE), dict)
+        else {}
+    )
+    return {
+        "id": QUICK_NEWDEVICE,
+        "event_type": "new_device",
+        "channels": ids,
+        "min_severity": 4,
+        "enabled": on,
+        "created_at": old.get("created_at", now),
+    }
+
+
+def _with_quick_rule(
+    channels: dict, rules: dict, min_severity: int, now: str, new_device: bool = True
+) -> dict:
+    """`rules` with the Settings rules sending alerts, and new devices when on, to whichever
+    Settings channels exist. With none, the new-device rule keeps its on/off for later."""
+    ids = _quick_ids(channels)
     others = {k: v for k, v in rules.items() if k != QUICK_RULE}
     if not ids:
         return others
@@ -294,7 +343,20 @@ def _with_quick_rule(channels: dict, rules: dict, min_severity: int, now: str) -
         "min_severity": min_severity,
         "created_at": old.get("created_at", now),
     }
-    return {**others, QUICK_RULE: rule}
+    return {
+        **others,
+        QUICK_RULE: rule,
+        QUICK_NEWDEVICE: _newdevice_rule(rules, ids, new_device, now),
+    }
+
+
+def with_default_event_rules(channels: dict, rules: dict, now: str) -> dict:
+    """New devices on by default (D1) for a setup that never chose: the fixed rule is added,
+    on, when a Settings channel exists and the rule is absent. An off rule is left alone."""
+    ids = _quick_ids(channels)
+    if not ids or QUICK_NEWDEVICE in rules:
+        return rules
+    return {**rules, QUICK_NEWDEVICE: _newdevice_rule(rules, ids, True, now)}
 
 
 def apply_quick_settings(
@@ -313,6 +375,10 @@ def apply_quick_settings(
     webhook = body.get("webhook") or {}
     if not isinstance(email, dict) or not isinstance(webhook, dict):
         raise ValueError("email and webhook must be objects")
+    # NET-319: optional; left out keeps what is saved
+    new_device = body.get("new_device", rule_on(rules.get(QUICK_NEWDEVICE)))
+    if not isinstance(new_device, bool):
+        raise ValueError("new_device must be true or false")
 
     new = dict(channels)
     old_email = channels.get(QUICK_EMAIL)
@@ -343,7 +409,8 @@ def apply_quick_settings(
     elif old_webhook:
         new[QUICK_WEBHOOK] = {**old_webhook, "enabled": False}
 
-    return new, _with_quick_rule(new, rules, min_severity, now)
+    # OLD CODE: return new, _with_quick_rule(new, rules, min_severity, now) (NET-319: + new devices)
+    return new, _with_quick_rule(new, rules, min_severity, now, new_device)
 
 
 def seed_from_env(get: Callable[[str], str], now: str) -> tuple[dict, dict, list[str]]:

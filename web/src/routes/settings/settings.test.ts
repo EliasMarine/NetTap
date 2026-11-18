@@ -34,6 +34,8 @@ const HUB_LISTS: Record<string, FetchRoute> = {
 	'/api/notifications/channels': () => ({ body: { channels: [], count: 0 } }),
 	'/api/notifications/rules': () => ({ body: { rules: [], count: 0 } }),
 	'/api/notifications/log': () => ({ body: { log: [], count: 0 } }),
+	// NET-319: and its background checks
+	'/api/jobs': () => ({ body: { jobs: [] } }),
 };
 
 /** Stub fetch: URLs in `routes` get their body, the notification lists are empty, everything else a 500. */
@@ -475,6 +477,8 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 			min_severity: 3,
 			email: { enabled: true, recipients: ['a@example.com', 'b@example.com'] },
 			webhook: { enabled: true, url: '' },
+			// NET-319: SAVED never set it, which reads as on
+			new_device: true,
 		});
 		expect(screen.getByRole('status')).toHaveTextContent('Notification settings saved.');
 	});

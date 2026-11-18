@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+// OLD CODE: import { render, screen, fireEvent } from '@testing-library/svelte'; (NET-319: rows are checked with within)
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
+import type { JobState } from '$lib/api/notification-hub';
 // OLD CODE: import Page from './+page.svelte'; (NET-273: the page is a Settings tab now)
 import Page from './NotificationsTab.svelte';
 
@@ -31,8 +33,10 @@ describe('Notification settings when requests fail (#96)', () => {
 		expect(await screen.findByText("Couldn't load the notification channels: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the routing rules: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the delivery log: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the background checks: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText('— channels')).toBeInTheDocument();
 		expect(screen.getByText('— rules')).toBeInTheDocument();
+		expect(screen.getByText('— checks')).toBeInTheDocument();
 		expect(screen.queryByText(/No channels configured/)).not.toBeInTheDocument();
 		expect(screen.queryByText('No routing rules configured')).not.toBeInTheDocument();
 		expect(screen.queryByText('No delivery attempts yet')).not.toBeInTheDocument();
@@ -43,13 +47,16 @@ describe('Notification settings when requests fail (#96)', () => {
 			'/api/notifications/channels': { channels: [], count: 0 },
 			'/api/notifications/rules': { rules: [], count: 0 },
 			'/api/notifications/log': { log: [], count: 0 },
+			'/api/jobs': { jobs: [] },
 		});
 		render(Page);
 
 		expect(await screen.findByText(/No channels configured/)).toBeInTheDocument();
 		expect(screen.getByText('No routing rules configured')).toBeInTheDocument();
 		expect(screen.getByText('No delivery attempts yet')).toBeInTheDocument();
+		expect(screen.getByText('No background checks')).toBeInTheDocument();
 		expect(screen.getByText('0 channels')).toBeInTheDocument();
+		expect(screen.getByText('0 checks')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});
 
@@ -87,6 +94,8 @@ const LISTS: Record<string, unknown> = {
 	'/api/notifications/channels': { channels: [CHANNEL], count: 1 },
 	'/api/notifications/rules': { rules: [], count: 0 },
 	'/api/notifications/log': { log: [], count: 0 },
+	// NET-319: the background checks load with the lists
+	'/api/jobs': { jobs: [] },
 };
 
 describe('Notification settings card states', () => {
@@ -101,6 +110,7 @@ describe('Notification settings card states', () => {
 		expect(screen.getByText('Loading notification channels')).toBeInTheDocument();
 		expect(screen.getByText('Loading routing rules')).toBeInTheDocument();
 		expect(screen.getByText('Loading delivery log')).toBeInTheDocument();
+		expect(screen.getByText('Loading background checks')).toBeInTheDocument();
 	});
 
 	it('offers a retry on a failed card that reloads the page', async () => {
@@ -194,7 +204,8 @@ describe('Notification settings delivery results', () => {
 		expect(await screen.findByRole('alert')).toHaveTextContent("The test didn't go through: can't connect to discord.example.net.");
 	});
 
-	it('the rule form offers only the alert event, the one NetTap sends', async () => {
+	// OLD CODE: it('the rule form offers only the alert event, the one NetTap sends', …) expected ['alert'] (NET-319: new devices have a sender now)
+	it('the rule form offers alerts and new devices, the events NetTap sends', async () => {
 		stubFetch(LISTS);
 		render(Page);
 		await screen.findByText('Home Discord');
@@ -202,6 +213,181 @@ describe('Notification settings delivery results', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
 
 		const options = Array.from((screen.getByLabelText('Event type') as HTMLSelectElement).options).map((o) => o.value);
-		expect(options).toEqual(['alert']);
+		// OLD CODE: expect(options).toEqual(['alert']);
+		expect(options).toEqual(['new_device', 'alert']);
+		for (const unsent of ['anomaly', 'storage_warning', 'smart_warning', 'capture_error', 'system_error']) {
+			expect(options).not.toContain(unsent);
+		}
+	});
+
+	it('marks a rule that is off, and only that one (NET-319)', async () => {
+		const rule = { channels: ['ch1'], min_severity: 4, created_at: '2026-11-18T10:00:00Z' };
+		stubFetch({
+			...LISTS,
+			'/api/notifications/rules': {
+				rules: [
+					{ ...rule, id: 'settings-newdevice', event_type: 'new_device', enabled: false },
+					{ ...rule, id: 'r-alert', event_type: 'alert' },
+				],
+				count: 2,
+			},
+		});
+		render(Page);
+
+		const offRow = (await screen.findByText('New device')).closest('li') as HTMLElement;
+		const onRow = screen.getByText('Alert').closest('li') as HTMLElement;
+		expect(within(offRow).getByText('Off')).toBeInTheDocument();
+		expect(within(onRow).queryByText('Off')).not.toBeInTheDocument();
+	});
+});
+
+// NET-319: the daemon's background checks, with Run now
+describe('Notification settings background checks', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function job(overrides: Partial<JobState> = {}): JobState {
+		return {
+			name: 'journal-compact',
+			label: 'Event journal clean-up',
+			every_s: 86_400,
+			last_run: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+			last_duration_ms: 1234,
+			last_error: null,
+			partial: false,
+			running: false,
+			running_for_s: null,
+			overdue: false,
+			skipped_overlaps: 2,
+			rss_mb_before: 80,
+			rss_mb_after: 81,
+			peak_rss_mb: 90,
+			...overrides,
+		};
+	}
+
+	/** LISTS, with `/api/jobs` answering from `jobsReplies` in turn and the run POST answering `run`. */
+	function stubJobs(jobsReplies: JobState[][], run: { status: number; body: unknown } = { status: 202, body: {} }) {
+		let reads = 0;
+		const fn = vi.fn(async (url: string, init?: RequestInit) => {
+			if (url === '/api/jobs/journal-compact/run' && init?.method === 'POST') {
+				return { ok: run.status < 400, status: run.status, json: async () => run.body };
+			}
+			if (url === '/api/jobs') {
+				const jobs = jobsReplies[Math.min(reads++, jobsReplies.length - 1)];
+				return { ok: true, status: 200, json: async () => ({ jobs }) };
+			}
+			const body = LISTS[url];
+			return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 500, json: async () => ({}) };
+		});
+		vi.stubGlobal('fetch', fn);
+		return fn;
+	}
+
+	const table = () => screen.getByRole('table', { name: 'Background checks' });
+
+	it('lists each check with when it last ran, how long it took and how it went', async () => {
+		stubJobs([[job()]]);
+		render(Page);
+
+		const row = (await screen.findByText('Event journal clean-up')).closest('tr') as HTMLElement;
+		expect(within(row).getByText('2h ago')).toBeInTheDocument();
+		expect(within(row).getByText('1,234 ms')).toBeInTheDocument();
+		expect(within(row).getByText('OK')).toBeInTheDocument();
+		expect(within(row).getByText('2')).toBeInTheDocument();
+		expect(screen.getByText('1 check')).toBeInTheDocument();
+	});
+
+	it('words each result: partial, the error, running, overdue and not run yet', async () => {
+		stubJobs([
+			[
+				job({ name: 'a', label: 'Partial check', partial: true }),
+				job({ name: 'b', label: 'Failing check', last_error: 'disk full' }),
+				job({ name: 'c', label: 'Busy check', running: true, running_for_s: 5 }),
+				job({ name: 'd', label: 'Stuck check', running: true, running_for_s: 300, overdue: true }),
+				job({ name: 'e', label: 'New check', last_run: null, last_duration_ms: null }),
+			],
+		]);
+		render(Page);
+
+		const result = (label: string) => (screen.getByText(label).closest('tr') as HTMLElement);
+		await screen.findByText('Partial check');
+		expect(within(result('Partial check')).getByText('Partial')).toBeInTheDocument();
+		expect(within(result('Failing check')).getByText('disk full')).toBeInTheDocument();
+		expect(within(result('Busy check')).getByText('Running…')).toBeInTheDocument();
+		expect(within(result('Stuck check')).getByText('Running, overdue')).toBeInTheDocument();
+		expect(within(result('New check')).getByText('Not run yet')).toBeInTheDocument();
+		expect(within(result('New check')).getByText('Never')).toBeInTheDocument();
+		expect(within(result('New check')).getByText('—')).toBeInTheDocument();
+		// a running check can't be started again
+		expect(within(result('Busy check')).getByRole('button', { name: 'Run now' })).toBeDisabled();
+		expect(within(result('Partial check')).getByRole('button', { name: 'Run now' })).toBeEnabled();
+	});
+
+	it('sorts on every column, both ways', async () => {
+		stubJobs([[job(), job({ name: 'b', label: 'Another check', last_duration_ms: 5 })]]);
+		render(Page);
+		await screen.findByText('Another check');
+
+		for (const label of ['Check', 'Last run', 'Took', 'Result', 'Skipped overlaps', 'Action']) {
+			const header = within(table()).getByRole('button', { name: label });
+			await fireEvent.click(header);
+			expect(header.closest('th')).toHaveAttribute('aria-sort', 'descending');
+			await fireEvent.click(header);
+			expect(header.closest('th')).toHaveAttribute('aria-sort', 'ascending');
+		}
+	});
+
+	it('Run now starts the check, says so, and reloads the list', async () => {
+		const fn = stubJobs([[job()], [job({ running: true, running_for_s: 1 })]], {
+			status: 202,
+			body: { accepted: true, name: 'journal-compact' },
+		});
+		render(Page);
+		await screen.findByText('OK');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Run now' }));
+
+		expect(await screen.findByText('Running…')).toBeInTheDocument();
+		expect(screen.getByRole('status')).toHaveTextContent('"Event journal clean-up" started.');
+		expect(fn.mock.calls.filter(([url]) => url === '/api/jobs/journal-compact/run')).toHaveLength(1);
+		expect(fn.mock.calls.filter(([url]) => url === '/api/jobs')).toHaveLength(2);
+	});
+
+	it('Run now says why when the check is already running (409)', async () => {
+		stubJobs([[job()]], { status: 409, body: { error: 'journal-compact is already running' } });
+		render(Page);
+		await screen.findByText('OK');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Run now' }));
+
+		expect(await screen.findByRole('alert')).toHaveTextContent(
+			'Couldn\'t start "Event journal clean-up": journal-compact is already running.',
+		);
+	});
+
+	it('keeps the last list when a refresh of the checks fails', async () => {
+		let jobsOk = true;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (url === '/api/jobs') {
+					return jobsOk
+						? { ok: true, status: 200, json: async () => ({ jobs: [job()] }) }
+						: { ok: false, status: 502, json: async () => ({}) };
+				}
+				const body = LISTS[url];
+				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 500, json: async () => ({}) };
+			}),
+		);
+		render(Page);
+		await screen.findByText('Event journal clean-up');
+
+		jobsOk = false;
+		expect(await refreshPage()).toBe('partial');
+
+		expect(await screen.findByText("Couldn't refresh the background checks: showing the last list.")).toBeInTheDocument();
+		expect(screen.getByText('Event journal clean-up')).toBeInTheDocument();
 	});
 });
