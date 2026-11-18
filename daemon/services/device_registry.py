@@ -41,6 +41,7 @@ from storage.time_slots import histogram_buckets, time_slots
 
 if TYPE_CHECKING:
     from services.device_custom import DeviceCustomStore
+    from services.event_journal import EventJournal
 
 logger = logging.getLogger("nettap.services.device_registry")
 
@@ -112,20 +113,33 @@ class DeviceRegistry:
 
     # NET-200: the owner's names and pictures; a class default so tests built with __new__ work
     _custom: "DeviceCustomStore | None" = None
+    # NET-319: the event journal; a class default for the same reason
+    _journal: "EventJournal | None" = None
 
     # OLD CODE START — NET-200: no owner names
     # def __init__(self, client: Any, changelog: Any = None):
+    # OLD CODE END
+    # OLD CODE START — NET-319: no event journal
+    # def __init__(
+    #     self,
+    #     client: Any,
+    #     changelog: Any = None,
+    #     custom: "DeviceCustomStore | None" = None,
+    # ):
     # OLD CODE END
     def __init__(
         self,
         client: Any,
         changelog: Any = None,
         custom: "DeviceCustomStore | None" = None,
+        journal: "EventJournal | None" = None,
     ):
         self._client = client
         # ChangelogService; when set, a device's first write logs "device_joined"
         self._changelog = changelog
         self._custom = custom
+        # NET-319: a device's first write is journaled first, so "New device" is never lost
+        self._journal = journal
         self._ensure_index()
 
     def _ensure_index(self) -> None:
@@ -269,6 +283,28 @@ class DeviceRegistry:
                     }
                 },
             }
+
+        if existing is None and self._journal is not None:
+            ip0 = doc["ips"][0] if doc["ips"] else None
+            try:
+                # before the index: the journal is the commit point, and a retry of the same
+                # MAC is recognised (instance "": a device is new once)
+                self._journal.append(
+                    "new_device",
+                    mac,
+                    doc["first_seen"],
+                    {"ip": ip0, "vendor": doc.get("manufacturer"), "source": source},
+                    instance="",
+                )
+            except OSError as exc:
+                # not registered without its event: skip this device, retried next refresh;
+                # raising would end the whole refresh pass
+                logger.error(
+                    "Device %s not registered: the event journal write failed (%s)",
+                    mac,
+                    exc,
+                )
+                return doc
 
         try:
             self._client.index(

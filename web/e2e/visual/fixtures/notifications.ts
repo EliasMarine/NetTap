@@ -1,5 +1,6 @@
 /** Fixtures for the notification hub (daemon/api/notifications_hub.py), reached through the web catch-all. */
-import type { ChannelsResponse, DeliveryLogResponse, RulesResponse } from '../../../src/lib/api/notification-hub.ts';
+// OLD CODE: import type { ChannelsResponse, DeliveryLogResponse, RulesResponse } from '../../../src/lib/api/notification-hub.ts'; (NET-319: JobsResponse)
+import type { ChannelsResponse, DeliveryLogResponse, JobsResponse, RulesResponse } from '../../../src/lib/api/notification-hub.ts';
 import { DAY, HOUR, iso, MIN, type FixtureRoute } from './types.ts';
 
 const CHANNELS_EMPTY = { channels: [], count: 0 } satisfies ChannelsResponse;
@@ -43,9 +44,26 @@ const CONFIG = {
 	webhook: { enabled: true, has_url: true, url_hint: 'https://hooks.example.com/…' },
 };
 
+// NET-319: the daemon's background checks (GET /api/jobs), shown on the same tab
+const JOBS_EMPTY = { jobs: [] } satisfies JobsResponse;
+const JOBS = {
+	jobs: [
+		{ name: 'journal-compact', label: 'Event journal clean-up', every_s: DAY / 1000, last_run: iso(5 * HOUR), last_duration_ms: 42, last_error: null, partial: false, running: false, running_for_s: null, overdue: false, skipped_overlaps: 0, rss_mb_before: 81.2, rss_mb_after: 81.4, peak_rss_mb: 96.0 },
+	],
+} satisfies JobsResponse;
+
+// OLD CODE START — NET-319: the tab loads its background checks too
+// export const NOTIFICATION_ROUTES: FixtureRoute[] = [
+// 	{ path: '/api/notifications/config', method: 'GET', empty: CONFIG_EMPTY, populated: CONFIG },
+// 	{ path: '/api/notifications/channels', method: 'GET', empty: CHANNELS_EMPTY, populated: CHANNELS },
+// 	{ path: '/api/notifications/rules', method: 'GET', empty: RULES_EMPTY, populated: RULES },
+// 	{ path: '/api/notifications/log', empty: LOG_EMPTY, populated: LOG },
+// ];
+// OLD CODE END
 export const NOTIFICATION_ROUTES: FixtureRoute[] = [
 	{ path: '/api/notifications/config', method: 'GET', empty: CONFIG_EMPTY, populated: CONFIG },
 	{ path: '/api/notifications/channels', method: 'GET', empty: CHANNELS_EMPTY, populated: CHANNELS },
 	{ path: '/api/notifications/rules', method: 'GET', empty: RULES_EMPTY, populated: RULES },
 	{ path: '/api/notifications/log', empty: LOG_EMPTY, populated: LOG },
+	{ path: '/api/jobs', method: 'GET', empty: JOBS_EMPTY, populated: JOBS },
 ];

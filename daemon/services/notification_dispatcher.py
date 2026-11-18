@@ -12,6 +12,14 @@ hour until midnight UTC, worst alerts first, so a flood can't hold a critical al
 New for a channel means: never handled, more severe than when it was, or a newer occurrence once
 the hour's cooldown is over. Re-reading the same occurrences (the poll windows overlap, and a
 failed query keeps the cursor) never sends them again.
+
+Other events (NET-319: new devices; offline, data cap and report in later slices) come from the
+event journal, the commit point. Each poll admits what is new there into per-channel event
+queues kept in their own file, notification-events.json (the pre-NET-319 dispatcher rewrites
+the alert state, so after a rollback it would erase queues kept there). An event rides in the
+channel's next message with its alerts, under the same budget, and is never given up: it stays
+queued until a send works. A crash between a send and the saves repeats that message; nothing
+committed to the journal is lost.
 """
 
 import asyncio
@@ -21,10 +29,13 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from services.capture_config import write_file_atomic
 from services.notification_hub import SEVERITY_LEVELS, NotificationHub
+
+if TYPE_CHECKING:
+    from services.event_journal import EventJournal
 
 logger = logging.getLogger("nettap.services.notification_dispatcher")
 
@@ -43,6 +54,13 @@ DAILY_BUDGET = 100
 # Past the budget, one digest this often, so a flood can't hold a critical alert back (security delta D3)
 SLOW_EVERY = timedelta(hours=1)
 _EMPTY: dict = {"done": {}, "pending": [], "retry_at": None}
+# NET-319: journal events, read in pages and queued per channel
+INTAKE = 200  # journal entries admitted a poll; a bigger backlog takes the next polls
+MAX_EVENTS = (
+    500  # queued events a channel; older ones become a count, never silently lost
+)
+REPLAY = timedelta(hours=24)  # a lost event state re-reads this much of the journal
+_NO_EVENTS: dict = {"events": [], "overflow": 0}
 
 
 def _iso(t: datetime) -> str:
@@ -121,29 +139,102 @@ def is_new(done: dict, item: dict, now: datetime) -> bool:
     return newer and (handled_at is None or now - handled_at > COOLDOWN)
 
 
-def digest(items: list[dict]) -> tuple[str, str, int]:
-    """(title, body, worst severity) of one channel's message."""
+# OLD CODE START — NET-319: alerts only; journal events (with their own title and line) join them
+# def digest(items: list[dict]) -> tuple[str, str, int]:
+#     """(title, body, worst severity) of one channel's message."""
+#     worst = min(i["severity"] for i in items)
+#     level = SEVERITY_LEVELS[worst]
+#     if len(items) == 1:
+#         title = f"{level.capitalize()} alert: {items[0]['signature']}"
+#     else:
+#         title = f"{len(items)} new alerts (worst: {level})"
+#     lines = []
+#     for i in items[:DIGEST_LINES]:
+#         where = (
+#             i["example"]
+#             if i["pairs"] == 1
+#             else f"{i['example']} and {i['pairs'] - 1} more"
+#         )
+#         events = f"{i['count']} event{'' if i['count'] == 1 else 's'}"
+#         lines.append(
+#             f"- [{SEVERITY_LEVELS[i['severity']]}] {i['signature']}: {events}, {where}"
+#         )
+#     if len(items) > DIGEST_LINES:
+#         lines.append(f"and {len(items) - DIGEST_LINES} more")
+#     lines.extend(["", "Open NetTap's Alerts page for details."])
+#     return title, "\n".join(lines), worst
+# OLD CODE END
+def _digest_line(i: dict) -> str:
+    level = SEVERITY_LEVELS[i["severity"]]
+    if "line" in i:  # a journal event says itself
+        return f"- [{level}] {i['line']}"
+    where = (
+        i["example"] if i["pairs"] == 1 else f"{i['example']} and {i['pairs'] - 1} more"
+    )
+    events = f"{i['count']} event{'' if i['count'] == 1 else 's'}"
+    return f"- [{level}] {i['signature']}: {events}, {where}"
+
+
+def digest(items: list[dict], overflow: int = 0) -> tuple[str, str, int]:
+    """(title, body, worst severity) of one channel's message.
+
+    All alerts: the wording alerts have always had. With journal events: their own title when
+    alone, else "N new notifications"; `overflow` events past the queue's cap are counted.
+    """
     worst = min(i["severity"] for i in items)
     level = SEVERITY_LEVELS[worst]
-    if len(items) == 1:
-        title = f"{level.capitalize()} alert: {items[0]['signature']}"
-    else:
+    alerts_only = not overflow and all("line" not in i for i in items)
+    if len(items) == 1 and not overflow:
+        title = (
+            f"{level.capitalize()} alert: {items[0]['signature']}"
+            if alerts_only
+            else items[0]["title"]
+        )
+    elif alerts_only:
         title = f"{len(items)} new alerts (worst: {level})"
-    lines = []
-    for i in items[:DIGEST_LINES]:
-        where = (
-            i["example"]
-            if i["pairs"] == 1
-            else f"{i['example']} and {i['pairs'] - 1} more"
-        )
-        events = f"{i['count']} event{'' if i['count'] == 1 else 's'}"
-        lines.append(
-            f"- [{SEVERITY_LEVELS[i['severity']]}] {i['signature']}: {events}, {where}"
-        )
+    else:
+        title = f"{len(items) + overflow} new notifications (worst: {level})"
+    lines = [_digest_line(i) for i in items[:DIGEST_LINES]]
     if len(items) > DIGEST_LINES:
         lines.append(f"and {len(items) - DIGEST_LINES} more")
-    lines.extend(["", "Open NetTap's Alerts page for details."])
+    if overflow:
+        lines.append(f"and {overflow} more events not listed; see NetTap")
+    footer = (
+        "Open NetTap's Alerts page for details."
+        if alerts_only
+        else "Open NetTap for details."
+    )
+    lines.extend(["", footer])
     return title, "\n".join(lines), worst
+
+
+def _short_time(raw: Any) -> str:
+    t = _when(raw)
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if t else "?"
+
+
+def event_item(entry: dict) -> dict | None:
+    """A journal entry as a queued notification; None for a type nothing sends yet."""
+    if entry.get("type") != "new_device":
+        return None
+    data = entry.get("data") or {}
+    mac = entry.get("key") or "?"
+    vendor, ip = data.get("vendor"), data.get("ip")
+    line = (
+        f"New device {mac}"
+        + (f" ({vendor})" if vendor else "")
+        + (f" at {ip}" if ip else "")
+        + f", first seen {_short_time(entry.get('observed_at'))}"
+    )
+    return {
+        "sig": f"event:{entry.get('id')}",
+        "event": "new_device",
+        "severity": 3,
+        "title": f"New device: {vendor or mac}",
+        "line": line,
+        "count": 1,
+        "attempts": 0,
+    }
 
 
 def _record(items: list[dict], now: datetime, ok: bool) -> dict:
@@ -167,12 +258,22 @@ class AlertDispatcher:
         client: Any,
         lan_cidrs: Callable[[], list[str]],
         state_path: str,
+        journal: "EventJournal | None" = None,
     ) -> None:
         self._hub = hub
         self._client = client
         self._lan_cidrs = lan_cidrs
         self._state_path = Path(state_path)
         self._state = self._load()
+        # NET-319: journal events, with their own state file next to the alert state
+        self._journal = journal
+        self._events_path = self._state_path.with_name("notification-events.json")
+        self._replay_floor: datetime | None = None
+        self._events = self._load_events()
+        # the journal_seq last saved: compaction keeps everything after it
+        self.committed_seq: int | None = (
+            self._events["journal_seq"] if self._events_path.exists() else None
+        )
 
     # --- state -------------------------------------------------------------
 
@@ -201,7 +302,91 @@ class AlertDispatcher:
         except OSError as exc:
             logger.warning("Couldn't save the notification dispatch state: %s", exc)
 
+    def _load_events(self) -> dict:
+        """The event queues and journal cursor. Without them: a first start reads the journal
+        from its beginning; a lost file (the journal already existed) re-reads 24 hours."""
+        try:
+            data = json.loads(self._events_path.read_text())
+            if (
+                isinstance(data, dict)
+                and isinstance(data.get("journal_seq"), int)
+                and isinstance(data.get("channels"), dict)
+            ):
+                return data
+            logger.warning("Notification event state has the wrong shape")
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError) as exc:
+            logger.warning("Notification event state unreadable (%s)", exc)
+        if self._journal is not None and self._journal.existed_at_start:
+            self._replay_floor = datetime.now(timezone.utc) - REPLAY
+            logger.warning(
+                "Notification event state missing: re-reading the last %d hours of events, "
+                "which may repeat",
+                REPLAY.total_seconds() // 3600,
+            )
+        return {"journal_seq": 0, "channels": {}}
+
+    def _save_events(self) -> bool:
+        try:
+            write_file_atomic(
+                str(self._events_path), json.dumps(self._events), mode=0o600
+            )
+        except OSError as exc:
+            logger.warning("Couldn't save the notification event state: %s", exc)
+            return False
+        return True
+
+    async def _take_events(self, queues: dict, now: datetime) -> tuple[dict, int]:
+        """The channels' event queues with this poll's journal page admitted, and the seq read up to."""
+        seq = self._events["journal_seq"]
+        if self._journal is None:
+            return queues, seq
+        if self._journal.last_seq < seq:
+            # the journal restarted its numbering (deleted or unreadable): `seq > N` would skip
+            # the next N events, so read it from the start, a day back, as after a lost state
+            logger.warning(
+                "Notification events: the journal ends at %d, before the saved %d; re-reading it",
+                self._journal.last_seq,
+                seq,
+            )
+            seq = 0
+            self._replay_floor = now - REPLAY
+        try:
+            entries = await asyncio.to_thread(self._journal.after, seq, INTAKE)
+        except OSError as exc:
+            logger.warning(
+                "Notification events: the journal read failed, will retry (%s)", exc
+            )
+            return queues, seq
+        for entry in entries:
+            item = event_item(entry)
+            recorded = _when(entry.get("recorded_at"))
+            if item is None or (
+                self._replay_floor and recorded and recorded < self._replay_floor
+            ):
+                continue
+            for cid in self._hub.channels_for(item["event"], item["severity"]):
+                old = queues.get(cid, _NO_EVENTS)
+                queue = [*old.get("events", []), item]
+                over = max(0, len(queue) - MAX_EVENTS)
+                queues = {
+                    **queues,
+                    cid: {
+                        "events": queue[over:],
+                        "overflow": old.get("overflow", 0) + over,
+                    },
+                }
+        return queues, entries[-1]["seq"] if entries else seq
+
     # --- one poll ----------------------------------------------------------
+
+    def compact_journal(self, _deadline: float) -> dict:
+        """The journal-compact job: drops only what this dispatcher has saved as taken."""
+        if self._journal is None:
+            return {"dropped": 0}
+        dropped = self._journal.compact(datetime.now(timezone.utc), self.committed_seq)
+        return {"dropped": dropped}
 
     def _routed(self, severity: int) -> set[str]:
         return set(self._hub.channels_for("alert", severity))
@@ -244,27 +429,87 @@ class AlertDispatcher:
         items = await self._new_items(
             now, any(st.get("pending") for st in old.values())
         )
+        # NET-319: this poll's journal events join their channels' queues
+        queues, seq = await self._take_events(
+            {
+                cid: st
+                for cid, st in self._events.get("channels", {}).items()
+                if cid in live and isinstance(st, dict)
+            },
+            now,
+        )
         targets = {cid for i in items or [] for cid in self._routed(i["severity"])}
         targets |= {cid for cid, st in old.items() if st.get("pending")}
+        # OLD CODE: targets = sorted(targets) (NET-319: channels with queued events too)
+        targets |= {
+            cid for cid, q in queues.items() if q.get("events") or q.get("overflow")
+        }
         targets = sorted(targets)
         # channels at once: a slow mail server never holds up another channel
-        states = await asyncio.gather(
+        # OLD CODE START — NET-319: _deliver also takes and returns the channel's event queue
+        # states = await asyncio.gather(
+        #     *(
+        #         self._deliver(cid, old.get(cid, _EMPTY), items or [], now)
+        #         for cid in targets
+        #     )
+        # )
+        # OLD CODE END
+        results = await asyncio.gather(
             *(
-                self._deliver(cid, old.get(cid, _EMPTY), items or [], now)
+                self._deliver(
+                    cid,
+                    old.get(cid, _EMPTY),
+                    items or [],
+                    now,
+                    queues.get(cid, _NO_EVENTS),
+                )
                 for cid in targets
             )
         )
+        states = [state for state, _ in results]
         self._state = {
             # a failed query keeps the cursor, so the next poll reads this window too
             "cursor": self._state.get("cursor") if items is None else _iso(now),
             "channels": {**old, **dict(zip(targets, states))},
         }
         self._save()
+        if self._journal is None:
+            return
+        # after the alert state: a crash between the two saves repeats events, never loses them
+        merged = {**queues, **{cid: q for cid, (_, q) in zip(targets, results)}}
+        self._events = {
+            "journal_seq": seq,
+            "channels": {
+                cid: q
+                for cid, q in merged.items()
+                if q.get("events") or q.get("overflow")
+            },
+        }
+        if self._save_events():
+            self.committed_seq = seq
 
+    # OLD CODE START — NET-319: alerts only, returning the alert state
+    # async def _deliver(
+    #     self, cid: str, st: dict, items: list[dict], now: datetime
+    # ) -> dict:
+    # OLD CODE END
     async def _deliver(
-        self, cid: str, st: dict, items: list[dict], now: datetime
-    ) -> dict:
-        """The channel's next state after sending it what is new for it, or queueing it."""
+        self,
+        cid: str,
+        st: dict,
+        items: list[dict],
+        now: datetime,
+        ev: dict = _NO_EVENTS,
+    ) -> tuple[dict, dict]:
+        """The channel's next (alert state, event queue) after sending it what is new for it,
+        or queueing it. Events ride in the same message as alerts and are never given up."""
+        # a rule turned off since the event was queued takes it out, as for alerts
+        events = [
+            e
+            for e in ev.get("events") or []
+            if cid in self._hub.channels_for(e.get("event", ""), e.get("severity", 3))
+        ]
+        overflow = ev.get("overflow", 0) if events else 0
         done = {
             sig: v
             for sig, v in (st.get("done") or {}).items()
@@ -364,26 +609,50 @@ class AlertDispatcher:
         today = {"day": day, "sent": st.get("sent", 0) if st.get("day") == day else 0}
         slow = today["sent"] >= DAILY_BUDGET
         retry_at = _when(st.get("retry_at")) if st.get("retry_at") else None
-        if not candidates or (retry_at and retry_at > now):
+        waiting = {"events": events, "overflow": overflow}
+        # OLD CODE: if not candidates or (retry_at and retry_at > now): (NET-319: queued events send too)
+        if (not candidates and not events) or (retry_at and retry_at > now):
             # the queue waits for the hourly digest; the hub keeps a failed send's error over this
             # OLD CODE: if slow and candidates and not any(i["attempts"] for i in candidates): (security delta: the hub decides, so a given-up queue can't hide a wrong password)
-            if slow and candidates:
+            # OLD CODE: if slow and candidates: (NET-319: queued events wait for the digest too)
+            if slow and (candidates or events):
                 n = len(candidates)
+                # NET-319: queued events are named after the alerts, so alert-only wording is unchanged
+                others = len(events) + overflow
+                also = (
+                    f" and {others} other event{'' if others == 1 else 's'}"
+                    if others
+                    else ""
+                )
                 self._hub.record_held(
                     cid,
                     f"Daily limit of {DAILY_BUDGET} messages reached: until 00:00 UTC, one "
-                    f"digest an hour, worst alerts first. {n} alert{'' if n == 1 else 's'} "
-                    "waiting for the next one",
+                    f"digest an hour, worst alerts first. {n} alert{'' if n == 1 else 's'}"
+                    f"{also} waiting for the next one",
                 )
+            # OLD CODE START — NET-319: the event queue is returned with the alert state
+            # return {
+            #     "done": done,
+            #     "pending": candidates,
+            #     # past the budget the hourly slot holds even with nothing queued
+            #     "retry_at": st.get("retry_at") if candidates or slow else None,
+            #     **today,
+            # }
+            # OLD CODE END
             return {
                 "done": done,
                 "pending": candidates,
                 # past the budget the hourly slot holds even with nothing queued
-                "retry_at": st.get("retry_at") if candidates or slow else None,
+                "retry_at": st.get("retry_at")
+                if candidates or events or slow
+                else None,
                 **today,
-            }
+            }, waiting
 
-        title, body, worst = digest(candidates)
+        # OLD CODE: title, body, worst = digest(candidates) (NET-319: with the queued events)
+        title, body, worst = digest(
+            sorted([*candidates, *events], key=_worst_first), overflow
+        )
         # OLD CODE START — delta review: at the end, Pushover's 1024-character clip dropped the notice
         # if today["sent"] == DAILY_BUDGET - 1:
         #     body += (
@@ -429,7 +698,7 @@ class AlertDispatcher:
                 else None,
                 **today,
                 "sent": sent,
-            }
+            }, _NO_EVENTS
 
         # The service turned it down: that counts, since a wrong password tried every minute gets
         # the account locked. A send that never reached it doesn't (an outage mustn't use the day)
@@ -445,10 +714,25 @@ class AlertDispatcher:
                 cid,
                 len(RETRY_AFTER) + 1,
             )
+        # NET-319: events never give up; past the last back-off they retry at its pace
+        tried_events = [{**e, "attempts": e.get("attempts", 0) + 1} for e in events]
         # the item with the fewest tries sets the pace, so a new alert keeps its quick retry
-        delay = RETRY_AFTER[min(i["attempts"] for i in kept) - 1] if kept else None
+        # OLD CODE: delay = RETRY_AFTER[min(i["attempts"] for i in kept) - 1] if kept else None
+        paces = [min(i["attempts"], len(RETRY_AFTER)) for i in [*kept, *tried_events]]
+        delay = RETRY_AFTER[min(paces) - 1] if paces else None
         # past the budget a refusal waits for the hourly slot, like a digest
-        if outcome == "refused" and today["sent"] >= DAILY_BUDGET:
+        # OLD CODE: if outcome == "refused" and today["sent"] >= DAILY_BUDGET:
+        # (NET-319 review: events never give up, so a wrong password would be tried every 15
+        # minutes for ever, under the budget; once only events past the back-off are left, a
+        # refusal waits for the hourly slot too)
+        events_only_past_backoff = (
+            not kept
+            and tried_events
+            and all(e["attempts"] > len(RETRY_AFTER) for e in tried_events)
+        )
+        if outcome == "refused" and (
+            today["sent"] >= DAILY_BUDGET or events_only_past_backoff
+        ):
             retry = _next_digest_at(now)
         else:
             retry = now + delay if delay else None
@@ -459,7 +743,7 @@ class AlertDispatcher:
             # OLD CODE: "retry_at": _iso(now + delay) if delay else None, (security delta: see retry)
             "retry_at": _iso(retry) if retry else None,
             **today,
-        }
+        }, {"events": tried_events, "overflow": overflow}
 
     # --- background task ---------------------------------------------------
 

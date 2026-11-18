@@ -8,6 +8,8 @@ import {
 	getRules,
 	createRule,
 	deleteRule,
+	getJobs,
+	runJob,
 } from './notification-hub';
 
 // ---------------------------------------------------------------------------
@@ -205,6 +207,65 @@ describe('notification-hub API client', () => {
 		it('returns false on error', async () => {
 			mockFetchFailure(404);
 			expect(await deleteRule('nope')).toBe(false);
+		});
+	});
+
+	// -- getJobs (NET-319) -----------------------------------------------------
+
+	describe('getJobs', () => {
+		it('GETs /api/jobs and returns the checks', async () => {
+			const jobs = [{ name: 'journal-compact', label: 'Event journal clean-up', running: false }];
+			mockFetchSuccess({ jobs });
+			const result = await getJobs();
+			expect(fetch).toHaveBeenCalledWith('/api/jobs');
+			expect(result.jobs).toEqual(jobs);
+		});
+
+		it('throws on HTTP error instead of listing no checks', async () => {
+			mockFetchFailure(502);
+			await expect(getJobs()).rejects.toThrow('HTTP 502');
+		});
+
+		it('throws on network error', async () => {
+			mockFetchReject();
+			await expect(getJobs()).rejects.toThrow('network error');
+		});
+	});
+
+	// -- runJob (NET-319) ------------------------------------------------------
+
+	describe('runJob', () => {
+		it('POSTs to the check and returns the acceptance (202)', async () => {
+			mockFetchSuccess({ accepted: true, name: 'journal-compact' }, 202);
+			const result = await runJob('journal-compact');
+			expect(fetch).toHaveBeenCalledWith('/api/jobs/journal-compact/run', { method: 'POST' });
+			expect(result).toEqual({ ok: true, data: { accepted: true, name: 'journal-compact' } });
+		});
+
+		it('encodes the name into the path', async () => {
+			mockFetchSuccess({ accepted: true, name: 'a/b' }, 202);
+			await runJob('a/b');
+			expect(fetch).toHaveBeenCalledWith('/api/jobs/a%2Fb/run', { method: 'POST' });
+		});
+
+		it("returns the daemon's reason when the check is already running (409)", async () => {
+			mockFetchSuccess({ error: 'journal-compact is already running' }, 409);
+			expect(await runJob('journal-compact')).toEqual({ ok: false, error: 'journal-compact is already running' });
+		});
+
+		it("returns the daemon's reason for an unknown check (404)", async () => {
+			mockFetchSuccess({ error: 'no such job: nope' }, 404);
+			expect(await runJob('nope')).toEqual({ ok: false, error: 'no such job: nope' });
+		});
+
+		it('returns the status when the refusal has no reason', async () => {
+			mockFetchFailure(500);
+			expect(await runJob('journal-compact')).toEqual({ ok: false, error: 'HTTP 500' });
+		});
+
+		it('says NetTap could not be reached on a network error', async () => {
+			mockFetchReject();
+			expect(await runJob('journal-compact')).toEqual({ ok: false, error: "couldn't reach NetTap" });
 		});
 	});
 });

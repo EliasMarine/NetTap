@@ -20,10 +20,15 @@
 		getRules,
 		createRule,
 		deleteRule,
+		getJobs,
+		runJob,
 		type NotificationChannel,
 		type RoutingRule,
 		type DeliveryLogEntry,
+		type JobState,
 	} from '$lib/api/notification-hub';
+	import { formatRelativeTime } from '$lib/api/pcap';
+	import { fmt } from '$lib/utils/drilldown';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import type { SeverityLevel } from '$lib/utils/severity';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -84,6 +89,8 @@
 	let channels = $state<NotificationChannel[]>([]);
 	let rules = $state<RoutingRule[]>([]);
 	let deliveryLog = $state<DeliveryLogEntry[]>([]);
+	// NET-319: the daemon's background checks (GET /api/jobs)
+	let jobs = $state<JobState[]>([]);
 	// OLD CODE START — the whole page hid behind one loading card on every reload; each card now
 	// shows its own loading state, once, until the first load lands
 	// let loading = $state(true);
@@ -190,7 +197,13 @@
 	];
 	// NET-224: only alerts have a sender (the daemon's dispatcher); a rule for the others never fired
 	// OLD CODE: the rule form offered every entry of eventTypes
-	const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert');
+	// OLD CODE START — NET-319: new devices have a sender now (the event journal), so the form offers them too
+	// const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert');
+	// OLD CODE END
+	const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert' || e.value === 'new_device');
+	// The daemon sends new-device events at medium (3) and a rule fires only at or below its minimum, so a
+	// new-device rule takes 4 (All), as the daemon's own quick rule does; the form doesn't offer the choice
+	const NEW_DEVICE_MIN_SEVERITY = 4;
 
 	// OLD CODE START — the page refresh contract (PLAN §5.5): every load goes through refresh.run()
 	// // Load data on mount
@@ -200,7 +213,8 @@
 	// OLD CODE END
 
 	// #96: which section's last load failed (a failed request is not "none configured")
-	let failed = $state({ channels: false, rules: false, log: false });
+	// OLD CODE: let failed = $state({ channels: false, rules: false, log: false }); (NET-319: the background checks load too)
+	let failed = $state({ channels: false, rules: false, log: false, jobs: false });
 
 	// OLD CODE START — the page refresh contract (PLAN §5.5): a guarded loader that reports what loaded
 	// async function loadAll() {
@@ -224,17 +238,20 @@
 	// OLD CODE END
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
-		const results = await Promise.allSettled([getChannels(), getRules(), getDeliveryLog()]);
+		// OLD CODE: const results = await Promise.allSettled([getChannels(), getRules(), getDeliveryLog()]); (NET-319: and the background checks)
+		const results = await Promise.allSettled([getChannels(), getRules(), getDeliveryLog(), getJobs()]);
 		if (!guard.current(g)) return 'skipped';
-		const [chRes, ruRes, logRes] = results;
+		const [chRes, ruRes, logRes, jobsRes] = results;
 		// A failed reload keeps the last list it had and marks it stale
 		if (chRes.status === 'fulfilled') channels = chRes.value.channels;
 		if (ruRes.status === 'fulfilled') rules = ruRes.value.rules;
 		if (logRes.status === 'fulfilled') deliveryLog = logRes.value.log;
+		if (jobsRes.status === 'fulfilled') jobs = jobsRes.value.jobs;
 		failed = {
 			channels: chRes.status === 'rejected',
 			rules: ruRes.status === 'rejected',
 			log: logRes.status === 'rejected',
+			jobs: jobsRes.status === 'rejected',
 		};
 		loaded = true;
 		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
@@ -323,7 +340,9 @@
 	// Rule actions
 	async function handleAddRule() {
 		addingRule = true;
-		const result = await createRule(newRuleEventType, newRuleChannels, newRuleSeverity);
+		// OLD CODE: const result = await createRule(newRuleEventType, newRuleChannels, newRuleSeverity); (a new-device rule at 1–3 never fired)
+		const minSeverity = newRuleEventType === 'new_device' ? NEW_DEVICE_MIN_SEVERITY : newRuleSeverity;
+		const result = await createRule(newRuleEventType, newRuleChannels, minSeverity);
 		// OLD CODE: if (result) { … } else { showMessage('Failed to create rule.', 'error'); } (NET-224: no reason)
 		if (result.ok) {
 			showMessage('Routing rule created.', 'success');
@@ -346,6 +365,59 @@
 			showMessage('Failed to delete rule.', 'error');
 		}
 	}
+
+	// NET-319: the daemon queues the run (202) or says why not (409 running, 404 unknown); the list then shows its state
+	async function handleRunJob(job: JobState) {
+		const result = await runJob(job.name);
+		// OLD CODE START — a 202 only queues the run, and the daemon's reason is a capitalised sentence
+		// if (result.ok) {
+		// 	showMessage(`"${job.label}" started. Its result shows under Background checks when it finishes.`, 'success');
+		// } else {
+		// 	showMessage(`Couldn't start "${job.label}": ${result.error}.`, 'error');
+		// }
+		// OLD CODE END
+		if (result.ok) {
+			queuedPolls = QUEUED_POLLS;
+			showMessage(`Asked NetTap to run "${job.label}". Its result shows under Background checks when it finishes.`, 'success');
+		} else {
+			// the client's own fallback ("couldn't reach NetTap") is lower case
+			const reason = result.error.charAt(0).toUpperCase() + result.error.slice(1);
+			showMessage(`Couldn't start "${job.label}". ${reason}.`, 'error');
+		}
+		await refresh.run();
+	}
+
+	// Keep the list fresh while a check runs, and for one scheduler tick (30 s) after a 202 so a
+	// queued run is seen starting. runIfIdle: a slow load isn't cancelled by the next tick.
+	const JOB_POLL_MS = 3_000;
+	const QUEUED_POLLS = 10;
+	let queuedPolls = $state(0);
+	const watchingJobs = $derived(queuedPolls > 0 || jobs.some((j) => j.running));
+	$effect(() => {
+		if (!watchingJobs) return;
+		const poll = setInterval(() => {
+			if (queuedPolls > 0) queuedPolls--;
+			void refresh.runIfIdle();
+		}, JOB_POLL_MS);
+		return () => clearInterval(poll);
+	});
+
+	/** What a check's last run came to, or that it is running now; `tone` is the .res class. */
+	function jobResult(job: JobState): { text: string; tone: string } {
+		if (job.running) return job.overdue ? { text: 'Running, overdue', tone: 'is-medium' } : { text: 'Running…', tone: '' };
+		if (job.last_error) return { text: job.last_error, tone: 'is-high' };
+		if (!job.last_run) return { text: 'Not run yet', tone: '' };
+		return job.partial ? { text: 'Partial', tone: 'is-medium' } : { text: 'OK', tone: 'is-live' };
+	}
+
+	const jobColumns: Column<JobState>[] = [
+		{ key: 'label', label: 'Check' },
+		{ key: 'last_run', label: 'Last run', cell: lastRunCell, sortValue: (j) => (j.last_run ? Date.parse(j.last_run) || 0 : 0) },
+		{ key: 'last_duration_ms', label: 'Took', numeric: true, cell: tookCell },
+		{ key: 'result', label: 'Result', cell: jobResultCell, sortValue: (j) => jobResult(j).text },
+		{ key: 'skipped_overlaps', label: 'Skipped overlaps', numeric: true },
+		{ key: 'run', label: 'Action', cell: runCell, sortValue: (j) => (j.running ? 1 : 0) },
+	];
 
 	function channelTypeBadge(type: string): string {
 		return channelTypeConfigs[type]?.label ?? type;
@@ -393,6 +465,18 @@
 {/snippet}
 {#snippet channelCell(entry: LogRow)}<span class="tag">{entry.channel_type}</span>{/snippet}
 {#snippet timeCell(entry: LogRow)}<span class="num">{formatTime(entry.timestamp)}</span>{/snippet}
+{#snippet lastRunCell(job: JobState)}
+	{#if job.last_run}<span class="num" title={formatTime(job.last_run)}>{formatRelativeTime(job.last_run)}</span>{:else}Never{/if}
+{/snippet}
+{#snippet tookCell(job: JobState)}{job.last_duration_ms == null ? '—' : `${fmt(job.last_duration_ms)} ms`}{/snippet}
+{#snippet jobResultCell(job: JobState)}
+	{@const result = jobResult(job)}
+	<span class={['res', result.tone]}>{result.text}</span>
+{/snippet}
+{#snippet runCell(job: JobState)}
+	<!-- OLD CODE: no aria-label, so every row's button was named "Run now" -->
+	<button class="btn" type="button" aria-label={`Run now: ${job.label}`} onclick={() => serial(() => handleRunJob(job))} disabled={locked || job.running}>Run now</button>
+{/snippet}
 
 <!-- OLD CODE START — NET-273: a tab of Settings now; the page's title, heading and intro line say it
 <svelte:head>
@@ -528,15 +612,18 @@ OLD CODE END -->
 							{/each}
 						</select>
 					</div>
-					<div class="field">
-						<label class="label" for="rule-severity">Minimum severity</label>
-						<select class="select" id="rule-severity" bind:value={newRuleSeverity}>
-							<option value={1}>Critical only</option>
-							<option value={2}>High and above</option>
-							<option value={3}>Medium and above</option>
-							<option value={4}>All (including low)</option>
-						</select>
-					</div>
+					<!-- OLD CODE: the severity field showed for every event type (a new-device rule always takes NEW_DEVICE_MIN_SEVERITY) -->
+					{#if newRuleEventType !== 'new_device'}
+						<div class="field">
+							<label class="label" for="rule-severity">Minimum severity</label>
+							<select class="select" id="rule-severity" bind:value={newRuleSeverity}>
+								<option value={1}>Critical only</option>
+								<option value={2}>High and above</option>
+								<option value={3}>Medium and above</option>
+								<option value={4}>All (including low)</option>
+							</select>
+						</div>
+					{/if}
 				</div>
 				<fieldset class="field channel-picks">
 					<legend class="label">Send to channels</legend>
@@ -587,6 +674,8 @@ OLD CODE END -->
 							{:else}
 								<span>severity {rule.min_severity}</span>
 							{/if}
+							<!-- NET-319: an off rule sends nothing (absent means on) -->
+							{#if rule.enabled === false}<span class="tag">Off</span>{/if}
 						</span>
 						<!-- OLD CODE: onclick={() => handleDeleteRule(rule.id)} (NET-273: one write at a time) -->
 						<button class="btn" type="button" onclick={() => serial(() => handleDeleteRule(rule.id))} disabled={locked}>Delete</button>
@@ -618,6 +707,33 @@ OLD CODE END -->
 				<div class="notice is-warn" role="status"><Icon name="warn" />Couldn't refresh the delivery log: showing the last entries.</div>
 			{/if}
 			<DataTable columns={logColumns} rows={logRows} ariaLabel="Recent notification deliveries" rowKey={(r) => r.key} />
+		{/if}
+	</Card>
+
+	<!-- NET-319: the daemon's scheduled maintenance, how each last ran, and Run now -->
+	<Card title="Background checks" sub={countLabel(failed.jobs, jobs.length, 'check')} class="c-12">
+		<p class="card-text">Maintenance NetTap runs on a schedule. Run now starts one straight away.</p>
+		{#if !loaded}
+			<CardState state="loading" title="Loading background checks" />
+		{:else if failed.jobs && jobs.length === 0}
+			<CardState
+				state="error"
+				title="Couldn't load the background checks: the request failed."
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={() => refresh.run()}
+			/>
+		{:else if jobs.length === 0}
+			<CardState
+				state="empty"
+				icon="system"
+				title="No background checks"
+				message="The checks NetTap runs on a schedule appear here."
+			/>
+		{:else}
+			{#if failed.jobs}
+				<div class="notice is-warn" role="status"><Icon name="warn" />Couldn't refresh the background checks: showing the last list.</div>
+			{/if}
+			<DataTable columns={jobColumns} rows={jobs} ariaLabel="Background checks" rowKey={(j) => j.name} />
 		{/if}
 	</Card>
 </div>

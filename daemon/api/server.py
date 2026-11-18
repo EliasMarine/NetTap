@@ -141,6 +141,9 @@ from services.live_connections import LiveConnectionTracker
 from services.bandwidth_tracker import BandwidthTracker
 from services.notification_hub import NotificationHub
 from services.notification_dispatcher import AlertDispatcher
+from services.event_journal import EventJournal
+from services.scheduled_jobs import Job, Scheduler
+from api.jobs import register_jobs_routes
 from services.changelog import ChangelogService
 from services.cert_monitor import CertificateMonitor
 from services.suricata_rules import SuricataRuleManager
@@ -1381,8 +1384,18 @@ def create_app(
     #     client=storage._client, changelog=changelog_service
     # )
     # OLD CODE END
+    # OLD CODE START — NET-319: new devices are journaled first, for their notification
+    # device_registry = DeviceRegistry(
+    #     client=storage._client, changelog=changelog_service, custom=device_custom
+    # )
+    # OLD CODE END
+    # NET-319: the durable event record; built before the registry, its first producer
+    event_journal = EventJournal()
     device_registry = DeviceRegistry(
-        client=storage._client, changelog=changelog_service, custom=device_custom
+        client=storage._client,
+        changelog=changelog_service,
+        custom=device_custom,
+        journal=event_journal,
     )
     unifi_integration = UnifiIntegration()
     if unifi_integration.load_config():
@@ -1415,8 +1428,33 @@ def create_app(
         os.path.join(
             os.path.dirname(notification_config), "notification-dispatch.json"
         ),
+        # NET-319: new devices (and later events) from the journal
+        journal=event_journal,
     )
     app.cleanup_ctx.append(alert_dispatcher.ctx)
+
+    # NET-319: background checks; later slices add their jobs here
+    scheduler = Scheduler(
+        [
+            Job(
+                "journal-compact",
+                "Event journal clean-up",
+                every_s=86400,
+                deadline_s=60,
+                # OLD CODE START — NET-319 review: the cursor was passed here, untested
+                # run=lambda _deadline: {
+                #     "dropped": event_journal.compact(
+                #         datetime.now(timezone.utc), alert_dispatcher.committed_seq
+                #     )
+                # },
+                # OLD CODE END
+                # keeps every event the dispatcher hasn't saved as taken
+                run=alert_dispatcher.compact_journal,
+            )
+        ]
+    )
+    register_jobs_routes(app, scheduler)
+    app.cleanup_ctx.append(scheduler.ctx)
 
     # Changelog (network event audit log)
     # OLD CODE START — 2026-11-01: built above, before the device registry, which logs new devices to it

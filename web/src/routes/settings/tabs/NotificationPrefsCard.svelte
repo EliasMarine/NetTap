@@ -35,6 +35,8 @@
 	let webhookHasUrl = $state(false);
 	let webhookHint = $state('');
 	let smtpConfigured = $state(false);
+	// NET-319: new devices go to the same channels; a config that never set it reads as on
+	let newDevice = $state(true);
 	let notifSaving = $state(false);
 	let notifMessage = $state('');
 	let notifError = $state(false);
@@ -44,8 +46,9 @@
 	let testMessage = $state('');
 	let testError = $state(false);
 	// review L3: the test sends through the saved settings, so it waits while the form differs
+	// OLD CODE: JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl]); (NET-319: and new devices)
 	const notifForm = () =>
-		JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl]);
+		JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice]);
 	// the blank form until the load lands, so nothing reads as unsaved while it loads
 	let notifSavedForm = $state(notifForm());
 	// a failed load leaves nothing to compare with; the test then reports the daemon's own answer
@@ -84,8 +87,10 @@
 		min_severity?: number;
 		email?: { enabled?: boolean; recipients?: string[]; smtp_configured?: boolean };
 		webhook?: { enabled?: boolean; has_url?: boolean; url_hint?: string };
+		new_device?: boolean;
 	}) {
 		severityThreshold = SEVERITY_VALUES[(data.min_severity ?? 2) - 1] ?? 'high';
+		newDevice = data.new_device ?? true;
 		emailEnabled = data.email?.enabled ?? false;
 		emailAddress = (data.email?.recipients ?? []).join(', ');
 		smtpConfigured = data.email?.smtp_configured ?? false;
@@ -165,6 +170,7 @@
 					},
 					// a blank URL keeps the saved one
 					webhook: { enabled: webhookEnabled, url: webhookUrl.trim() },
+					new_device: newDevice,
 				}),
 			});
 			// OLD CODE START — review L2: a body that couldn't be read, even after the daemon saved, said "Failed to connect"
@@ -249,7 +255,8 @@
 </script>
 
 <!-- OLD CODE: sub="Which alerts reach you · by email and webhook" (NET-224: the daemon sends them now) -->
-<Card title="Notification preferences" sub="Which alerts reach you · by email and webhook, with or without this page open" class="c-12">
+<!-- OLD CODE: sub="Which alerts reach you · by email and webhook, with or without this page open" (NET-319: new devices too) -->
+<Card title="Notification preferences" sub="Which alerts and new devices reach you · by email and webhook, with or without this page open" class="c-12">
 	<!-- NET-273: disabled while the tab's lock is held, so nothing is typed into a form a reply is about to replace -->
 	<fieldset class="stack prefs" disabled={locked}>
 		{#if notifLoadFailed}
@@ -284,6 +291,15 @@
 				<p class="field-help">POST JSON payloads will be sent to this URL for each alert.</p>
 			</div>
 			OLD CODE END -->
+		</div>
+
+		<!-- NET-319: new devices reach the same webhook and email as alerts -->
+		<div class="switch-row">
+			<input type="checkbox" role="switch" class="switch" id="new-device-toggle" bind:checked={newDevice} aria-describedby="new-device-toggle-help" />
+			<div>
+				<label class="label" for="new-device-toggle">Tell me about new devices</label>
+				<p class="field-help" id="new-device-toggle-help">A message when a device joins your network for the first time, through the webhook and email below, whatever the severity threshold.</p>
+			</div>
 		</div>
 
 		<div class="switch-row">
