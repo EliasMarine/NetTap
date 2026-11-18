@@ -49,9 +49,17 @@ def read(path: str | None = None) -> dict:
         return {"tz": UTC, "set": False, "ok": True}
     # JSONDecodeError and UnicodeDecodeError are ValueErrors
     except (OSError, ValueError) as exc:
-        logger.warning("Ignoring the time zone file %s: %s", where, exc)
+        # OLD CODE: logger.warning("Ignoring the time zone file %s: %s", where, exc)
+        # (review: every usage request read it, so one bad file logged on every page load)
+        _warn_once(f"Ignoring the time zone file {where}: {exc}")
         return {"tz": UTC, "set": False, "ok": False}
     return {"tz": name, "set": True, "ok": True}
+
+
+@functools.lru_cache(maxsize=16)
+def _warn_once(text: str) -> None:
+    """Each distinct warning once (the cache is what remembers it was logged)."""
+    logger.warning(text)
 
 
 def write(name: str, path: str | None = None) -> dict:

@@ -18,6 +18,7 @@ from datetime import date
 from aiohttp import web
 
 from api.error_replies import public_json
+from api.offload import run_blocking
 from api.time_range import (
     _YEARS,
 )  # 1970 to 9998: every local day has a UTC start and end
@@ -136,8 +137,10 @@ async def handle_put_timezone(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
+    name = body.get("tz") if isinstance(body, dict) else None
     try:
-        saved = owner_tz.write(body.get("tz") if isinstance(body, dict) else None)
+        # OLD CODE: saved = owner_tz.write(...) (review: its fsync ran on the request loop)
+        saved = await run_blocking(owner_tz.write, name)
     except ValueError as exc:
         return _bad(exc)
     except OSError as exc:

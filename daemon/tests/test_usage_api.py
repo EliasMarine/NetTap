@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -335,3 +336,29 @@ def test_the_cap_reads_the_ledgers_month(env):
     assert body["usage_percent"] == 170.0
     assert (body["monthly_cap_bytes"], body["enabled"]) == (10_000, True)
     assert (body["tz"], body["since"], body["complete"]) == ("UTC", "2026-11-01", False)
+
+
+def test_the_time_zone_put_saves_off_the_request_loop(env, monkeypatch):
+    """Review: write_file_atomic's fsync ran on the loop, holding every other request."""
+    app, _ = env.build(_ledger_file())
+    threads = []
+    write = owner_tz.write
+
+    def recording(name):
+        threads.append(threading.current_thread())
+        return write(name)
+
+    monkeypatch.setattr(owner_tz, "write", recording)
+    status, _ = _calls(app, ("PUT", "/api/settings/timezone", {"tz": "Asia/Tokyo"}))[0]
+    assert status == 200
+    assert threads and threads[0] is not threading.main_thread()  # the loop's thread
+
+
+def test_an_unreadable_time_zone_file_is_logged_once_per_error(env, tmp_path, caplog):
+    """Review: every usage request reads it, so a bad file logged on every page load."""
+    for text in ("{not json", '{"tz": "Mars/Olympus_Mons"}'):
+        (tmp_path / "owner-timezone.json").write_text(text)
+        for _ in range(3):
+            assert owner_tz.read() == {"tz": "UTC", "set": False, "ok": False}
+    warnings = [r for r in caplog.records if "Ignoring the time zone file" in r.message]
+    assert len(warnings) == 2

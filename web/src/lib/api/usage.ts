@@ -94,7 +94,10 @@ export const hasFigures = (d: Pick<UsageDay, 'status'>): boolean => !['future', 
 export async function getUsageMonth(): Promise<UsageMonth> {
 	const res = await fetch('/api/usage/month');
 	if (!res.ok) throw new Error(`Monthly usage failed: HTTP ${res.status}`);
-	return res.json();
+	const body = await res.json();
+	// the page draws `days` and reads `bytes`: a reply without them is an error, not an empty month
+	if (!Array.isArray(body?.days) || typeof body?.bytes?.total !== 'number') throw new Error("Monthly usage failed: the reply wasn't a month");
+	return body;
 }
 
 export async function getTimezone(): Promise<OwnerTimezone> {

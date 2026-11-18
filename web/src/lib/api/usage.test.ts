@@ -13,7 +13,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('getUsageMonth', () => {
 	it("asks for the owner's current month, leaving the month to the daemon", async () => {
-		const month = { tz: 'America/Los_Angeles', year: 2026, month: 11, days: [] };
+		const month = { tz: 'America/Los_Angeles', year: 2026, month: 11, days: [], bytes: { download: 0, upload: 0, local: 0, total: 0 } };
 		reply(month);
 		expect(await getUsageMonth()).toEqual(month);
 		expect(call()[0]).toBe('/api/usage/month');
@@ -22,6 +22,15 @@ describe('getUsageMonth', () => {
 	it('throws on a failed request, so the page shows its error state instead of 0 GB', async () => {
 		reply({}, 503);
 		await expect(getUsageMonth()).rejects.toThrow('Monthly usage failed: HTTP 503');
+	});
+
+	it('refuses a reply without its days or its bytes, instead of drawing an empty month', async () => {
+		reply({ tz: 'UTC', bytes: { download: 0, upload: 0, local: 0, total: 0 } });
+		await expect(getUsageMonth()).rejects.toThrow("Monthly usage failed: the reply wasn't a month");
+		reply({ tz: 'UTC', days: [] });
+		await expect(getUsageMonth()).rejects.toThrow("Monthly usage failed: the reply wasn't a month");
+		reply(null);
+		await expect(getUsageMonth()).rejects.toThrow("Monthly usage failed: the reply wasn't a month");
 	});
 });
 

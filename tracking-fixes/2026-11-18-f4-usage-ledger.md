@@ -70,6 +70,40 @@
   5. **Small duplicates.**
   6. **The deploy check would fail on a re-run once a zone was set.** It now compares yesterday in the ledger's own zone over that day's exact bounds.
 
+- **Two-angle review on PR #337** (security engineer, Python reviewer, TypeScript reviewer): no critical issues. Fixed in the second commit:
+  - **Python, HIGH: one OpenSearch outage burned the whole sweep.** Every chunk failed in one pass, and every older day showed `stale` for about 24 h. On the G11, OpenSearch answers 401 after every recreate until the bootstrap runs. Now:
+    - a listing failure ends the pass before any recount;
+    - a failed chunk stops the run, so an outage costs one chunk per run.
+
+    Today's figure pauses for that pass too.
+  - **Python, MEDIUM:**
+    - `updated_at` moved on failure-only saves. It now moves only on a successful recount.
+    - No test caught the gateway check losing its budget. One does now.
+  - **Python, LOW:**
+    - `SerializationError` and malformed buckets escaped the chunk handler. `LEDGER_QUERY_ERRORS` is now `(QueryFailed, OpenSearchException)`, and malformed replies are `QueryFailed`.
+    - A chunk could start with under 1 s left. It now needs at least 30 s.
+    - The time-zone write ran on the event loop. It now runs off it.
+    - A corrupt time-zone file logged a warning on every request. It now logs once per distinct error.
+  - **Security, LOW:**
+    - A second zone change overwrote the only kept copy of the old ledger. Copies are now `usage-ledger.gen<N>.<last save>.json` and `usage-ledger.corrupt.<time>.json`, never overwritten. This replaces the plan's single `.prev`.
+    - A recount request restarted a running sweep. While one runs, it is now a no-op.
+  - **TypeScript, MEDIUM:**
+    - A click on a day with no figures told the moment page "0 B".
+    - There was no way to confirm UTC. Save is now enabled while the zone is unset, and the notice has a "Keep UTC" button.
+    - The empty Daily rate card promised a figure this month when counting began mid-month.
+    - Test gaps for the unsaved guard, stale responses, the `flagged` markers and a failed refresh.
+  - **TypeScript, LOW:**
+    - The month reply is validated.
+    - `Intl.supportedValuesOf` is guarded.
+    - The chart's window end is clamped.
+  - **Accepted, not changed:**
+    - A failed month request also holds back the device card, so every card always covers the same month.
+    - Zone names vanishing from the image's zone database: tzdata keeps old names as links.
+  - **After the fixes:**
+    - daemon: 5,434 passed;
+    - web: 5,784 passed;
+    - svelte-check, colours and `check:e2e`: clean.
+
 ## Deploy
 
 `bash scripts/remote/deploy-usage-ledger.sh`:

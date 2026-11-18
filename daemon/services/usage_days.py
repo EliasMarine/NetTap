@@ -322,14 +322,16 @@ def sweep_days(state: dict, today: date) -> list[date]:
 
 
 def sweep_due(state: dict, rules: str, now: datetime, requested: bool) -> bool:
-    """A new sweep starts on request, after a rules change, or a day after the last one ended."""
+    """A new sweep starts after a rules change, on request or a day after the last one ended."""
     sweep = state["sweep"]
-    if requested or state.get("rules") != rules:
-        return True
+    # OLD CODE: if requested or state.get("rules") != rules: (review: a request restarted a running
+    # sweep at its oldest chunk, so a request loop re-queried those days for ever)
+    if state.get("rules") != rules:
+        return True  # days already swept were counted under the old rules
     if sweep.get("cursor"):
-        return False  # one is under way
+        return False  # one is under way; a request just lets it finish
     finished = parse_iso(sweep.get("finished_at"))
-    return finished is None or now - finished >= SWEEP_EVERY
+    return requested or finished is None or now - finished >= SWEEP_EVERY
 
 
 def start_sweep(state: dict, rules: str, now: datetime, today: date) -> dict:

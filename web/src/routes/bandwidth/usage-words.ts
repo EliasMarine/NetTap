@@ -36,12 +36,15 @@ export const STATUS_WORDS: Record<UsageDayStatus, string> = {
 	approximate: 'approximate',
 };
 
+/** Counting began after the month's first day, so the month can't be complete */
+const startsBeforeSince = (m: UsageMonth): boolean => !!m.since && m.days.length > 0 && m.since > m.days[0].date;
+
 /** "November 2026, Europe/London", then each caveat the month's days carry */
 export function monthNote(m: UsageMonth): string {
 	const has = (...statuses: UsageDayStatus[]) => m.days.some((d) => statuses.includes(d.status));
 	return [
 		`${monthName(m.year, m.month)}, ${m.tz}`,
-		m.since && m.days.length > 0 && m.since > m.days[0].date && `Since ${formatDate(m.since)}`,
+		startsBeforeSince(m) && `Since ${formatDate(m.since!)}`,
 		has('pending', 'recount_pending') && 'Still counting',
 		has('approximate') && 'Approximate: some raw data was cleared before the day was final',
 		has('old_rules') && 'Counted under earlier exclusions',
@@ -62,3 +65,12 @@ export function notFinalLine(days: readonly UsageDay[]): string {
 		.map(([words, dates]) => `${words.charAt(0).toUpperCase()}${words.slice(1)}: ${dates.length > 3 ? `${dates.length} days` : dates.join(', ')}`)
 		.join(' · ');
 }
+
+/** Why the daily rate (and the projection) is missing: they need every elapsed day counted under the current rules */
+export function noRateReason(m: UsageMonth): string {
+	if (startsBeforeSince(m)) return 'Shown from next month, the first one counted from its first day';
+	return m.complete ? 'Shown after the first hour of the month' : 'Shown once every day so far is counted';
+}
+
+/** UTC under any of its names, as UTC: a browser in "Etc/UTC" is in the zone NetTap counts in by default */
+export const sameAsUtc = (zone: string): string => (['UTC', 'Etc/UTC', 'Etc/Universal'].includes(zone) ? 'UTC' : zone);

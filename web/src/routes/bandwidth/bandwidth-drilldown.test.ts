@@ -119,5 +119,33 @@ describe('Bandwidth — a day opens its moment (NET-249)', () => {
 		await fireEvent.keyDown(chart(), { key: 'End' });
 		await fireEvent.keyDown(chart(), { key: 'Enter' });
 		expect(Object.fromEntries(target(0).searchParams)).toMatchObject({ from: NOV_2.start, to: '2026-11-02T13:20:00.000Z', chart_to: '2026-11-02T13:20:00.000Z' });
+		// it has no figures, so the link carries none: the moment page must not read "you clicked 0 B"
+		expect(['down', 'up', 'local'].filter((k) => target(0).searchParams.has(k))).toEqual([]);
+		// nor does a range that takes it in
+		await fireEvent.keyDown(chart(), { key: 'Home', shiftKey: true });
+		await fireEvent.keyDown(chart(), { key: 'Enter' });
+		expect(target(1).searchParams.get('from')).toBe(NOV_1.start);
+		expect(['down', 'up', 'local'].filter((k) => target(1).searchParams.has(k))).toEqual([]);
+	});
+
+	it('F4: a day not counted opens its window with no figures', async () => {
+		const reply = dailyReply as { days: UsageDay[] };
+		const notCounted: UsageDay = { ...reply.days[0], cutoff: null, counted_at: null, download: null, upload: null, local: null, total: null, status: 'not_counted' };
+		dailyReply = { ...reply, days: [notCounted, reply.days[1], reply.days[2]] };
+		render(Page);
+		await screen.findByRole('group', { name: /^Busiest day/ });
+		await fireEvent.keyDown(chart(), { key: 'Home' });
+		await fireEvent.keyDown(chart(), { key: 'Enter' });
+		expect(Object.fromEntries(target(0).searchParams)).toEqual({ from: NOV_1.start, to: '2026-11-02T07:59:59.999Z', chart_from: NOV_1.start, chart_to: CUTOFF });
+	});
+
+	it("F4: a cutoff before today's start (a clock that moved) still opens a valid window, at today's start", async () => {
+		const reply = dailyReply as { days: UsageDay[] };
+		dailyReply = { ...reply, days: [reply.days[0], { ...reply.days[1], cutoff: '2026-11-02T07:00:00.000Z' }, reply.days[2]] };
+		render(Page);
+		await screen.findByRole('group', { name: /^Busiest day/ });
+		await fireEvent.keyDown(chart(), { key: 'End' });
+		await fireEvent.keyDown(chart(), { key: 'Enter' });
+		expect(Object.fromEntries(target(0).searchParams)).toMatchObject({ from: NOV_2.start, to: NOV_2.start, chart_to: NOV_2.start });
 	});
 });

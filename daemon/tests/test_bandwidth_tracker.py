@@ -692,6 +692,9 @@ def test_usage_for_ranges_splits_like_the_monthly_usage():
     monthly = tracker.get_monthly_usage(2026, 11, lan_filter=LAN)
     budget = Budget(60)
     month = ("m", "2026-11-01T00:00:00Z", "2026-12-01T00:00:00Z")
+    first = len(
+        client.budgets
+    )  # the monthly usage's searches, with no budget, come before
     out = tracker.usage_for_ranges(client, [month], [], LAN, budget)["m"]
     assert (out["upload"], out["download"], out["local"]) == (
         monthly["upload_bytes"],
@@ -699,8 +702,29 @@ def test_usage_for_ranges_splits_like_the_monthly_usage():
         monthly["local_bytes"],
     )
     assert out["total"] == monthly["upload_bytes"] + monthly["download_bytes"]
-    # the gateway check ran, inside the same budget
-    assert budget in client.budgets[1:]
+    # OLD CODE: assert budget in client.budgets[1:] (review: it held with the gateway check
+    # given no budget, since the main search's own budget was in that slice)
+    sent = client.budgets[first:]
+    # the main search, then the gateway msearch's checks: every one with the same Budget
+    assert len(sent) > 1 and all(b is budget for b in sent)
+
+
+def test_usage_for_ranges_reads_a_malformed_bucket_as_a_failed_recount():
+    """Review: a KeyError from a bucket escaped the ledger's error handling."""
+    import pytest
+
+    from storage.snapshot_search import Budget, QueryFailed
+
+    client = MagicMock()
+    pair = {"src": {"buckets": [{"dst": {"buckets": []}}]}}  # a source MAC with no key
+    client.search.return_value = {
+        "_shards": {"total": 1, "failed": 0},
+        "aggregations": {
+            "days": {"buckets": [{"key": "2026-11-17", "v6_pairs": pair}]}
+        },
+    }
+    with pytest.raises(QueryFailed, match="malformed reply"):
+        _tracker().usage_for_ranges(client, _RANGES[:1], [], None, Budget(60))
 
 
 def test_usage_for_ranges_never_sends_a_longer_list_re_ask_after_the_budget():

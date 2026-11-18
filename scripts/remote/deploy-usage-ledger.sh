@@ -138,10 +138,14 @@ echo "→ Step 6: A real sweep of every stored day, watched (at most 6 runs)..."
 SWEEP_BEFORE=$(daemon_py "
 s, b = call('GET', '/api/usage/month')
 print(json.loads(b)['sweep']['id'] if s == 200 else 'FAIL')")
+REQ_AT=$(daemon_py "print(datetime.now(timezone.utc).isoformat())")
 REQ=$(daemon_py "
 s, b = call('POST', '/api/usage/recount')
 print('OK' if s == 202 else 'FAIL', s)")
 result "recount requested" "$REQ"
+# A request while a sweep is under way doesn't restart it: done = a sweep finished after the
+# request (that one, or a new one), checked by finished_at, not by a new sweep id.
+# OLD CODE: done = a new sweep id with no cursor (a running sweep kept its id, so it never matched)
 SWAP_PEAK=$SWAP_BEFORE; OS_PEAK=${OS_BEFORE:-0}; LAT_PEAK=$LAT_BEFORE; RUNS=1; DONE=""
 for i in $(seq 1 360); do  # 5 s steps, 30 minutes at most
     sleep 5
@@ -153,9 +157,11 @@ s, b = call('GET', '/api/usage/month')
 sw = json.loads(b)['sweep'] if s == 200 else {}
 _, jb = call('GET', '/api/jobs')
 job = next((j for j in json.loads(jb)['jobs'] if j['name'] == 'usage-ledger'), {})
-print(sw.get('id'), sw.get('cursor') or '-', sw.get('chunks_done'), sw.get('chunks_failed'), 'running' if job.get('running') else 'idle')")
-    read -r SID CURSOR CHUNKS FAILS RUNNING <<< "$STATE"
-    if [ "$SID" != "$SWEEP_BEFORE" ] && [ "$CURSOR" = "-" ] && [ "$RUNNING" = "idle" ]; then DONE=1; break; fi
+fin = sw.get('finished_at')
+after = bool(fin) and datetime.fromisoformat(fin) > datetime.fromisoformat('$REQ_AT')
+print(sw.get('id'), sw.get('cursor') or '-', sw.get('chunks_done'), sw.get('chunks_failed'), 'running' if job.get('running') else 'idle', 'after' if after else 'before')")
+    read -r SID CURSOR CHUNKS FAILS RUNNING FINISHED <<< "$STATE"
+    if [ "$FINISHED" = "after" ] && [ "$CURSOR" = "-" ] && [ "$RUNNING" = "idle" ]; then DONE=1; break; fi
     if [ "$CURSOR" != "-" ] && [ "$RUNNING" = "idle" ] && [ "$RUNS" -lt 6 ]; then
         daemon_py "call('POST', '/api/jobs/usage-ledger/run')" >/dev/null
         RUNS=$((RUNS + 1))

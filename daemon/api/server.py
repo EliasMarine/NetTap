@@ -143,6 +143,7 @@ from services.notification_hub import NotificationHub
 from services.notification_dispatcher import AlertDispatcher
 from services.event_journal import EventJournal
 from services.scheduled_jobs import Job, Scheduler
+from services import owner_tz
 from services.usage_ledger import UsageLedger
 from api.jobs import register_jobs_routes
 from api.usage import register_usage_routes
@@ -1424,6 +1425,8 @@ def create_app(
         lan_filter=lambda: app.get("lan_filter"),
     )
     register_usage_routes(app, usage_ledger)
+    # reads the zone list now, not on the loop at the first time-zone PUT
+    owner_tz.known("UTC")
 
     # Live bandwidth per device: kernel byte counters on the capture interface (NET-205)
     register_live_bandwidth_routes(app)

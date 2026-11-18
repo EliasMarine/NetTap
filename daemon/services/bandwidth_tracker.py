@@ -304,16 +304,21 @@ class BandwidthTracker:
             },
         }
         reply = client.search(index=NETWORK_INDEX, body=body, budget=budget)
-        buckets = _range_buckets(reply, [k for k, _s, _e in ranges])
-        gateways = gateways_if_needed(
-            client,
-            list(buckets.values()),
-            bool_clause["filter"],
-            lan_filter,
-            "usage totals",
-            budget=budget,
-        )
-        return {key: _range_usage(b, gateways) for key, b in buckets.items()}
+        # a bucket missing a key or a value is a failed recount, never a crash past the ledger's
+        # error handling (review); OpenSearch errors and TooSlow pass through unchanged
+        try:
+            buckets = _range_buckets(reply, [k for k, _s, _e in ranges])
+            gateways = gateways_if_needed(
+                client,
+                list(buckets.values()),
+                bool_clause["filter"],
+                lan_filter,
+                "usage totals",
+                budget=budget,
+            )
+            return {key: _range_usage(b, gateways) for key, b in buckets.items()}
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise QueryFailed(f"usage totals: malformed reply ({exc!r})") from exc
 
     def get_daily_usage(
         self,

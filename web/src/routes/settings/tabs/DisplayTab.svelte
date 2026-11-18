@@ -38,13 +38,17 @@
 	const displayUnsaved = $derived(displayForm() !== displaySavedForm);
 
 	// --- Time zone (F4, NET-329): the usage ledger counts days and months in it, on NetTap ---
-	/** Every zone this browser knows, plus UTC (NetTap's default, missing from some browsers' lists) */
-	const ZONES = [...new Set([...Intl.supportedValuesOf('timeZone'), 'UTC'])].sort();
+	/** Every zone this browser knows, plus UTC (NetTap's default, missing from some browsers' lists); an older
+	 * browser without the list offers its own zone (and the saved one, below) */
+	const known = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [Intl.DateTimeFormat().resolvedOptions().timeZone];
+	const ZONES = [...new Set([...known, 'UTC'])].sort();
 	const TZ_WARNING =
 		'Changing the time zone starts a new count in that zone. NetTap recounts every day it still has the raw data for; older days show as not counted, and Bandwidth says Still counting until it finishes.';
 	let tz = $state('');
 	/** The zone NetTap counts in; null until it loads */
 	let tzSaved = $state<string | null>(null);
+	/** The owner has picked it; until then saving the zone in use (UTC) confirms it */
+	let tzSet = $state(false);
 	let tzLoadFailed = $state(false);
 	let tzSaving = $state(false);
 	let tzMessage = $state('');
@@ -59,6 +63,7 @@
 			const owner = await getTimezone();
 			tz = owner.tz;
 			tzSaved = owner.tz;
+			tzSet = owner.set;
 		} catch {
 			tzLoadFailed = true;
 		}
@@ -75,6 +80,7 @@
 			return;
 		}
 		tz = tzSaved = result.data.tz;
+		tzSet = true;
 		tzMessage = `NetTap counts days in ${result.data.tz} from now on.`;
 	}
 
@@ -241,7 +247,7 @@
 				{/if}
 				<div class="form-actions">
 					{#if tzUnsaved}<span class="unsaved">Unsaved changes</span>{/if}
-					<button class="btn primary" type="button" onclick={saveTimezone} disabled={tzSaving || !tzUnsaved}>
+					<button class="btn primary" type="button" onclick={saveTimezone} disabled={tzSaving || (!tzUnsaved && tzSet)}>
 						{tzSaving ? 'Saving…' : 'Save time zone'}
 					</button>
 				</div>

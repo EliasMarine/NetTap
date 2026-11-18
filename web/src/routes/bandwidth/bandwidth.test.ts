@@ -302,6 +302,61 @@ describe('Bandwidth — refresh contract', () => {
 	});
 });
 
+// F4 (NET-329): the device card takes its bounds from the month on screen, and an older load never lands over a newer one
+describe('Bandwidth — refreshes keep one month', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const deviceBounds = () =>
+		vi.mocked(fetch).mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('/api/bandwidth/devices'))
+			.map((u) => { const q = new URL(u, 'http://x').searchParams; return [q.get('from'), q.get('to')]; });
+
+	it('a refresh whose month fails keeps the month on screen, and the device card asks for that same month', async () => {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		stubDaemon(ALL);
+		render(Page);
+		await screen.findByText('Projected');
+		const { '/api/usage/month': _month, ...withoutMonth } = ALL;
+		stubDaemon(withoutMonth);
+		expect(await refreshPage()).toBe('partial');
+		expect(screen.getByText("Couldn't refresh this month's usage; showing the last figures loaded.")).toBeInTheDocument();
+		expect(screen.getByText('Internet this month').closest('.kpi')).toHaveTextContent('November 2026, UTC');
+		expect(screen.getByText('Internet this month').closest('.kpi')).toHaveTextContent('7.0GB');
+		// the device card's refresh asked for the month still on screen, never a mix of two
+		expect(deviceBounds()).toEqual([[MONTH.month_start, MONTH.month_end]]);
+		expect(screen.getByText('This month · 2 devices')).toBeInTheDocument();
+	});
+
+	it("an older load's month landing after a newer one changes nothing", async () => {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		const october = monthOf(DAYS.map((d) => ({ ...d, date: d.date.replace('-11-', '-10-') })), { month: 10, month_start: '2026-10-01T00:00:00.000Z', month_end: '2026-11-01T00:00:00.000Z' });
+		let releaseOld: () => void = () => {};
+		const oldReply = new Promise<void>((resolve) => (releaseOld = resolve));
+		let monthCalls = 0;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				if (path === '/api/usage/month' && ++monthCalls === 1) {
+					await oldReply; // the first load's month is slow, and answers October
+					return { ok: true, status: 200, json: async () => october };
+				}
+				const body = (ALL as Record<string, unknown>)[path];
+				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+		render(Page);
+		await vi.waitFor(() => expect(monthCalls).toBe(1));
+		expect(await refreshPage()).toBe('ok');
+		const kpi = () => screen.getByText('Internet this month').closest('.kpi');
+		expect(kpi()).toHaveTextContent('November 2026, UTC');
+		releaseOld();
+		await vi.waitFor(() => expect(deviceBounds()).toContainEqual([october.month_start, october.month_end]));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(kpi()).toHaveTextContent('November 2026, UTC');
+		expect(kpi()).not.toHaveTextContent('October');
+	});
+});
+
 // OLD CODE: describe('Bandwidth — one month window and the device cap', () => { (F4: the owner's month, from the ledger)
 describe("Bandwidth — the owner's month and the device cap", () => {
 	afterEach(() => {
@@ -414,6 +469,14 @@ describe('Bandwidth — the month card says how far to trust it', () => {
 		expect(screen.getByText('Daily rate').closest('.kpi')).toHaveTextContent('—');
 		expect(screen.getByText('Shown once every day so far is counted')).toBeInTheDocument();
 		expect([...container.querySelectorAll('.kpi')].map((k) => k.classList.contains('c-4'))).toEqual([true, true, true]);
+	});
+
+	it('when counting began inside the month, says the rate waits for next month (it can never be complete)', async () => {
+		const days = [ledgerDay('2026-11-01', 'not_counted'), ledgerDay('2026-11-02', 'counted', GB, GB), ...future(3)];
+		stubDaemon({ ...ALL, '/api/usage/month': monthOf(days, { since: '2026-11-02', projected: null, daily_rate: null }) });
+		render(Page);
+		expect((await screen.findByText('Daily rate')).closest('.kpi')).toHaveTextContent('Shown from next month, the first one counted from its first day');
+		expect(screen.queryByText('Shown once every day so far is counted')).not.toBeInTheDocument();
 	});
 
 	it('says when the figures were last updated, and which days count under earlier exclusions', async () => {
@@ -562,6 +625,27 @@ describe('Bandwidth — the time zone', () => {
 		render(Page);
 		await screen.findByText('Projected');
 		expect(screen.queryByText(/^Days are counted in/)).not.toBeInTheDocument();
+	});
+
+	it('Keep UTC confirms the zone in use, and the offer goes', async () => {
+		browserIn('America/Los_Angeles');
+		stubWithZone({ tz: 'UTC', set: false }, { status: 200, body: { tz: 'UTC', set: true } });
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Keep UTC' }));
+		await vi.waitFor(() => expect(screen.queryByText(/^Days are counted in/)).not.toBeInTheDocument());
+		const put = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === 'PUT');
+		expect(JSON.parse(String(put?.[1]?.body))).toEqual({ tz: 'UTC' });
+	});
+
+	it("a browser in UTC under another name (Etc/UTC, Etc/Universal) isn't offered UTC again", async () => {
+		for (const zone of ['Etc/UTC', 'Etc/Universal']) {
+			browserIn(zone);
+			stubWithZone({ tz: 'UTC', set: false }, { status: 200, body: {} });
+			const view = render(Page);
+			await screen.findByText('Projected');
+			expect(screen.queryByText(/^Days are counted in/)).not.toBeInTheDocument();
+			view.unmount();
+		}
 	});
 
 	it('says it is switching while the ledger has not moved to the new zone yet', async () => {

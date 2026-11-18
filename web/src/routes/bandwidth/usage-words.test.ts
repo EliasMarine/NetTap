@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { UsageDay, UsageDayStatus, UsageMonth } from '$lib/api/usage';
 import { formatWhen } from '$lib/utils/drilldown';
-import { monthNote, notFinalLine } from './usage-words';
+import { monthNote, noRateReason, notFinalLine, sameAsUtc } from './usage-words';
 
 // F4 (NET-329): the month card's subtitle and the daily chart's note, per plan §4.6
 
@@ -62,5 +62,25 @@ describe('notFinalLine', () => {
 	it('counts more than three days instead of listing them', () => {
 		const days = ['01', '02', '03', '04'].map((d) => day(`2026-11-${d}`, 'not_counted'));
 		expect(notFinalLine(days)).toBe('Not counted: 4 days');
+	});
+});
+
+describe('noRateReason', () => {
+	it('when counting began inside the month, the rate waits for next month, not for the days to be counted', () => {
+		expect(noRateReason(month(['not_counted', 'counted', 'future'], { since: '2026-11-02', complete: false }))).toBe(
+			'Shown from next month, the first one counted from its first day',
+		);
+	});
+
+	it('otherwise it waits for every day so far to be counted, or for the first hour', () => {
+		expect(noRateReason(month(['counted', 'pending'], { complete: false }))).toBe('Shown once every day so far is counted');
+		expect(noRateReason(month(['counted', 'future'], { complete: true }))).toBe('Shown after the first hour of the month');
+	});
+});
+
+describe('sameAsUtc', () => {
+	it("reads UTC's other names as UTC, and leaves every other zone alone", () => {
+		expect(['UTC', 'Etc/UTC', 'Etc/Universal'].map(sameAsUtc)).toEqual(['UTC', 'UTC', 'UTC']);
+		expect(sameAsUtc('Europe/London')).toBe('Europe/London');
 	});
 });

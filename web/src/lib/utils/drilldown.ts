@@ -349,9 +349,17 @@ export function momentHref(chart: BandwidthChart, i: number, j: number, range?: 
 	const sum = (key: 'download_bytes' | 'upload_bytes' | 'local_bytes') => String(picked.reduce((total, p) => total + p[key], 0));
 	const q = new URLSearchParams({ from: win.from, to: win.to });
 	if (range) q.set('range', range);
-	q.set('down', sum('download_bytes'));
-	q.set('up', sum('upload_bytes'));
-	q.set('local', sum('local_bytes'));
+	// OLD CODE START — F4: a day with no figures (NaN, not counted) summed in as NaN or 0, so the moment page said "you clicked 0 B"
+	// q.set('down', sum('download_bytes'));
+	// q.set('up', sum('upload_bytes'));
+	// q.set('local', sum('local_bytes'));
+	// OLD CODE END
+	// the figures clicked, only when every picked point has them: nothing is better than a wrong comparison
+	if (picked.every((p) => Number.isFinite(p.download_bytes) && Number.isFinite(p.upload_bytes) && Number.isFinite(p.local_bytes))) {
+		q.set('down', sum('download_bytes'));
+		q.set('up', sum('upload_bytes'));
+		q.set('local', sum('local_bytes'));
+	}
 	q.set('chart_from', chartWin.from);
 	q.set('chart_to', chartWin.to);
 	return `/moment?${q.toString()}`;

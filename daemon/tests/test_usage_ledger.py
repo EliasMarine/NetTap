@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 from opensearchpy import ConnectionError as TransportConnectionError
-from opensearchpy import ConnectionTimeout
+from opensearchpy import AuthenticationException, ConnectionTimeout, SerializationError
 
 from services import owner_tz, usage_report
 from services import usage_ledger as ledger_mod
@@ -50,6 +50,7 @@ class Store:
         self.serial = 0
         self.listing_errors: list[Exception] = []  # the next listings fail, one each
         self.cat = SimpleNamespace(indices=self._cat)
+        self.bounds_reply: dict = {}  # what the min/max search of undated indices answers
 
     def create(self, name: str) -> str:
         self.serial += 1
@@ -84,6 +85,10 @@ class Store:
         if self.listing_errors:
             raise self.listing_errors.pop(0)
         return [{"index": n, "uuid": u} for u, n in self.indices.items()]
+
+    def search(self, index, body, budget):
+        assert budget.remaining() > 0 and "idx" in body["aggs"]
+        return self.bounds_reply
 
 
 class Tracker:
@@ -413,7 +418,8 @@ def test_a_transition_at_la_noon_counts_today_in_the_new_zone(tmp_path):
     w.run()
     snap = w.ledger.snapshot()
     assert (snap["tz"], snap["generation"]) == (LA, 2)
-    assert json.loads((tmp_path / "usage-ledger.prev.json").read_text())["tz"] == "UTC"
+    (kept,) = tmp_path.glob("usage-ledger.gen1.*.json")
+    assert json.loads(kept.read_text())["tz"] == "UTC"
     assert w.report(NOV[18])["pending_tz"] is None
     assert NOV[18].isoformat() not in snap["gaps"]
     assert w.status(NOV[18]) == "counted"
@@ -438,7 +444,8 @@ def test_a_crash_inside_a_transition_repeats_it_cleanly(tmp_path):
     w.store.listing_errors = [TransportConnectionError("N/A", "refused", None)]
     with pytest.raises(UsageLedgerIncomplete):
         w.run()
-    assert (tmp_path / "usage-ledger.prev.json").exists()
+    kept = list(tmp_path.glob("usage-ledger.gen1.*.json"))
+    assert kept and all(json.loads(k.read_text())["tz"] == "UTC" for k in kept)
     assert (
         w.ledger.snapshot()["tz"] == "UTC"
     )  # the old ledger is still the published one
@@ -495,6 +502,37 @@ def test_an_unknown_inventory_and_a_failed_listing_stop_the_pass(tmp_path):
     w.run()  # the listing works again: every day is marked first
     assert (w.entry(NOV[17])["total"], w.status(NOV[17])) == (100, "old_rules")
     assert (w.entry(NOV[10])["total"], w.status(NOV[10])) == (100, "old_rules")
+
+
+def test_two_zone_changes_in_a_row_keep_both_earlier_ledgers(tmp_path):
+    """Review (security): a mistaken zone fixed 15 min later must not lose the first ledger,
+    the only record of days whose raw data was pruned."""
+    w = World(tmp_path)
+    w.store.fill(15, 18)
+    w.run()
+    first = w.ledger.snapshot()
+    owner_tz.write(LA)
+    w.run()
+    second = w.ledger.snapshot()
+    w.clock.to(T0 + timedelta(minutes=15))
+    owner_tz.write("Europe/London")
+    w.run()
+    assert w.ledger.snapshot()["generation"] == 3
+    (gen1,) = tmp_path.glob("usage-ledger.gen1.*.json")
+    (gen2,) = tmp_path.glob("usage-ledger.gen2.*.json")
+    assert json.loads(gen1.read_text()) == first
+    assert json.loads(gen2.read_text()) == second
+
+
+def test_every_unreadable_ledger_file_is_kept_on_its_own(tmp_path):
+    w = World(tmp_path)
+    for n in range(2):
+        w.path.write_text(f"{{broken {n}")
+        w.clock.to(w.clock.now() + timedelta(seconds=1))
+        w.reload()
+        assert w.ledger.snapshot() is None
+    kept = sorted(tmp_path.glob("usage-ledger.corrupt.*.json"))
+    assert [k.read_text() for k in kept] == ["{broken 0", "{broken 1"]
 
 
 def test_an_unreadable_time_zone_file_keeps_the_ledgers_own_zone(tmp_path):
@@ -573,6 +611,29 @@ def test_a_recount_request_starts_a_new_sweep_even_after_a_recent_one(tmp_path):
     assert totals == {k: v["total"] for k, v in days.items()}
 
 
+def test_a_recount_request_while_a_sweep_runs_lets_it_finish(tmp_path):
+    """Review (security): a request mid-sweep restarted it at the oldest chunk, so a request
+    loop re-queried those days for ever. Now the running sweep answers it."""
+    w = World(tmp_path)
+    w.store.fill(1, 18)
+    w.tracker.fail = [None, None, TooSlow("a search took too long")]
+    assert w.run() == {"partial": True}
+    assert (w.sweep()["id"], w.sweep()["cursor"]) == (1, "2026-11-08")
+    assert w.ledger.request_sweep() == 1
+    w.tracker.calls.clear()
+    assert w.run() is None
+    assert w.tracker.calls[1][0] == "2026-11-08"  # resumed at its cursor, not Nov 1
+    assert (w.sweep()["id"], w.sweep()["chunks_done"], w.sweep()["cursor"]) == (
+        1,
+        3,
+        None,
+    )
+    assert not w.ledger._take_sweep_request()  # answered, not kept for later
+    w.clock.to(T0 + timedelta(minutes=15))
+    w.run()
+    assert w.sweep()["id"] == 1
+
+
 def _out_of_time(w: World):
     """The budget runs out while the query runs: the after-query listing can't start."""
 
@@ -632,11 +693,14 @@ def test_a_third_timeout_in_a_row_fails_the_chunk_and_the_sweep_moves_on(tmp_pat
     with pytest.raises(UsageLedgerIncomplete, match="days 2026-11-01 to 2026-11-07"):
         w.run()
     sweep = w.sweep()
+    # the cursor moved on, and the run stopped there (review: one failed chunk a run)
     assert (sweep["chunks_failed"], sweep["chunks_done"], sweep["cursor"]) == (
         1,
-        2,
-        None,
+        0,
+        "2026-11-08",
     )
+    assert w.run() is None
+    assert (w.sweep()["chunks_done"], w.sweep()["cursor"]) == (2, None)
     assert w.status(NOV[1]) == "stale" and w.status(NOV[9]) == "counted"
 
 
@@ -644,16 +708,121 @@ def test_another_failure_fails_the_chunk_and_the_cursor_advances(tmp_path):
     w = World(tmp_path)
     w.store.fill(1, 18)
     w.tracker.fail = [None, QueryFailed("usage totals: 1 shard(s) failed")]
-    with pytest.raises(UsageLedgerIncomplete, match="1 of 5 day groups failed"):
+    # OLD CODE: match="1 of 5 day groups failed" (review: a failed chunk now ends the run)
+    with pytest.raises(UsageLedgerIncomplete, match="1 of 3 day groups failed"):
         w.run()
     sweep = w.sweep()
     assert (sweep["chunks_failed"], sweep["chunks_done"], sweep["cursor"]) == (
         1,
-        2,
-        None,
+        0,
+        "2026-11-08",
     )
+    assert w.run() is None  # the next run finishes the sweep
+    assert (w.sweep()["chunks_failed"], w.sweep()["chunks_done"]) == (1, 2)
     assert w.entry(NOV[2])["error"].startswith("QueryFailed: usage totals")
     assert w.status(NOV[2]) == "stale"
+
+
+def _unauthorized() -> list:
+    """OpenSearch answering 401 to everything, as after a recreate until its security bootstrap."""
+    return [AuthenticationException(401, "Unauthorized", {}) for _ in range(20)]
+
+
+def test_an_outage_at_the_listing_ends_the_pass_before_any_recount(tmp_path):
+    """Review HIGH: every chunk failed in one pass and every older day read stale for a day."""
+    w = World(tmp_path)
+    w.store.fill(1, 18)
+    w.run()
+    before = w.sweep()
+    w.tracker.calls.clear()
+    w.clock.to(T0 + timedelta(hours=25))  # a new sweep is due
+    w.store.listing_errors = _unauthorized()
+    w.tracker.fail = _unauthorized()
+    with pytest.raises(UsageLedgerIncomplete, match="1 of 1 day groups failed"):
+        w.run()
+    assert w.tracker.calls == [] and w.sweep() == before
+    assert w.status(NOV[5]) == "counted"  # older days aren't called stale
+
+
+def test_an_outage_at_the_search_costs_one_chunk_a_run(tmp_path):
+    w = World(tmp_path)
+    w.store.fill(1, 18)
+    w.run()
+    w.clock.to(T0 + timedelta(hours=25))
+    w.tracker.fail = _unauthorized()
+    with pytest.raises(UsageLedgerIncomplete):
+        w.run()
+    sweep = w.sweep()
+    assert (sweep["chunks_failed"], sweep["finished_at"]) == (1, None)
+    assert sweep["cursor"] == "2026-11-08"  # moved on, so one bad chunk can't stall it
+    assert w.status(NOV[10]) == "counted"
+
+
+def test_updated_at_dates_the_last_successful_recount(tmp_path):
+    """Review MEDIUM: failure-only saves kept "Not updated since" from ever showing."""
+    w = World(tmp_path)
+    w.store.fill(1, 18)
+    w.run()
+    assert w.ledger.snapshot()["updated_at"] == "2026-11-18T12:00:00Z"
+    w.clock.to(T0 + timedelta(minutes=30))
+    w.ledger.request_sweep()
+    w.tracker.fail = [QueryFailed("1 shard(s) failed"), TooSlow("too long")]
+    with pytest.raises(UsageLedgerIncomplete):
+        w.run()  # a failed recent query, a new sweep and a continuation: all saved
+    snap = w.ledger.snapshot()
+    assert snap["sweep"]["id"] == 2 and snap["sweep"]["retries"] == 1
+    assert snap["updated_at"] == "2026-11-18T12:00:00Z"
+    w.run()
+    assert w.ledger.snapshot()["updated_at"] == "2026-11-18T12:30:00Z"
+
+
+def test_a_serialization_error_fails_the_chunk_instead_of_escaping(tmp_path):
+    """Review LOW: an OpenSearchException that isn't a TransportError never moved the cursor."""
+    w = World(tmp_path)
+    w.store.fill(1, 18)
+    w.tracker.fail = [None, SerializationError("Unable to deserialize the reply")]
+    with pytest.raises(UsageLedgerIncomplete, match="SerializationError"):
+        w.run()
+    assert (w.sweep()["chunks_failed"], w.sweep()["cursor"]) == (1, "2026-11-08")
+
+
+def test_a_malformed_bounds_reply_is_a_failed_listing_not_a_crash(tmp_path):
+    w = World(tmp_path)
+    w.store.fill(16, 18)
+    w.store.create(
+        "arkime_sessions3-reindexed"
+    )  # no date in its name: its bounds are searched
+    w.store.bounds_reply = {
+        "_shards": {"total": 1, "failed": 0},
+        "aggregations": {"idx": {"buckets": [{"key": "arkime_sessions3-reindexed"}]}},
+    }
+    with pytest.raises(UsageLedgerIncomplete, match="the index bounds: malformed"):
+        w.run()
+    assert w.ledger.snapshot() is None
+    w.store.bounds_reply["aggregations"]["idx"]["buckets"][0].update(
+        {"lo": {"value": None}, "hi": {"value": None}}  # an empty index
+    )
+    w.run()
+    assert w.ledger.snapshot()["since"] == "2026-11-16"
+
+
+def test_a_chunk_never_starts_with_under_30_seconds_left(tmp_path):
+    """Review LOW: it would time out and spend one of its three tries for nothing."""
+    w = World(tmp_path)
+    w.store.fill(1, 18)
+
+    def leave_20_seconds():
+        w.clock.mono += 215  # of the pass's 235
+
+    w.tracker.during = {1: leave_20_seconds}
+    assert w.run() == {"partial": True}
+    assert len(w.tracker.calls) == 1  # only the recent days
+    sweep = w.sweep()
+    assert (sweep["cursor"], sweep["retries"], sweep["chunks_done"]) == (
+        "2026-11-01",
+        0,
+        0,
+    )
 
 
 # --- the index listing around a query (round 1 #4, #5, round 3 #2) -----------------

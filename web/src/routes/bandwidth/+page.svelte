@@ -9,7 +9,7 @@
 	import type { BandwidthCap, DeviceUsage, HeatmapResponse } from '$lib/api/bandwidth';
 	import { getTimezone, getUsageMonth, hasFigures, setTimezone } from '$lib/api/usage';
 	import type { OwnerTimezone, UsageDay, UsageMonth } from '$lib/api/usage';
-	import { formatDate, monthNote, notFinalLine, STATUS_WORDS } from './usage-words';
+	import { formatDate, monthNote, noRateReason, notFinalLine, sameAsUtc, STATUS_WORDS } from './usage-words';
 	// OLD CODE START — replaced by the system's DeviceList (Top consumers) and DataTable, which sorts
 	// import TopConsumers from '$lib/components/TopConsumers.svelte';
 	// import { compareValues } from '$lib/utils/table-sort.svelte';
@@ -136,9 +136,11 @@
 	// The owner's month (F4, NET-329: the usage ledger, in the owner's time zone)
 	// ---------------------------------------------------------------------------
 
-	/** The browser's zone, offered while the owner hasn't picked one */
-	const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+	/** The browser's zone, offered while the owner hasn't picked one; UTC's other names are UTC, so it never offers "Etc/UTC" over UTC */
+	const BROWSER_TZ = sameAsUtc(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
 	const DAY_MS = 86_400_000;
+
+	const NO_FIGURES = { download_bytes: Number.NaN, upload_bytes: Number.NaN, local_bytes: Number.NaN };
 
 	/** Ledger figures in the shape upDownLocal reads; a day without figures reads 0 */
 	const upDown = (b: { download: number | null; upload: number | null; local: number | null }) => ({
@@ -147,11 +149,11 @@
 		local_bytes: b.local ?? 0,
 	});
 
-	/** Count days in this browser's zone, then reload so the page says it is switching */
-	async function useBrowserZone() {
+	/** Count days in `zone` (this browser's, or keep the one in use), then reload so the page says it is switching */
+	async function chooseZone(zone: string) {
 		tzSaving = true;
 		tzError = '';
-		const result = await setTimezone(BROWSER_TZ);
+		const result = await setTimezone(zone);
 		tzSaving = false;
 		if (!result.ok) {
 			tzError = result.error;
@@ -481,12 +483,15 @@
 			const last = daily.at(-1);
 			// each point is its local day [start, end) (23 or 25 h across a clock change); the window runs
 			// from the month's start to what today's count reached, so today's pick ends where its figures do
+			// today not counted yet reaches now; and never before its own start, so its pick is a valid window
+			const reached = last && (last.cutoff ? Date.parse(last.cutoff) : Math.min(Date.now(), Date.parse(last.end) - 1));
 			dailyChart = last
 				? {
 						from: daily[0].start,
-						to: last.cutoff ?? new Date(Math.min(Date.now(), Date.parse(last.end) - 1)).toISOString(),
+						to: new Date(Math.max(reached || 0, Date.parse(last.start))).toISOString(),
 						step: DAY_MS,
-						series: daily.map((d) => ({ timestamp: d.start, end: d.end, ...upDown(d) })),
+						// a day without figures is NaN, so a pick on it carries no figures to compare (momentHref)
+						series: daily.map((d) => ({ timestamp: d.start, end: d.end, ...(hasFigures(d) ? upDown(d) : NO_FIGURES) })),
 					}
 				: null;
 		}
@@ -537,11 +542,13 @@
 <!-- F4: days are counted in the owner's zone; until one is picked, offer this browser's -->
 {#if month?.pending_tz}
 	<p class="notice page-note" role="status"><Icon name="refresh" /><span>Switching to {month.pending_tz}…</span></p>
-{:else if ownerTz && !ownerTz.set && BROWSER_TZ && BROWSER_TZ !== ownerTz.tz}
+{:else if ownerTz && !ownerTz.set && BROWSER_TZ && BROWSER_TZ !== sameAsUtc(ownerTz.tz)}
 	<div class="notice page-note tz-offer" role="note">
 		<Icon name="changelog" />
 		<span>Days are counted in {ownerTz.tz}. Count them in {BROWSER_TZ}?</span>
-		<button class="btn" type="button" onclick={useBrowserZone} disabled={tzSaving}>{tzSaving ? 'Switching…' : `Count in ${BROWSER_TZ}`}</button>
+		<button class="btn" type="button" onclick={() => chooseZone(BROWSER_TZ)} disabled={tzSaving}>{tzSaving ? 'Switching…' : `Count in ${BROWSER_TZ}`}</button>
+		<!-- keeping the zone in use sets it, so the offer goes -->
+		<button class="btn" type="button" onclick={() => chooseZone(ownerTz!.tz)} disabled={tzSaving}>Keep {ownerTz.tz}</button>
 	</div>
 {/if}
 {#if tzError}
@@ -601,7 +608,7 @@
 			/>
 		{/if}
 		{#if month.daily_rate === null}
-			<KpiCard class={kpi} label="Daily rate" icon="download" value="—" note={month.complete ? 'Shown after the first hour of the month' : 'Shown once every day so far is counted'} />
+			<KpiCard class={kpi} label="Daily rate" icon="download" value="—" note={noRateReason(month)} />
 		{:else}
 			<KpiCard class={kpi} label="Daily rate" icon="download" value={gb(month.daily_rate)} unit="GB a day" note="Average so far this month" />
 		{/if}

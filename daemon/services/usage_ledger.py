@@ -19,8 +19,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from opensearchpy import ConnectionError as TransportConnectionError
-from opensearchpy import ConnectionTimeout, TransportError
+from opensearchpy import ConnectionTimeout, OpenSearchException
 
 from services import owner_tz
 from services.capture_config import write_file_atomic
@@ -41,6 +40,7 @@ from services.usage_days import (
     next_chunk,
     observe,
     parse_day,
+    parse_iso,
     rules_hash,
     settled,
     start_sweep,
@@ -48,7 +48,7 @@ from services.usage_days import (
     trimmed,
     utc_iso,
 )
-from storage.exact_terms import PartialResultsError, SearchTimedOut
+from storage.exact_terms import SearchTimedOut
 from storage.snapshot_search import Budget, QueryFailed, TooSlow, checked
 
 logger = logging.getLogger("nettap.services.usage_ledger")
@@ -58,14 +58,22 @@ RECENT_DAYS = 3
 MAX_CONTINUATIONS = 3  # the third timeout in a row of one chunk counts it as failed
 BUDGET_MARGIN_S = 5
 LISTING_TIMEOUT_S = 10
+# a chunk started with less would time out and spend one of its three tries for nothing
+MIN_CHUNK_BUDGET_S = 30
 
 # Every failure a recount can raise; the timeouts among them continue a sweep chunk later
-LEDGER_QUERY_ERRORS = (
-    QueryFailed,
-    PartialResultsError,
-    TransportError,
-    TransportConnectionError,
-)
+# OLD CODE START — review: SerializationError (a bad reply body) is an OpenSearchException but not
+# a TransportError, so it escaped the chunk and the cursor never moved
+# LEDGER_QUERY_ERRORS = (
+#     QueryFailed,
+#     PartialResultsError,
+#     TransportError,
+#     TransportConnectionError,
+# )
+# OLD CODE END
+# OpenSearchException covers PartialResultsError, TransportError, ConnectionError and
+# SerializationError; malformed buckets are raised as QueryFailed where they are read
+LEDGER_QUERY_ERRORS = (QueryFailed, OpenSearchException)
 TIMEOUTS = (TooSlow, ConnectionTimeout, SearchTimedOut)
 
 
@@ -199,9 +207,14 @@ class UsageLedger:
             return self._set_aside("not a ledger this version reads")
         return _with_inventory_checked(data)
 
+    def _kept_as(self, kind: str, when: datetime) -> Path:
+        """usage-ledger.<kind>.<UTC time>.json beside the ledger: each kept copy its own file."""
+        return self._path.with_suffix(f".{kind}.{when:%Y%m%dT%H%M%SZ}.json")
+
     def _set_aside(self, why: str) -> None:
         """A broken file is kept beside a new ledger, never overwritten."""
-        aside = self._path.with_suffix(".corrupt.json")
+        # OLD CODE: aside = self._path.with_suffix(".corrupt.json") (review: a 2nd one replaced the 1st)
+        aside = self._kept_as("corrupt", self._now().astimezone(timezone.utc))
         logger.error("The usage ledger %s is %s; kept as %s", self._path, why, aside)
         try:
             os.replace(self._path, aside)
@@ -218,9 +231,13 @@ class UsageLedger:
         except OSError as exc:
             raise _SaveFailed(str(exc)) from exc
 
-    def _commit(self, state: dict) -> dict:
-        """Save, then publish: a failed save leaves the published state and cursor as they were."""
-        state = {**state, "updated_at": utc_iso(self._now())}
+    def _commit(self, state: dict, counted: bool = False) -> dict:
+        """Save, then publish: a failed save leaves the published state and cursor as they were.
+        `counted`: it holds a successful recount, the only thing updated_at dates."""
+        # OLD CODE: state = {**state, "updated_at": utc_iso(self._now())} (review: failure-only
+        # saves moved it too, so "Not updated since" never showed during an outage)
+        if counted:
+            state = {**state, "updated_at": utc_iso(self._now())}
         self._save(self._path, state)
         with self._lock:
             self._published = state
@@ -258,10 +275,14 @@ class UsageLedger:
         }
         reply = self._client.search(index=",".join(names), body=body, budget=budget)
         buckets = checked(reply, "the index bounds", ("idx",))["aggregations"]["idx"]
-        return {
-            b["key"]: (_ms_iso(b["lo"].get("value")), _ms_iso(b["hi"].get("value")))
-            for b in buckets.get("buckets") or []
-        }
+        try:
+            return {
+                b["key"]: (_ms_iso(b["lo"].get("value")), _ms_iso(b["hi"].get("value")))
+                for b in buckets.get("buckets") or []
+            }
+        # review: a bad bucket (OverflowError: a time past year 9999)
+        except (KeyError, TypeError, AttributeError, ValueError, OverflowError) as exc:
+            raise QueryFailed(f"the index bounds: malformed reply ({exc!r})") from exc
 
     def _recount(self, p: _Pass, state: dict, days: list[date]) -> dict:
         """The state after one recount of `days`, the index listing read around its query."""
@@ -308,7 +329,10 @@ class UsageLedger:
         )
         try:
             state, tried, failures = self._prepare(p)
-            if state is not None:
+            # OLD CODE: if state is not None: (review: with OpenSearch down, e.g. a 401 after every
+            # recreate until its security bootstrap, every chunk failed in one pass and every
+            # older day read stale for a day; a failed listing now ends the pass here)
+            if state is not None and not failures:
                 for step in (self._recent, self._sweep):
                     state, more, fails = step(p, state)
                     tried, failures = tried + more, [*failures, *fails]
@@ -338,11 +362,12 @@ class UsageLedger:
             return self._take_inventory(p, state), 1, []
         except LEDGER_QUERY_ERRORS as exc:
             logger.warning("Usage ledger: the index listing failed: %s", exc)
-            # OLD CODE: return state, 1, [f"the index listing: {_short(exc)}"]
-            # (review: with the inventory unknown, a recount could replace a pruned day before
-            # evidence 4 marks it; no state means no recount this pass)
-            known = state if state is not None and state.get("inventory_ok") else None
-            return known, 1, [f"the index listing: {_short(exc)}"]
+            # OLD CODE START — review: an unknown inventory stopped the pass, a known one didn't, so
+            # an outage failed every chunk in one pass; run() now stops at any failure here
+            # known = state if state is not None and state.get("inventory_ok") else None
+            # return known, 1, [f"the index listing: {_short(exc)}"]
+            # OLD CODE END
+            return state, 1, [f"the index listing: {_short(exc)}"]
 
     # OLD CODE: def _fresh(self, p, tz_name, generation, sweep_id) -> dict: (review: + floor)
     def _fresh(
@@ -364,9 +389,17 @@ class UsageLedger:
         )
 
     def _transition(self, p: _Pass, state: dict, tz_name: str) -> dict:
-        """Old ledger to .prev, a new one bootstrapped in the new zone, saved, then published.
+        """Old ledger kept, a new one bootstrapped in the new zone, saved, then published.
         A crash between the steps leaves the old ledger, so the next pass starts over."""
-        self._save(self._path.with_suffix(".prev.json"), state)
+        # OLD CODE: self._save(self._path.with_suffix(".prev.json"), state)
+        # (review: a second zone change replaced the only copy of the first ledger.) Named by its
+        # generation and last save, so a repeated transition rewrites the same file and a ledger
+        # started again after a lost file (generation 1 again) gets its own
+        saved = parse_iso(state.get("updated_at")) or self._now()
+        kept = self._kept_as(
+            f"gen{state['generation']}", saved.astimezone(timezone.utc)
+        )
+        self._save(kept, state)
         logger.info("Usage ledger: counting days in %s from now on", tz_name)
         # the first UTC date the old ledger counted: nothing before it was ever captured
         floor = day_bounds(parse_day(state["since"]), ZoneInfo(state["tz"]))[0].date()
@@ -397,7 +430,7 @@ class UsageLedger:
         if not days:
             return state, 0, []
         try:
-            return self._commit(self._recount(p, state, days)), 1, []
+            return self._commit(self._recount(p, state, days), counted=True), 1, []
         except LEDGER_QUERY_ERRORS as exc:
             logger.warning("Usage ledger: recounting the recent days failed: %s", exc)
             keys = [day_key(d) for d in days]
@@ -419,10 +452,14 @@ class UsageLedger:
         requested = self._take_sweep_request()
         if sweep_due(state, p.rules, now, requested):
             state = self._commit(start_sweep(state, p.rules, now, today))
-            if requested:
-                self._clear_sweep_request()
+        # OLD CODE: cleared only when it started a sweep (review: a running one now answers it)
+        if requested:
+            self._clear_sweep_request()
         tried, failures = 0, []
-        while state["sweep"]["cursor"] and p.budget.remaining() > 0:
+        # OLD CODE: while state["sweep"]["cursor"] and p.budget.remaining() > 0: (review: a chunk
+        # started with under a second left timed out and spent a retry); past this the run stops
+        # as a continuation, no retry counted
+        while state["sweep"]["cursor"] and p.budget.remaining() >= MIN_CHUNK_BUDGET_S:
             chunk, cursor = next_chunk(state, today)
             if not chunk:
                 state = self._commit(advance(state, None, True, self._now()))
@@ -450,14 +487,17 @@ class UsageLedger:
             return self._chunk_failed(state, chunk, cursor, exc)
         except LEDGER_QUERY_ERRORS as exc:
             return self._chunk_failed(state, chunk, cursor, exc)
-        return self._commit(advance(counted, cursor, True, self._now())), None, False
+        done = advance(counted, cursor, True, self._now())
+        return self._commit(done, counted=True), None, False
 
     def _chunk_failed(
         self, state: dict, chunk: list[date], cursor: str | None, exc: Exception
     ) -> tuple[dict, str, bool]:
-        """Its days go stale and the cursor moves on, so one bad chunk can't stall the sweep."""
+        """Its days go stale and the cursor moves on, so one bad chunk can't stall the sweep;
+        the run stops there, so an outage costs one chunk a run, not the whole sweep."""
         logger.warning("Usage ledger: sweep chunk %s failed: %s", chunk[0], exc)
         now = self._now()
         marked = failed(state, [day_key(d) for d in chunk], exc, utc_iso(now))
         why = f"days {day_key(chunk[0])} to {day_key(chunk[-1])}: {_short(exc)}"
-        return self._commit(advance(marked, cursor, False, now)), why, False
+        # OLD CODE: return self._commit(advance(marked, cursor, False, now)), why, False (review)
+        return self._commit(advance(marked, cursor, False, now)), why, True

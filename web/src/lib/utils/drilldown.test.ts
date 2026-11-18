@@ -522,6 +522,21 @@ describe('chart buckets and the windows they open (NET-249)', () => {
 		expect(new URL(momentHref(chart, 0, 0), 'http://x').searchParams.has('range')).toBe(false);
 	});
 
+	it('F4: leaves the clicked figures off when a picked point has none (a day not counted), so nothing reads as 0 B', () => {
+		const series = [
+			{ timestamp: '2026-11-01T00:00:00.000Z', download_bytes: 100, upload_bytes: 10, local_bytes: 1 },
+			{ timestamp: '2026-11-02T00:00:00.000Z', download_bytes: Number.NaN, upload_bytes: Number.NaN, local_bytes: Number.NaN },
+		];
+		const chart = { from: series[0].timestamp, to: '2026-11-02T12:00:00.000Z', step: 24 * HOUR, series };
+		const params = (i: number, j: number) => new URL(momentHref(chart, i, j), 'http://x').searchParams;
+		for (const [i, j] of [[1, 1], [0, 1]]) {
+			expect(['down', 'up', 'local'].filter((k) => params(i, j).has(k))).toEqual([]);
+			expect(params(i, j).get('from')).toBe(series[i].timestamp);
+		}
+		// a counted day alone still carries its figures
+		expect(Object.fromEntries(params(0, 0))).toMatchObject({ down: '100', up: '10', local: '1' });
+	});
+
 	it("links a protocol bar to the conn records behind it, with the endpoint's whole predicate", () => {
 		const win = { from: '2026-11-12T14:05:00.000Z', to: '2026-11-12T14:09:59.999Z' };
 		const p = (href: string) => Object.fromEntries(new URL(href, 'http://x').searchParams);

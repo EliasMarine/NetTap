@@ -61,6 +61,36 @@ describe('Settings › Display — your time zone', () => {
 		expect(screen.getByText(WARNING)).toBeInTheDocument();
 	});
 
+	it('lets the owner confirm UTC on a fresh install (not picked yet), which sets it', async () => {
+		stubZone({ tz: 'UTC', set: false }, { status: 200, body: { tz: 'UTC', set: true } });
+		render(DisplayTab);
+		await vi.waitFor(() => expect(select().value).toBe('UTC'));
+		const save = screen.getByRole('button', { name: 'Save time zone' });
+		expect(save).toBeEnabled();
+		// keeping the zone in use starts no new count, so no warning
+		expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
+		await fireEvent.click(save);
+		expect(await screen.findByText('NetTap counts days in UTC from now on.')).toBeInTheDocument();
+		const put = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === 'PUT');
+		expect(JSON.parse(String(put?.[1]?.body))).toEqual({ tz: 'UTC' });
+		expect(save).toBeDisabled();
+	});
+
+	it("still offers this browser's zone and the saved one where the browser can't list zones", async () => {
+		const list = Intl.supportedValuesOf;
+		Object.defineProperty(Intl, 'supportedValuesOf', { value: undefined, configurable: true, writable: true });
+		try {
+			stubZone({ tz: 'Europe/London', set: true });
+			render(DisplayTab);
+			await vi.waitFor(() => expect(select().value).toBe('Europe/London'));
+			const zones = [...select().options].map((o) => o.value);
+			expect(zones).toEqual(expect.arrayContaining(['Europe/London', 'UTC', Intl.DateTimeFormat().resolvedOptions().timeZone]));
+			expect(zones.length).toBeLessThanOrEqual(3);
+		} finally {
+			Object.defineProperty(Intl, 'supportedValuesOf', { value: list, configurable: true, writable: true });
+		}
+	});
+
 	it('keeps a saved zone this browser does not list, so the select still shows it', async () => {
 		stubZone({ tz: 'Etc/GMT+12', set: true });
 		render(DisplayTab);
