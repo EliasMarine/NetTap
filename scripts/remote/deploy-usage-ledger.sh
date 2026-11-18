@@ -52,11 +52,24 @@ result() {  # result LABEL OUTPUT  (OUTPUT starting with OK passes)
 }
 
 daemon_rss_mb() {  # the daemon process's resident memory, in MB (not docker stats: F1 lesson)
-    sudo docker exec nettap-storage-daemon sh -c 'for p in /proc/[0-9]*; do if grep -q main.py "$p/cmdline" 2>/dev/null; then awk "/^VmRSS:/ {print int(\$2/1024)}" "$p/status"; break; fi; done' 2>/dev/null
+    # OLD CODE: the first /proc entry whose cmdline held "main.py". The daemon shares the host's
+    # PID namespace, so that was this script's own `sh -c` (6 MB), not the daemon.
+    # sudo docker exec nettap-storage-daemon sh -c 'for p in /proc/[0-9]*; do if grep -q main.py "$p/cmdline" 2>/dev/null; then awk "/^VmRSS:/ {print int(\$2/1024)}" "$p/status"; break; fi; done' 2>/dev/null
+    sudo docker top nettap-storage-daemon -o pid,rss,args 2>/dev/null | awk '$3 ~ /python/ && / main\.py/ { if ($2 > m) m = $2 } END { printf "%d", m / 1024 }'
+}
+
+daemon_uptime_s() {
+    local started
+    started=$(sudo docker inspect -f '{{.State.StartedAt}}' nettap-storage-daemon 2>/dev/null)
+    echo $(( $(date +%s) - $(date -d "$started" +%s 2>/dev/null || date +%s) ))
 }
 
 settled_rss_mb() {  # wait until VmRSS moves under 10% across a minute (at most 5 minutes)
     local prev now i
+    # Start-up holds about 1.2 GB for its first minutes (F1 and F4 deploys), steady across a
+    # minute, so a fresh daemon is read only once it has run 5 minutes.
+    # OLD CODE: no wait (step 9 read 1,202 MB right after step 8's restart; 364 MB at 3 min)
+    while [ "$(daemon_uptime_s)" -lt 300 ]; do sleep 15; done
     prev=$(daemon_rss_mb)
     for i in 1 2 3 4 5; do
         sleep 60
@@ -73,6 +86,12 @@ container_mb() {  # container_mb NAME -> memory in MB from docker stats
     sudo docker stats --no-stream --format '{{.MemUsage}}' "$1" 2>/dev/null | awk '{
         v=$1; u=v; gsub(/[0-9.]/, "", u); gsub(/[A-Za-z]/, "", v);
         if (u=="GiB") v*=1024; else if (u=="KiB") v/=1024; printf "%d", v }'
+}
+
+anon_mb() {  # anon_mb NAME -> the container's anonymous memory in MB, from its cgroup
+    # docker stats also counts active file cache: index pages a query just read, which the
+    # kernel reclaims under pressure. The heap and other process memory are `anon`.
+    sudo docker exec "$1" sh -c 'cat /sys/fs/cgroup/memory.stat' 2>/dev/null | awk '/^anon / { printf "%d", $2 / 1048576 }'
 }
 
 swap_mb() { free -m | awk '/^Swap:/ {print $3}'; }
@@ -93,9 +112,10 @@ cd "$REPO_DIR" || { echo "   ✗ $REPO_DIR not found"; exit 1; }
 free -m | sed -n 1,3p
 DAEMON_RSS_BEFORE=$(settled_rss_mb)
 SWAP_BEFORE=$(swap_mb)
-OS_BEFORE=$(container_mb "$OPENSEARCH")
+# OLD CODE: OS_BEFORE=$(container_mb "$OPENSEARCH") (docker stats counts reclaimable file cache)
+OS_BEFORE=$(anon_mb "$OPENSEARCH")
 LAT_BEFORE=$(latency_ms)
-echo "   daemon VmRSS ${DAEMON_RSS_BEFORE} MB (settled), swap ${SWAP_BEFORE} MB, opensearch ${OS_BEFORE:-?} MB, /api/bandwidth/daily ${LAT_BEFORE} ms"
+echo "   daemon VmRSS ${DAEMON_RSS_BEFORE} MB (settled), swap ${SWAP_BEFORE} MB, opensearch anon ${OS_BEFORE:-?} MB, /api/bandwidth/daily ${LAT_BEFORE} ms"
 echo ""
 
 echo "→ Step 2: Update the code..."
@@ -150,7 +170,8 @@ SWAP_PEAK=$SWAP_BEFORE; OS_PEAK=${OS_BEFORE:-0}; LAT_PEAK=$LAT_BEFORE; RUNS=1; D
 for i in $(seq 1 360); do  # 5 s steps, 30 minutes at most
     sleep 5
     S=$(swap_mb); [ "$S" -gt "$SWAP_PEAK" ] && SWAP_PEAK=$S
-    O=$(container_mb "$OPENSEARCH"); [ -n "$O" ] && [ "$O" -gt "$OS_PEAK" ] && OS_PEAK=$O
+    # OLD CODE: O=$(container_mb "$OPENSEARCH")
+    O=$(anon_mb "$OPENSEARCH"); [ -n "$O" ] && [ "$O" -gt "$OS_PEAK" ] && OS_PEAK=$O
     if [ $((i % 6)) -eq 0 ]; then L=$(latency_ms); [ "$L" -gt "$LAT_PEAK" ] && LAT_PEAK=$L; fi
     STATE=$(daemon_py "
 s, b = call('GET', '/api/usage/month')
@@ -185,7 +206,7 @@ LIMIT=$((SWAP_BEFORE + SWAP_BEFORE / 20))
 if [ "$SWAP_PEAK" -le "$LIMIT" ]; then rc=0; else rc=1; fi
 check "swap stayed within the baseline + 5%" "$rc" "$SWAP_BEFORE -> peak $SWAP_PEAK MB, limit $LIMIT"
 if [ $((OS_PEAK - ${OS_BEFORE:-0})) -le 200 ]; then rc=0; else rc=1; fi
-check "OpenSearch memory rose by no more than 200 MB" "$rc" "${OS_BEFORE:-?} -> peak $OS_PEAK MB"
+check "OpenSearch anonymous memory rose by no more than 200 MB" "$rc" "${OS_BEFORE:-?} -> peak $OS_PEAK MB (heap is capped by -Xmx)"
 if [ "$LAT_PEAK" -le $((LAT_BEFORE * 3 + 50)) ]; then rc=0; else rc=1; fi
 check "API latency stayed under 3x its baseline" "$rc" "$LAT_BEFORE -> peak $LAT_PEAK ms"
 echo ""
