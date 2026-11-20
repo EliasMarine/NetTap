@@ -182,9 +182,30 @@ function usageMonth(populated: boolean): UsageMonth {
 	};
 }
 
+// OLD CODE START — F6 (NET-339): both modes had a cap, and the reply lacked the ledger's month fields
+// const cap = (populated: boolean): BandwidthCap => {
+// 	const used = populated ? usageMonth(true).bytes.total : 0;
+// 	return { monthly_cap_bytes: CAP_BYTES, monthly_cap_gb: CAP_BYTES / GB, enabled: true, current_usage_bytes: used, usage_percent: Math.round((used / CAP_BYTES) * 1000) / 10 };
+// };
+// OLD CODE END
+/** GET /api/bandwidth/cap: a fresh install has no cap (Bandwidth's "No cap set" link); populated has one, over the same month as /api/usage/month */
 const cap = (populated: boolean): BandwidthCap => {
-	const used = populated ? usageMonth(true).bytes.total : 0;
-	return { monthly_cap_bytes: CAP_BYTES, monthly_cap_gb: CAP_BYTES / GB, enabled: true, current_usage_bytes: used, usage_percent: Math.round((used / CAP_BYTES) * 1000) / 10 };
+	const month = usageMonth(populated);
+	const used = month.bytes.total;
+	const capBytes = populated ? CAP_BYTES : 0;
+	return {
+		monthly_cap_bytes: capBytes,
+		monthly_cap_gb: capBytes / GB,
+		enabled: populated,
+		current_usage_bytes: used,
+		usage_percent: populated ? Math.round((used / CAP_BYTES) * 1000) / 10 : 0,
+		tz: month.tz,
+		since: month.since,
+		complete: month.complete,
+		// every counted day is under the current exclusions here, so the lower bound is the whole total
+		lower_bound_bytes: used,
+		first_day: month.month_start.slice(0, 10),
+	};
 };
 
 export const BANDWIDTH_ROUTES: FixtureRoute[] = [

@@ -27,12 +27,17 @@ import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator, Callable
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from services.capture_config import write_file_atomic
-from services.notification_hub import SEVERITY_LEVELS, NotificationHub
+from services.notification_hub import (
+    SEVERITY_LEVELS,
+    NotificationHub,
+    _clip,
+    body_limit,
+)
 
 if TYPE_CHECKING:
     from services.event_journal import EventJournal
@@ -61,6 +66,19 @@ MAX_EVENTS = (
 )
 REPLAY = timedelta(hours=24)  # a lost event state re-reads this much of the journal
 _NO_EVENTS: dict = {"events": [], "overflow": 0}
+# NET-339: every journal event's line fits a message on its own (Codex r4 #3)
+EVENT_LINE_CHARS = 300
+# a title's longest, where a service clips: body_limit's Telegram reserve counts on it
+TITLE_CHARS = 256
+DATA_CAP_LINE_CHARS = 140
+# data cap warnings a channel queue keeps; past it the oldest held one goes (plan §4.3)
+MAX_DATA_CAP = 12
+_CAP_SEVERITY = {"80": 3, "100": 2, "projected": 3}
+_CAP_TITLE = {
+    "80": "Data cap: 80% used",
+    "100": "Data cap reached",
+    "projected": "Data cap: on track to go over",
+}
 
 
 def _iso(t: datetime) -> str:
@@ -175,11 +193,64 @@ def _digest_line(i: dict) -> str:
     return f"- [{level}] {i['signature']}: {events}, {where}"
 
 
-def digest(items: list[dict], overflow: int = 0) -> tuple[str, str, int]:
-    """(title, body, worst severity) of one channel's message.
+# OLD CODE START — NET-339: rendered the first 10 lines whatever their length, and a service's
+# clip could cut one; the caller couldn't tell which events were shown (Codex r2 #1, r4 #2)
+# def digest(items: list[dict], overflow: int = 0) -> tuple[str, str, int]:
+#     """(title, body, worst severity) of one channel's message.
+#
+#     All alerts: the wording alerts have always had. With journal events: their own title when
+#     alone, else "N new notifications"; `overflow` events past the queue's cap are counted.
+#     """
+#     worst = min(i["severity"] for i in items)
+#     level = SEVERITY_LEVELS[worst]
+#     alerts_only = not overflow and all("line" not in i for i in items)
+#     if len(items) == 1 and not overflow:
+#         title = (
+#             f"{level.capitalize()} alert: {items[0]['signature']}"
+#             if alerts_only
+#             else items[0]["title"]
+#         )
+#     elif alerts_only:
+#         title = f"{len(items)} new alerts (worst: {level})"
+#     else:
+#         title = f"{len(items) + overflow} new notifications (worst: {level})"
+#     lines = [_digest_line(i) for i in items[:DIGEST_LINES]]
+#     if len(items) > DIGEST_LINES:
+#         lines.append(f"and {len(items) - DIGEST_LINES} more")
+#     if overflow:
+#         lines.append(f"and {overflow} more events not listed; see NetTap")
+#     footer = (
+#         "Open NetTap's Alerts page for details."
+#         if alerts_only
+#         else "Open NetTap for details."
+#     )
+#     lines.extend(["", footer])
+#     return title, "\n".join(lines), worst
+# OLD CODE END
+def _fit(lines: list[str], room: int | None) -> list[int]:
+    """The indexes of the lines that go in, in order: at most DIGEST_LINES, together within
+    `room` characters (None: no limit). One that doesn't fit is skipped and the next tried."""
+    picked: list[int] = []
+    used = 0
+    for n, line in enumerate(lines):
+        if len(picked) == DIGEST_LINES:
+            break
+        if room is not None and used + len(line) + 1 > room:
+            continue
+        picked.append(n)
+        used += len(line) + 1  # with its line break
+    return picked
+
+
+def digest(
+    items: list[dict], overflow: int = 0, max_chars: int | None = None
+) -> tuple[str, str, int, list[dict]]:
+    """(title, body, worst severity, the items it rendered) of one channel's message.
 
     All alerts: the wording alerts have always had. With journal events: their own title when
     alone, else "N new notifications"; `overflow` events past the queue's cap are counted.
+    NET-339: lines go in the given order while the body stays within `max_chars` (the channel's
+    body_limit; None for no limit), so a service's clip never cuts a line that was rendered.
     """
     worst = min(i["severity"] for i in items)
     level = SEVERITY_LEVELS[worst]
@@ -194,18 +265,26 @@ def digest(items: list[dict], overflow: int = 0) -> tuple[str, str, int]:
         title = f"{len(items)} new alerts (worst: {level})"
     else:
         title = f"{len(items) + overflow} new notifications (worst: {level})"
-    lines = [_digest_line(i) for i in items[:DIGEST_LINES]]
-    if len(items) > DIGEST_LINES:
-        lines.append(f"and {len(items) - DIGEST_LINES} more")
-    if overflow:
-        lines.append(f"and {overflow} more events not listed; see NetTap")
     footer = (
         "Open NetTap's Alerts page for details."
         if alerts_only
         else "Open NetTap for details."
     )
-    lines.extend(["", footer])
-    return title, "\n".join(lines), worst
+    tail = [
+        *([f"and {overflow} more events not listed; see NetTap"] if overflow else []),
+        "",
+        footer,
+    ]
+    room = None
+    if max_chars is not None:
+        title = _clip(title, TITLE_CHARS)
+        # the "and N more" line is counted at its longest
+        room = max_chars - len("\n".join([f"and {len(items)} more", *tail]))
+    lines = [_digest_line(i) for i in items]
+    picked = _fit(lines, room)
+    more = len(items) - len(picked)
+    body = [lines[n] for n in picked] + ([f"and {more} more"] if more else []) + tail
+    return title, "\n".join(body), worst, [items[n] for n in picked]
 
 
 def _short_time(raw: Any) -> str:
@@ -213,8 +292,76 @@ def _short_time(raw: Any) -> str:
     return t.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if t else "?"
 
 
+def _gb(n: int) -> str:
+    """Decimal GB, one decimal place (NET-166)."""
+    return f"{n / 1e9:,.1f} GB"
+
+
+def _cap_gb(n: int) -> str:
+    """A cap as the owner typed it: "100 GB", "1.2 GB"."""
+    return f"{n / 1e9:,.1f}".removesuffix(".0") + " GB"
+
+
+def _is_bytes(raw: Any) -> bool:
+    return isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0
+
+
+def _cap_line(key: str, data: dict) -> str:
+    month, cap = data.get("month_label") or "this month", _cap_gb(data["cap"])
+    if key == "projected":
+        return f"On track for {_gb(data['projected'])} in {month}, over your {cap} cap"
+    # OLD CODE: line = f"{_gb(data['used'])} of your {cap} cap used in {month} ({data.get('tz')})"
+    # (review: rounding half up made an "at least" 82.46 GB read 82.5)
+    complete = data.get("complete")
+    # an "at least" figure floors to 0.1 GB, so it is never above what was counted
+    used = data["used"] if complete else data["used"] // 10**8 * 10**8
+    line = f"{_gb(used)} of your {cap} cap used in {month} ({data.get('tz')})"
+    if complete:
+        return line
+    since = data.get("since")
+    # "counted since" only for a ledger that started after the month's first day (as the card's
+    # usage-words rule); otherwise gaps make it partial
+    # OLD CODE: if isinstance(since, str) and since[:7] == data.get("month"): (review: "since 1 Nov")
+    month_key = data.get("month")
+    if isinstance(since, str) and since[:7] == month_key and since > f"{month_key}-01":
+        start = date.fromisoformat(since)
+        return f"{line}, at least: counted since {start.day} {start.strftime('%b')}"
+    return f"{line}, at least"
+
+
+def _data_cap_item(entry: dict) -> dict | None:
+    """NET-339: a data cap warning; None when its data isn't one (a hand-edited journal)."""
+    key, data = entry.get("key"), entry.get("data") or {}
+    if not isinstance(
+        data, dict
+    ):  # review: a list or string here raised, failing every poll
+        return None
+    figures = ("cap", "projected" if key == "projected" else "used")
+    if key not in _CAP_SEVERITY or not all(_is_bytes(data.get(f)) for f in figures):
+        return None
+    try:
+        line = _cap_line(key, data)
+    except ValueError:  # an unreadable since
+        return None
+    return {
+        "sig": f"event:{entry.get('id')}",
+        "event": "data_cap",
+        "severity": _CAP_SEVERITY[key],
+        "title": _CAP_TITLE[key],
+        "line": _clip(line, DATA_CAP_LINE_CHARS),
+        "count": 1,
+        "attempts": 0,
+        # what the dispatcher checks against the cap in force before sending (Codex r4 #1)
+        "month": data.get("month"),
+        "cap": data["cap"],
+    }
+
+
 def event_item(entry: dict) -> dict | None:
     """A journal entry as a queued notification; None for a type nothing sends yet."""
+    # OLD CODE: if entry.get("type") != "new_device": (NET-339: data cap warnings too)
+    if entry.get("type") == "data_cap":
+        return _data_cap_item(entry)
     if entry.get("type") != "new_device":
         return None
     data = entry.get("data") or {}
@@ -231,10 +378,75 @@ def event_item(entry: dict) -> dict | None:
         "event": "new_device",
         "severity": 3,
         "title": f"New device: {vendor or mac}",
-        "line": line,
+        # OLD CODE: "line": line, (NET-339: a long vendor name could outgrow a whole message)
+        "line": _clip(line, EVENT_LINE_CHARS),
         "count": 1,
         "attempts": 0,
     }
+
+
+def _trim(queue: list[dict]) -> tuple[list[dict], int]:
+    """The queue within MAX_EVENTS, oldest out first, and how many went. Never a data cap
+    warning: cap_queue bounds those, and dropping one would lose it for good."""
+    over = max(0, len(queue) - MAX_EVENTS)
+    gone = set([n for n, e in enumerate(queue) if e.get("event") != "data_cap"][:over])
+    return [e for n, e in enumerate(queue) if n not in gone], len(gone)
+
+
+def _cap_state(e: dict, now_cap: tuple[str, int] | None) -> str:
+    """ "send", "hold" or "drop" for one queued item under the cap in force (None: unknown)."""
+    if e.get("event") != "data_cap":
+        return "send"
+    if now_cap is None:
+        return "hold"
+    month, cap = now_cap
+    if str(e.get("month")) < month:
+        return "drop"  # that month is over (§3.5)
+    return "send" if (e.get("month"), e.get("cap")) == (month, cap) else "hold"
+
+
+def cap_queue(
+    events: list[dict], now_cap: tuple[str, int] | None, cid: str
+) -> tuple[list[dict], list[dict]]:
+    """(the queue to keep, what of it may be sent now): NET-339, Codex r4 #1.
+
+    A data cap warning for an earlier month is dropped. One for another cap this month (a cap
+    since raised, lowered or removed) is held: sent if the owner returns to that cap this month,
+    never for a cap they left. Past MAX_DATA_CAP the oldest held ones go.
+    """
+    states = [_cap_state(e, now_cap) for e in events]
+    held = [n for n, s in enumerate(states) if s == "hold"]
+    kept_caps = sum(1 for e in events if e.get("event") == "data_cap") - states.count(
+        "drop"
+    )
+    # only held ones: the current cap has at most 3 warnings a month
+    evicted = set(held[: max(0, kept_caps - MAX_DATA_CAP)])
+    if states.count("drop") or evicted:
+        logger.warning(
+            "Data cap warnings for channel %s: dropped %d for a month that is over and %d "
+            "held for a cap no longer set",
+            cid,
+            states.count("drop"),
+            len(evicted),
+        )
+    kept = [n for n, s in enumerate(states) if s != "drop" and n not in evicted]
+    return [events[n] for n in kept], [events[n] for n in kept if states[n] == "send"]
+
+
+# OLD CODE START — security review: every unshown event waited for the next message, so a burst
+# of 500 new MACs became 50 messages and spent the channel's day (it used to be one "and N more")
+# def _unshown(events: list[dict], rendered: list[dict]) -> list[dict]:
+#     """The queued events a sent message didn't show: they go in the next one (Codex r2 #1)."""
+#     shown = {i.get("sig") for i in rendered}
+#     return [e for e in events if e.get("sig") not in shown]
+# OLD CODE END
+def _unshown(events: list[dict], rendered: list[dict]) -> list[dict]:
+    """The data cap warnings a sent message didn't show: they go in the next one (Codex r2 #1).
+    Other events it didn't show were counted in its "and N more", as before NET-339."""
+    shown = {i.get("sig") for i in rendered}
+    return [
+        e for e in events if e.get("event") == "data_cap" and e.get("sig") not in shown
+    ]
 
 
 def _record(items: list[dict], now: datetime, ok: bool) -> dict:
@@ -259,8 +471,11 @@ class AlertDispatcher:
         lan_cidrs: Callable[[], list[str]],
         state_path: str,
         journal: "EventJournal | None" = None,
+        data_cap_now: Callable[[], tuple[str, int]] | None = None,
     ) -> None:
         self._hub = hub
+        # NET-339: (owner month "YYYY-MM", cap bytes) at send time; None sends cap warnings as queued
+        self._data_cap_now = data_cap_now
         self._client = client
         self._lan_cidrs = lan_cidrs
         self._state_path = Path(state_path)
@@ -368,14 +583,21 @@ class AlertDispatcher:
                 continue
             for cid in self._hub.channels_for(item["event"], item["severity"]):
                 old = queues.get(cid, _NO_EVENTS)
-                queue = [*old.get("events", []), item]
-                over = max(0, len(queue) - MAX_EVENTS)
+                # OLD CODE START — NET-339: the oldest went first, a data cap warning too
+                # queue = [*old.get("events", []), item]
+                # over = max(0, len(queue) - MAX_EVENTS)
+                # queues = {
+                #     **queues,
+                #     cid: {
+                #         "events": queue[over:],
+                #         "overflow": old.get("overflow", 0) + over,
+                #     },
+                # }
+                # OLD CODE END
+                queue, over = _trim([*old.get("events", []), item])
                 queues = {
                     **queues,
-                    cid: {
-                        "events": queue[over:],
-                        "overflow": old.get("overflow", 0) + over,
-                    },
+                    cid: {"events": queue, "overflow": old.get("overflow", 0) + over},
                 }
         return queues, entries[-1]["seq"] if entries else seq
 
@@ -387,6 +609,16 @@ class AlertDispatcher:
             return {"dropped": 0}
         dropped = self._journal.compact(datetime.now(timezone.utc), self.committed_seq)
         return {"dropped": dropped}
+
+    def _cap_now(self) -> tuple[str, int] | None:
+        """(owner month, cap) now; None holds every cap warning, so alerts still go out."""
+        try:
+            return self._data_cap_now()
+        except Exception as exc:
+            logger.warning(
+                "Data cap warnings held: the current cap can't be read (%s)", exc
+            )
+            return None
 
     def _routed(self, severity: int) -> set[str]:
         return set(self._hub.channels_for("alert", severity))
@@ -509,6 +741,10 @@ class AlertDispatcher:
             for e in ev.get("events") or []
             if cid in self._hub.channels_for(e.get("event", ""), e.get("severity", 3))
         ]
+        # NET-339: `events` stays queued; only `offered` may go now (held cap warnings wait)
+        offered = events
+        if self._data_cap_now and any(e.get("event") == "data_cap" for e in events):
+            events, offered = cap_queue(events, self._cap_now(), cid)
         overflow = ev.get("overflow", 0) if events else 0
         done = {
             sig: v
@@ -611,14 +847,17 @@ class AlertDispatcher:
         retry_at = _when(st.get("retry_at")) if st.get("retry_at") else None
         waiting = {"events": events, "overflow": overflow}
         # OLD CODE: if not candidates or (retry_at and retry_at > now): (NET-319: queued events send too)
-        if (not candidates and not events) or (retry_at and retry_at > now):
+        # OLD CODE: if (not candidates and not events) or (retry_at and retry_at > now): (NET-339: held cap warnings don't send)
+        if (not candidates and not offered) or (retry_at and retry_at > now):
             # the queue waits for the hourly digest; the hub keeps a failed send's error over this
             # OLD CODE: if slow and candidates and not any(i["attempts"] for i in candidates): (security delta: the hub decides, so a given-up queue can't hide a wrong password)
             # OLD CODE: if slow and candidates: (NET-319: queued events wait for the digest too)
-            if slow and (candidates or events):
+            # OLD CODE: if slow and (candidates or events): (NET-339: offered, not held)
+            if slow and (candidates or offered):
                 n = len(candidates)
                 # NET-319: queued events are named after the alerts, so alert-only wording is unchanged
-                others = len(events) + overflow
+                # OLD CODE: others = len(events) + overflow (NET-339)
+                others = len(offered) + overflow
                 also = (
                     f" and {others} other event{'' if others == 1 else 's'}"
                     if others
@@ -643,30 +882,47 @@ class AlertDispatcher:
                 "done": done,
                 "pending": candidates,
                 # past the budget the hourly slot holds even with nothing queued
+                # OLD CODE: if candidates or events or slow (NET-339: offered, not held)
                 "retry_at": st.get("retry_at")
-                if candidates or events or slow
+                if candidates or offered or slow
                 else None,
                 **today,
             }, waiting
 
-        # OLD CODE: title, body, worst = digest(candidates) (NET-319: with the queued events)
-        title, body, worst = digest(
-            sorted([*candidates, *events], key=_worst_first), overflow
-        )
-        # OLD CODE START — delta review: at the end, Pushover's 1024-character clip dropped the notice
+        # OLD CODE START — NET-339: the notice is fitted with the digest, so a clip cuts neither
+        # # OLD CODE: title, body, worst = digest(candidates) (NET-319: with the queued events)
+        # title, body, worst = digest(
+        #     sorted([*candidates, *events], key=_worst_first), overflow
+        # )
+        # # OLD CODE START — delta review: at the end, Pushover's 1024-character clip dropped the notice
+        # # if today["sent"] == DAILY_BUDGET - 1:
+        # #     body += (
+        # #         f"\n\nThis is the last notification today on this channel (limit "
+        # #         f"{DAILY_BUDGET} a day, UTC). Later alerts are on NetTap's Alerts page."
+        # #     )
+        # # OLD CODE END
         # if today["sent"] == DAILY_BUDGET - 1:
-        #     body += (
-        #         f"\n\nThis is the last notification today on this channel (limit "
-        #         f"{DAILY_BUDGET} a day, UTC). Later alerts are on NetTap's Alerts page."
+        #     # first, so a service's length clip never drops it
+        #     body = (
+        #         f"This channel has reached its limit of {DAILY_BUDGET} messages today (UTC). "
+        #         "Until 00:00 UTC it gets one digest an hour, worst alerts first.\n\n"
+        #         f"{body}"
         #     )
         # OLD CODE END
-        if today["sent"] == DAILY_BUDGET - 1:
-            # first, so a service's length clip never drops it
-            body = (
-                f"This channel has reached its limit of {DAILY_BUDGET} messages today (UTC). "
-                "Until 00:00 UTC it gets one digest an hour, worst alerts first.\n\n"
-                f"{body}"
-            )
+        # first, so a service's length clip never drops it
+        notice = (
+            f"This channel has reached its limit of {DAILY_BUDGET} messages today (UTC). "
+            "Until 00:00 UTC it gets one digest an hour, worst alerts first.\n\n"
+            if today["sent"] == DAILY_BUDGET - 1
+            else ""
+        )
+        limit = body_limit((self._hub.get_channel(cid) or {}).get("type", ""))
+        title, body, worst, rendered = digest(
+            sorted([*candidates, *offered], key=_worst_first),
+            overflow,
+            None if limit is None else limit - len(notice),
+        )
+        body = notice + body
         # OLD CODE START — delta review: a failed send used the budget, so a server outage spent the day
         # today = {**today, "sent": today["sent"] + 1}
         # OLD CODE END
@@ -698,7 +954,8 @@ class AlertDispatcher:
                 else None,
                 **today,
                 "sent": sent,
-            }, _NO_EVENTS
+                # OLD CODE: }, _NO_EVENTS (NET-339: an event not shown waited for nothing; it stays queued)
+            }, {"events": _unshown(events, rendered), "overflow": 0}
 
         # The service turned it down: that counts, since a wrong password tried every minute gets
         # the account locked. A send that never reached it doesn't (an outage mustn't use the day)
@@ -715,7 +972,16 @@ class AlertDispatcher:
                 len(RETRY_AFTER) + 1,
             )
         # NET-319: events never give up; past the last back-off they retry at its pace
-        tried_events = [{**e, "attempts": e.get("attempts", 0) + 1} for e in events]
+        # OLD CODE: tried_events = [{**e, "attempts": e.get("attempts", 0) + 1} for e in events]
+        # (NET-339: a held cap warning wasn't tried, so it keeps its count and its queue place)
+        offered_sigs = {e.get("sig") for e in offered}
+        queue = [
+            {**e, "attempts": e.get("attempts", 0) + 1}
+            if e.get("sig") in offered_sigs
+            else e
+            for e in events
+        ]
+        tried_events = [e for e in queue if e.get("sig") in offered_sigs]
         # the item with the fewest tries sets the pace, so a new alert keeps its quick retry
         # OLD CODE: delay = RETRY_AFTER[min(i["attempts"] for i in kept) - 1] if kept else None
         paces = [min(i["attempts"], len(RETRY_AFTER)) for i in [*kept, *tried_events]]
@@ -743,7 +1009,8 @@ class AlertDispatcher:
             # OLD CODE: "retry_at": _iso(now + delay) if delay else None, (security delta: see retry)
             "retry_at": _iso(retry) if retry else None,
             **today,
-        }, {"events": tried_events, "overflow": overflow}
+            # OLD CODE: }, {"events": tried_events, "overflow": overflow} (NET-339: held ones too)
+        }, {"events": queue, "overflow": overflow}
 
     # --- background task ---------------------------------------------------
 

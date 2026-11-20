@@ -1,6 +1,7 @@
 <!--
   Settings › Network (NET-273: moved from the Settings page): the network location for the Live
-  globe, and the IPs left out of device views. Forms only, so it registers no page refresh.
+  globe, the monthly data cap (F6), and the IPs left out of device views. Forms only, so it
+  registers no page refresh.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
@@ -8,6 +9,7 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import LocationCard from '../LocationCard.svelte';
+	import DataCapCard from '../DataCapCard.svelte';
 	import Feedback from '../Feedback.svelte';
 
 	interface Props {
@@ -34,10 +36,19 @@
 	const excludedUnsaved = $derived(excludedSaved !== null && JSON.stringify(excludedIps) !== excludedSaved);
 	let locationDirty = $state(false);
 	let locationWriting = $state(false);
+	// F6 (NET-339): the monthly data cap card
+	let capDirty = $state(false);
+	let capWriting = $state(false);
 
+	// OLD CODE START — F6 (NET-339): the data cap card's edits and save count too
+	// $effect(() => {
+	// 	dirty = excludedUnsaved || locationDirty;
+	// 	busy = networkSaving || locationWriting;
+	// });
+	// OLD CODE END
 	$effect(() => {
-		dirty = excludedUnsaved || locationDirty;
-		busy = networkSaving || locationWriting;
+		dirty = excludedUnsaved || locationDirty || capDirty;
+		busy = networkSaving || locationWriting || capWriting;
 	});
 
 	async function loadExcludedIps() {
@@ -121,6 +132,7 @@
 
 <div class="grid">
 	<LocationCard bind:dirty={locationDirty} bind:writing={locationWriting} />
+	<DataCapCard bind:dirty={capDirty} bind:writing={capWriting} />
 	<Card title="Excluded IPs" sub="Hidden from device views · still in logs, alerts and connections" class="c-12">
 		{#if networkLoading}
 			<CardState state="loading" title="Loading the excluded IP list" />

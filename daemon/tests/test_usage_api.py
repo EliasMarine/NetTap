@@ -336,6 +336,8 @@ def test_the_cap_reads_the_ledgers_month(env):
     assert body["usage_percent"] == 170.0
     assert (body["monthly_cap_bytes"], body["enabled"]) == (10_000, True)
     assert (body["tz"], body["since"], body["complete"]) == ("UTC", "2026-11-01", False)
+    # NET-339: the card's "at least" figure and the month's first day, from the same read
+    assert (body["lower_bound_bytes"], body["first_day"]) == (17_000, "2026-11-01")
 
 
 def test_the_time_zone_put_saves_off_the_request_loop(env, monkeypatch):

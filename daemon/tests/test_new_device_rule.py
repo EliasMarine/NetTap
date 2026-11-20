@@ -123,3 +123,85 @@ def test_a_restored_backup_from_before_gets_the_default(tmp_path, env_file):
     old_rules = {r["id"]: r for r in hub.get_rules() if r["id"] != nc.QUICK_NEWDEVICE}
     hub.restore_backup({"notification_rules": old_rules})
     assert hub.get_quick_settings()["new_device"] is True
+
+
+# --- NET-339: the same fixed-rule switch for "Tell me when I near my data cap" ----------
+
+
+def test_data_cap_warnings_are_on_by_default_and_routed(tmp_path, env_file):
+    hub = _hub(tmp_path, env_file)
+    view = _quick(hub)
+    assert view["data_cap"] is True
+    assert hub.channels_for("data_cap", 4) == [nc.QUICK_WEBHOOK]
+
+
+def test_an_existing_setup_gets_the_data_cap_rule_on_when_it_has_a_channel():
+    channels = {nc.QUICK_WEBHOOK: {"id": nc.QUICK_WEBHOOK, "type": "webhook"}}
+    rules = nc.with_default_event_rules(channels, {}, "2026-11-18T00:00:00+00:00")
+    assert rules[nc.QUICK_DATACAP] == {
+        "id": nc.QUICK_DATACAP,
+        "event_type": "data_cap",
+        "channels": [nc.QUICK_WEBHOOK],
+        "min_severity": 4,
+        "enabled": True,
+        "created_at": "2026-11-18T00:00:00+00:00",
+    }
+    # an off rule is the owner's choice and stays
+    off = {nc.QUICK_DATACAP: {"id": nc.QUICK_DATACAP, "enabled": False}}
+    assert (
+        nc.with_default_event_rules(channels, off, "t")[nc.QUICK_DATACAP]
+        == off[nc.QUICK_DATACAP]
+    )
+
+
+def test_turning_data_cap_off_is_kept_and_leaves_new_devices_alone(tmp_path, env_file):
+    hub = _hub(tmp_path, env_file)
+    _quick(hub)
+    assert _quick(hub, data_cap=False)["data_cap"] is False
+    assert hub.channels_for("data_cap", 4) == []
+    assert hub.channels_for("new_device", 4) == [nc.QUICK_WEBHOOK]
+    # a save that leaves it out keeps the off, and so does a restart
+    assert _quick(hub)["data_cap"] is False
+    assert _hub(tmp_path, env_file).get_quick_settings()["data_cap"] is False
+    # and the other way: turning new devices off doesn't touch data cap
+    assert _quick(hub, data_cap=True, new_device=False)["data_cap"] is True
+
+
+def test_a_data_cap_value_that_isnt_a_bool_is_refused(tmp_path, env_file):
+    hub = _hub(tmp_path, env_file)
+    with pytest.raises(ValueError, match="data_cap"):
+        _quick(hub, data_cap="yes")
+
+
+def test_deleting_the_data_cap_rule_turns_it_off_not_back_on(tmp_path, env_file):
+    hub = _hub(tmp_path, env_file)
+    _quick(hub)
+    assert hub.delete_rule(nc.QUICK_DATACAP) is True
+    assert hub.channels_for("data_cap", 4) == []
+    # the other fixed rule stays on
+    assert hub.channels_for("new_device", 4) == [nc.QUICK_WEBHOOK]
+    again = _hub(tmp_path, env_file)  # the load default must not turn it back on
+    assert again.get_quick_settings()["data_cap"] is False
+    assert again.channels_for("data_cap", 4) == []
+
+
+def test_an_opt_out_before_any_channel_survives_a_restart_and_the_first_channel(
+    tmp_path, env_file
+):
+    """Codex r1 #6: with no Settings channel the opt-out was dropped and came back on."""
+    hub = _hub(tmp_path, env_file)
+    hub.set_quick_settings(
+        {
+            "min_severity": 2,
+            "email": {"enabled": False},
+            "webhook": {"enabled": False},
+            "new_device": False,
+            "data_cap": False,
+        }
+    )
+    restarted = _hub(tmp_path, env_file)  # the load default runs on the saved rules
+    view = _quick(restarted)  # the first channel, with the switches left out
+    assert (view["new_device"], view["data_cap"]) == (False, False)
+    assert restarted.channels_for("new_device", 4) == []
+    assert restarted.channels_for("data_cap", 4) == []
+    assert restarted.channels_for("alert", 2) == [nc.QUICK_WEBHOOK]

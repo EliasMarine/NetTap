@@ -79,6 +79,17 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+# NET-339: the longest body each clipping sender passes on whole (mirrors _clip's limits there).
+# Telegram sends "[SEVERITY] {title}\n\n{message}" as one text; titles stay under 256, so 300
+# covers the tag, the title and the separators
+_BODY_LIMITS = {"pushover": 1024, "discord": 4096, "telegram": 4096 - 300}
+
+
+def body_limit(channel_type: str) -> int | None:
+    """The longest message body a channel type sends uncut; None when it doesn't clip."""
+    return _BODY_LIMITS.get(channel_type)
+
+
 class Refused(str):
     """A failed send's reason when the service answered and turned it down (an HTTP 3xx or 4xx,
     an SMTP 5xx), so trying again soon gets the same answer. It counts against the daily budget:
@@ -224,11 +235,13 @@ class NotificationHub:
             return
         try:
             self._commit(self._channels, rules)
+            # OLD CODE: "Notifications: new devices turned on for the Settings channels" (NET-339)
             logger.info(
-                "Notifications: new devices turned on for the Settings channels"
+                "Notifications: default event rules turned on for the Settings channels"
             )
         except OSError as exc:
-            logger.warning("Couldn't save the new-device rule: %s", exc)
+            # OLD CODE: logger.warning("Couldn't save the new-device rule: %s", exc) (NET-339)
+            logger.warning("Couldn't save the default event rules: %s", exc)
 
     def _seed_from_env(self) -> None:
         """First start only: the email/webhook named in the environment (NET-224)."""
@@ -944,11 +957,13 @@ class NotificationHub:
         with self._lock:
             if rule_id not in self._rules:
                 return False
-            if rule_id == nc.QUICK_NEWDEVICE:
+            # OLD CODE: if rule_id == nc.QUICK_NEWDEVICE: (NET-339: the data cap rule too)
+            if rule_id in (nc.QUICK_NEWDEVICE, nc.QUICK_DATACAP):
                 # NET-319: absent means "never chose" and comes back on; deleting is turning off
                 rule = {**self._rules[rule_id], "enabled": False}
                 self._commit(self._channels, {**self._rules, rule_id: rule})
-                logger.info("Turned off the Settings new-device rule")
+                # OLD CODE: logger.info("Turned off the Settings new-device rule")
+                logger.info("Turned off the Settings rule %s", rule_id)
                 return True
             self._commit(
                 self._channels, {k: v for k, v in self._rules.items() if k != rule_id}

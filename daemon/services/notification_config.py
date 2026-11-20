@@ -20,6 +20,7 @@ EVENT_TYPES = {
     "smart_warning",
     "capture_error",
     "system_error",
+    "data_cap",  # NET-339: 80%, 100% and "on track to go over"
 }
 
 # Settings › API keys saves the SMTP server here (api/settings.py); the env is the fallback
@@ -31,6 +32,10 @@ QUICK_WEBHOOK = "settings-webhook"
 QUICK_RULE = "settings-alerts"
 # NET-319: the Settings tab's "Tell me about new devices"; deleting it turns it off (hub)
 QUICK_NEWDEVICE = "settings-newdevice"
+# NET-339: "Tell me when I near my data cap", the same kind of fixed rule
+QUICK_DATACAP = "settings-datacap"
+# the fixed event rules and their event types; deleting one turns it off (hub)
+_EVENT_RULES = {QUICK_NEWDEVICE: "new_device", QUICK_DATACAP: "data_cap"}
 DEFAULT_MIN_SEVERITY = 2  # high and above
 
 # The public view shows only these config keys as they are...
@@ -259,6 +264,7 @@ def quick_view(channels: dict, rules: dict, smtp_configured: bool) -> dict:
     return {
         # never set means on (decision D1); off is the rule kept with enabled: false
         "new_device": rule_on(rules.get(QUICK_NEWDEVICE)),
+        "data_cap": rule_on(rules.get(QUICK_DATACAP)),  # NET-339, the same default
         "min_severity": rule["min_severity"]
         if rule_ok(rule) and "min_severity" in rule
         else DEFAULT_MIN_SEVERITY,
@@ -310,15 +316,29 @@ def _quick_ids(channels: dict) -> list[str]:
     return [cid for cid in (QUICK_EMAIL, QUICK_WEBHOOK) if cid in channels]
 
 
-def _newdevice_rule(rules: dict, ids: list[str], on: bool, now: str) -> dict:
-    old = (
-        rules.get(QUICK_NEWDEVICE)
-        if isinstance(rules.get(QUICK_NEWDEVICE), dict)
-        else {}
-    )
+# OLD CODE START — NET-339: one fixed event rule; _event_rule makes either
+# def _newdevice_rule(rules: dict, ids: list[str], on: bool, now: str) -> dict:
+#     old = (
+#         rules.get(QUICK_NEWDEVICE)
+#         if isinstance(rules.get(QUICK_NEWDEVICE), dict)
+#         else {}
+#     )
+#     return {
+#         "id": QUICK_NEWDEVICE,
+#         "event_type": "new_device",
+#         "channels": ids,
+#         "min_severity": 4,
+#         "enabled": on,
+#         "created_at": old.get("created_at", now),
+#     }
+# OLD CODE END
+def _event_rule(
+    rid: str, event_type: str, rules: dict, ids: list[str], on: bool, now: str
+) -> dict:
+    old = rules.get(rid) if isinstance(rules.get(rid), dict) else {}
     return {
-        "id": QUICK_NEWDEVICE,
-        "event_type": "new_device",
+        "id": rid,
+        "event_type": event_type,
         "channels": ids,
         "min_severity": 4,
         "enabled": on,
@@ -326,15 +346,51 @@ def _newdevice_rule(rules: dict, ids: list[str], on: bool, now: str) -> dict:
     }
 
 
+# OLD CODE START — NET-339: with no Settings channel nothing was saved, so an opt-out made
+# before the first channel came back on at the next save (Codex r1 #6); and no data cap rule
+# def _with_quick_rule(
+#     channels: dict, rules: dict, min_severity: int, now: str, new_device: bool = True
+# ) -> dict:
+#     """`rules` with the Settings rules sending alerts, and new devices when on, to whichever
+#     Settings channels exist. With none, the new-device rule keeps its on/off for later."""
+#     ids = _quick_ids(channels)
+#     others = {k: v for k, v in rules.items() if k != QUICK_RULE}
+#     if not ids:
+#         return others
+#     old = rules.get(QUICK_RULE) if isinstance(rules.get(QUICK_RULE), dict) else {}
+#     rule = {
+#         "id": QUICK_RULE,
+#         "event_type": "alert",
+#         "channels": ids,
+#         "min_severity": min_severity,
+#         "created_at": old.get("created_at", now),
+#     }
+#     return {
+#         **others,
+#         QUICK_RULE: rule,
+#         QUICK_NEWDEVICE: _newdevice_rule(rules, ids, new_device, now),
+#     }
+# OLD CODE END
 def _with_quick_rule(
-    channels: dict, rules: dict, min_severity: int, now: str, new_device: bool = True
+    channels: dict,
+    rules: dict,
+    min_severity: int,
+    now: str,
+    new_device: bool = True,
+    data_cap: bool = True,
 ) -> dict:
-    """`rules` with the Settings rules sending alerts, and new devices when on, to whichever
-    Settings channels exist. With none, the new-device rule keeps its on/off for later."""
+    """`rules` with the Settings rules sending alerts, and new devices and data cap warnings
+    when on, to whichever Settings channels exist. With none, the alert rule is left out and
+    both event rules are kept with no channel, so their on/off holds for later."""
     ids = _quick_ids(channels)
     others = {k: v for k, v in rules.items() if k != QUICK_RULE}
+    on = {QUICK_NEWDEVICE: new_device, QUICK_DATACAP: data_cap}
+    events = {
+        rid: _event_rule(rid, kind, rules, ids, on[rid], now)
+        for rid, kind in _EVENT_RULES.items()
+    }
     if not ids:
-        return others
+        return {**others, **events}
     old = rules.get(QUICK_RULE) if isinstance(rules.get(QUICK_RULE), dict) else {}
     rule = {
         "id": QUICK_RULE,
@@ -343,20 +399,31 @@ def _with_quick_rule(
         "min_severity": min_severity,
         "created_at": old.get("created_at", now),
     }
-    return {
-        **others,
-        QUICK_RULE: rule,
-        QUICK_NEWDEVICE: _newdevice_rule(rules, ids, new_device, now),
-    }
+    return {**others, QUICK_RULE: rule, **events}
 
 
+# OLD CODE START — NET-339: new devices only
+# def with_default_event_rules(channels: dict, rules: dict, now: str) -> dict:
+#     """New devices on by default (D1) for a setup that never chose: the fixed rule is added,
+#     on, when a Settings channel exists and the rule is absent. An off rule is left alone."""
+#     ids = _quick_ids(channels)
+#     if not ids or QUICK_NEWDEVICE in rules:
+#         return rules
+#     return {**rules, QUICK_NEWDEVICE: _newdevice_rule(rules, ids, True, now)}
+# OLD CODE END
 def with_default_event_rules(channels: dict, rules: dict, now: str) -> dict:
-    """New devices on by default (D1) for a setup that never chose: the fixed rule is added,
-    on, when a Settings channel exists and the rule is absent. An off rule is left alone."""
+    """New devices and data cap warnings on by default (D1) for a setup that never chose: each
+    fixed rule is added, on, when a Settings channel exists and it is absent. An off rule is
+    left alone. `rules` itself when nothing is added."""
     ids = _quick_ids(channels)
-    if not ids or QUICK_NEWDEVICE in rules:
+    missing = {
+        rid: _event_rule(rid, kind, rules, ids, True, now)
+        for rid, kind in _EVENT_RULES.items()
+        if rid not in rules
+    }
+    if not ids or not missing:
         return rules
-    return {**rules, QUICK_NEWDEVICE: _newdevice_rule(rules, ids, True, now)}
+    return {**rules, **missing}
 
 
 def apply_quick_settings(
@@ -379,6 +446,10 @@ def apply_quick_settings(
     new_device = body.get("new_device", rule_on(rules.get(QUICK_NEWDEVICE)))
     if not isinstance(new_device, bool):
         raise ValueError("new_device must be true or false")
+    # NET-339: the same for data cap warnings
+    data_cap = body.get("data_cap", rule_on(rules.get(QUICK_DATACAP)))
+    if not isinstance(data_cap, bool):
+        raise ValueError("data_cap must be true or false")
 
     new = dict(channels)
     old_email = channels.get(QUICK_EMAIL)
@@ -410,7 +481,8 @@ def apply_quick_settings(
         new[QUICK_WEBHOOK] = {**old_webhook, "enabled": False}
 
     # OLD CODE: return new, _with_quick_rule(new, rules, min_severity, now) (NET-319: + new devices)
-    return new, _with_quick_rule(new, rules, min_severity, now, new_device)
+    # OLD CODE: return new, _with_quick_rule(new, rules, min_severity, now, new_device) (NET-339: + data cap)
+    return new, _with_quick_rule(new, rules, min_severity, now, new_device, data_cap)
 
 
 def seed_from_env(get: Callable[[str], str], now: str) -> tuple[dict, dict, list[str]]:

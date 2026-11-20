@@ -305,6 +305,13 @@ Lane A (F1) does not wait for P1 or P2: it is daemon-only, and its two new label
 
 ### #6: Data cap warnings
 
+- [x] **Done 2026-11-20 (NET-339, `feature/f6-data-cap-warnings`).** As the slice plan `plans/2026-11-18-f6-data-cap-warnings.md` (Codex-approved in round 5) changed it:
+  - **The journal is the only record of "sent".** No job state: each warning is one append keyed by `(threshold, "<YYYY-MM>|<cap bytes>")`, kept past the journal's line cap for 62 days. A new cap re-arms; returning to an earlier cap sends nothing again.
+  - **Every 15 min from the ledger's snapshot, not hourly from OpenSearch.** Thresholds use a lower bound counted under the current exclusions, so a changed exclusion can't fake a crossing.
+  - **Only the current month and cap are sent.** A queued warning for a cap the owner has left is held; one for a month that is over is dropped. A crossing first accounted after the month's last local midnight is not warned about (stated limit).
+  - **Each message is fitted to the service's length limit,** and a data cap warning it didn't show waits for the next one (other events stay in "and N more").
+  - **Deploy:** `deploy-data-cap-warnings.sh` (a synthetic crossing under a 1.234567 GB test cap, then the owner's cap restored).
+
 - **What the owner gets:** a warning at 80% and 100% of the monthly cap, and one when the month is on track to go over. A place to set the cap.
 - **Scope:**
   - An hourly `data_cap` job reads the month from the F4 ledger (local time zone), never from raw records that pruning can shrink. `/api/bandwidth/cap` switches to the same ledger figure, so the page and the alert agree.

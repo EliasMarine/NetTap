@@ -965,6 +965,7 @@ def test_local_bytes_never_reach_the_total_the_high_water_mark_or_the_projection
         "upload": 1800,
         "local": 90000,
         "total": 2160,
+        "lower_bound": 2160,  # NET-339: every day counted under the current rules
     }
     assert month["days"][0]["total"] == 120 and month["days"][0]["local"] == 5000
     elapsed = (T0 - datetime(2026, 11, 1, tzinfo=UTC)).total_seconds()
@@ -977,3 +978,48 @@ def test_local_bytes_never_reach_the_total_the_high_water_mark_or_the_projection
     entry = w.entry(NOV[18])
     assert (entry["total"], entry["local"]) == (121, 0)
     assert "coverage_lost_at" not in entry
+
+
+# --- NET-339: the lower bound a data cap warning is checked against --------------------
+
+
+def test_the_lower_bound_skips_days_still_awaiting_a_recount_under_new_rules(tmp_path):
+    w = World(tmp_path)
+    w.store.fill(1, 18)
+    w.run()
+    w.excluded = ["10.9.9.9"]  # a new rules hash: every earlier day needs a recount
+    w.tracker.fail = [None, None, TooSlow("a search took too long")]
+    w.clock.to(T0 + timedelta(minutes=15))
+    w.run()  # the first chunks and today are recounted, the middle isn't
+    month = w.month()
+    counted = sum(d["total"] for d in month["days"] if d["status"] == "counted")
+    assert any(d["status"] == "recount_pending" for d in month["days"])
+    assert month["bytes"]["lower_bound"] == counted < month["bytes"]["total"]
+    assert month["projected"] is None  # the same read, so the pair can't disagree
+    w.run()
+    month = w.month()
+    assert month["bytes"]["lower_bound"] == month["bytes"]["total"] == 1800
+    assert month["projected"] is not None
+
+
+def test_the_lower_bound_keeps_approximate_and_stale_days_but_not_old_rules_ones(
+    tmp_path,
+):
+    w = World(tmp_path)
+    w.store.fill(10, 18)
+    w.run()
+    w.store.prune(NOV[17])  # never settled: its figure is a floor, not a recount
+    w.clock.to(T0 + timedelta(minutes=15))
+    w.run()
+    w.clock.to(T0 + timedelta(minutes=61))  # no pass since: today is stale
+    month = w.month()
+    assert (w.status(NOV[17]), w.status(NOV[18])) == ("approximate", "stale")
+    assert month["bytes"]["lower_bound"] == month["bytes"]["total"] == 900
+    w.excluded = ["10.9.9.9"]
+    w.clock.to(T0 + timedelta(minutes=75))
+    w.run()
+    month = w.month()
+    # day 17's raw data is gone, so it keeps its total but under the old rules
+    assert w.status(NOV[17]) == "old_rules"
+    assert month["bytes"]["total"] == 900
+    assert month["bytes"]["lower_bound"] == 800

@@ -244,11 +244,32 @@ describe('Bandwidth — cards', () => {
 		expect(screen.getByText('25% of your 28.0 GB cap')).toBeInTheDocument();
 	});
 
+	// F6 (NET-339): with no cap, the KPI says so and links to where it is set
+	it('no cap: says "No cap set" and links to Settings › Network', async () => {
+		stubDaemon({ '/api/usage/month': MONTH, '/api/bandwidth/cap': NO_CAP });
+		const { container } = render(Page);
+		const link = await screen.findByRole('link', { name: 'Set a monthly data cap' });
+		expect(link).toHaveAttribute('href', '/settings?tab=network');
+		expect(link.closest('.kpi')).toHaveTextContent('No cap set');
+		expect(screen.queryByRole('meter')).not.toBeInTheDocument();
+		expectNoNestedInteractive(container);
+	});
+
+	it('a cap set shows the meter, not the link', async () => {
+		stubDaemon({ '/api/usage/month': MONTH, '/api/bandwidth/cap': capOf(70 * GB) });
+		render(Page);
+		await screen.findByRole('meter');
+		expect(screen.queryByText(/No cap set/)).not.toBeInTheDocument();
+		expect(screen.queryByRole('link', { name: 'Set a monthly data cap' })).not.toBeInTheDocument();
+	});
+
 	it('F4: says when the cap could not be read, instead of dropping the meter silently', async () => {
 		stubDaemon({ '/api/usage/month': MONTH });
 		render(Page);
 		expect(await screen.findByText("Couldn't load your cap")).toBeInTheDocument();
 		expect(screen.queryByRole('meter')).not.toBeInTheDocument();
+		// F6: a cap that didn't load isn't "no cap"
+		expect(screen.queryByText(/No cap set/)).not.toBeInTheDocument();
 	});
 
 	it('loading: each card says what it is loading', async () => {

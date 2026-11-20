@@ -171,6 +171,36 @@ describe('Settings hub — unsaved edits', () => {
 		expect(panel()).toHaveAttribute('id', 'settings-panel-display');
 	});
 
+	// F6 (NET-339): the data cap card on Network counts like the tab's other forms
+	it('holds a tab switch on an unsaved data cap alone, and while a cap is being saved', async () => {
+		resetNavigation('http://localhost/settings?tab=network');
+		const save = gate();
+		const cap = { monthly_cap_bytes: 0, monthly_cap_gb: 0, enabled: false, current_usage_bytes: 0, usage_percent: 0, since: null, complete: false, lower_bound_bytes: 0 };
+		stubFetch({
+			'/api/bandwidth/cap': () => ({ body: cap }),
+			'/api/settings/bandwidth-cap': async () => {
+				await save.wait();
+				return { body: { result: 'saved', monthly_cap_gb: 100, monthly_cap_bytes: 100e9 } };
+			},
+		});
+		render(Page);
+		await flush();
+		await fireEvent.input(screen.getByLabelText('Monthly cap in GB'), { target: { value: '100' } });
+
+		await fireEvent.click(tab('About'));
+		expect(screen.getByText('You have unsaved changes in Network.')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save data cap' }));
+		await fireEvent.click(tab('About'));
+		expect(screen.getByText(BUSY_BAR)).toBeInTheDocument();
+		expect(panel()).toHaveAttribute('id', 'settings-panel-network');
+
+		save.open();
+		await flush();
+		expect(await screen.findByText('Data cap saved.')).toBeInTheDocument();
+	});
+
 	it('holds a tab switch: Keep editing stays, Discard and continue goes', async () => {
 		await openDirtyDisplay();
 

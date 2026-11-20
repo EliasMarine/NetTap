@@ -74,3 +74,55 @@ describe('Notification preferences: new devices (NET-319)', () => {
 		expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
 	});
 });
+
+// F6 (NET-339): "Tell me when I near my data cap" is on by default and saved as `data_cap`, beside `new_device`
+const dataCapSwitch = () => screen.getByRole('switch', { name: 'Tell me when I near my data cap' });
+
+describe('Notification preferences: data cap warnings (F6)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('loads the saved setting', async () => {
+		stubConfig({ ...CONFIG, data_cap: false });
+		renderCard();
+		await loaded();
+
+		expect(dataCapSwitch()).not.toBeChecked();
+		expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+	});
+
+	it('reads a config that never set it as on', async () => {
+		stubConfig(CONFIG);
+		renderCard();
+		await loaded();
+
+		expect(dataCapSwitch()).toBeChecked();
+	});
+
+	it('links to where the cap is set', async () => {
+		stubConfig(CONFIG);
+		renderCard();
+		await loaded();
+
+		expect(screen.getByRole('link', { name: 'Network tab' })).toHaveAttribute('href', '?tab=network');
+	});
+
+	it('marks the form unsaved when switched, and saves it in the same PUT as new devices', async () => {
+		const fn = stubConfig({ ...CONFIG, new_device: true, data_cap: true });
+		renderCard();
+		await loaded();
+
+		await fireEvent.click(dataCapSwitch());
+		expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+
+		await screen.findByText('Notification settings saved.');
+		const puts = fn.mock.calls.filter(([, init]) => init?.method === 'PUT');
+		expect(puts).toHaveLength(1);
+		expect(JSON.parse(String(puts[0][1]?.body))).toMatchObject({ new_device: true, data_cap: false });
+		expect(dataCapSwitch()).not.toBeChecked();
+		expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+	});
+});

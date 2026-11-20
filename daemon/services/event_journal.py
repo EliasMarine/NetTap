@@ -28,6 +28,9 @@ logger = logging.getLogger("nettap.services.event_journal")
 DEFAULT_PATH = os.environ.get("EVENT_JOURNAL_FILE", "/opt/nettap/data/events.jsonl")
 KEEP_DAYS = 120
 MAX_LINES = 50_000
+# NET-339: data cap warnings recorded this long ago stay even past MAX_LINES (at most 3 per cap
+# per month), so a month's ids can't be evicted and the warning sent again
+CAP_KEEP = timedelta(days=62)
 WINDOW = (
     1_000  # the newest entries, kept in memory so a normal poll never reads the file
 )
@@ -174,7 +177,8 @@ class EventJournal:
         """Drop lines older than the keep period or past the line cap; returns how many went.
 
         Never drops a line after `keep_from_seq` (the dispatcher's saved cursor: not yet taken
-        for delivery) nor the newest line (it carries the seq the next append continues from).
+        for delivery) nor the newest line (it carries the seq the next append continues from),
+        nor a data cap warning recorded in the last CAP_KEEP (NET-339).
         With no saved cursor yet, nothing is dropped.
         """
         if keep_from_seq is None:
@@ -189,10 +193,25 @@ class EventJournal:
                 for e in entries
                 if (t := _when(e.get("recorded_at"))) is None or t >= cutoff
             ][-self._max_lines :]
+            # OLD CODE START — NET-339: the line cap could evict this month's data cap ids
+            # kept_seqs = (
+            #     {e["seq"] for e in recent_enough}
+            #     | {e["seq"] for e in entries if e["seq"] > keep_from_seq}
+            #     | {entries[-1]["seq"]}
+            # )
+            # OLD CODE END
+            cap_floor = now - CAP_KEEP
             kept_seqs = (
                 {e["seq"] for e in recent_enough}
                 | {e["seq"] for e in entries if e["seq"] > keep_from_seq}
                 | {entries[-1]["seq"]}
+                # a data cap warning's id is its once-a-month record: kept past the line cap
+                | {
+                    e["seq"]
+                    for e in entries
+                    if e.get("type") == "data_cap"
+                    and ((t := _when(e.get("recorded_at"))) is None or t >= cap_floor)
+                }
             )
             kept = [e for e in entries if e["seq"] in kept_seqs]
             dropped = len(entries) - len(kept)

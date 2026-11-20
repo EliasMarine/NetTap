@@ -156,6 +156,19 @@ def _projection(
     }
 
 
+def _lower_bound(rows: list[dict], snapshot: dict | None, rules: str) -> int:
+    """NET-339: the days' totals counted under the current rules only (counted, approximate and
+    stale days whose rules match), so the sum is never too high after an exclusions change."""
+    days = (snapshot or {}).get("days", {})
+    return sum(
+        r["total"]
+        for r in rows
+        if r["total"] is not None
+        and r["status"] in ("counted", "approximate", "stale")
+        and days.get(r["date"], {}).get("rules") == rules
+    )
+
+
 def month(
     snapshot: dict | None,
     year: int,
@@ -174,6 +187,11 @@ def month(
     sweep = (snapshot or {}).get("sweep") or _NO_SWEEP
     return {
         **report,
+        # NET-339: from the same snapshot and rules as the projection (Codex r2 #5)
+        "bytes": {
+            **report["bytes"],
+            "lower_bound": _lower_bound(report["days"], snapshot, rules),
+        },
         "year": year,
         "month": month_no,
         "month_start": start.isoformat(),

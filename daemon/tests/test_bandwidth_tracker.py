@@ -84,6 +84,30 @@ class TestBandwidthTrackerNoClient(unittest.TestCase):
             self.assertEqual(self.tracker._monthly_cap_bytes, 0)
             Path("/tmp/test_bw_cap_neg.json").unlink(missing_ok=True)
 
+    def test_a_failed_write_changes_neither_the_live_nor_the_saved_cap(self):
+        """NET-339 (Codex r1 #3): the live cap moves only once the file is written."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            cap_file = str(Path(d) / "cap.json")
+            with patch("services.bandwidth_tracker._CAP_FILE", cap_file):
+                tracker = BandwidthTracker(client=None)
+                tracker.save_cap(5 * 10**9)
+                saved = Path(cap_file).read_text()
+                with patch(
+                    "services.bandwidth_tracker.write_file_atomic",
+                    side_effect=OSError(28, "No space left on device"),
+                ):
+                    with self.assertRaises(OSError):
+                        tracker.save_cap(9 * 10**9)
+                self.assertEqual(tracker.get_cap()["monthly_cap_bytes"], 5 * 10**9)
+                self.assertEqual(Path(cap_file).read_text(), saved)
+                # a restart reads the cap that was really saved
+                self.assertEqual(
+                    BandwidthTracker(client=None).get_cap()["monthly_cap_bytes"],
+                    5 * 10**9,
+                )
+
 
 class TestBandwidthTrackerWithClient(unittest.TestCase):
     """Tests for BandwidthTracker with a mocked OpenSearch client."""
@@ -551,6 +575,15 @@ class TestSetCapIsDecimalGb(AioHTTPTestCase):
             "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": 1_000_000}
         )
         self.assertEqual(resp.status, 200)  # exactly 1 PB is allowed
+
+    async def test_a_failed_save_is_a_plain_500_and_not_a_success(self):
+        """NET-339: a write that fails (disk full) is said so, with no path or errno in it."""
+        self.tracker.save_cap.side_effect = OSError(28, "No space left on device")
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": 100}
+        )
+        self.assertEqual(resp.status, 500)
+        self.assertEqual(await resp.json(), {"error": "Couldn't save the cap"})
 
     async def test_a_negative_cap_is_saved_and_reported_as_off(self):
         resp = await self.client.request(

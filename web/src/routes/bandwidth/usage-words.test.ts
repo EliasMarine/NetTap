@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { UsageDay, UsageDayStatus, UsageMonth } from '$lib/api/usage';
 import { formatWhen } from '$lib/utils/drilldown';
-import { monthNote, noRateReason, notFinalLine, sameAsUtc } from './usage-words';
+import type { BandwidthCap } from '$lib/api/bandwidth';
+// OLD CODE: import { monthNote, noRateReason, notFinalLine, sameAsUtc } from './usage-words'; (F6: the cap's use line)
+import { capUseLines, formatGB, monthNote, noRateReason, notFinalLine, sameAsUtc } from './usage-words';
 
 // F4 (NET-329): the month card's subtitle and the daily chart's note, per plan §4.6
 
@@ -82,5 +84,73 @@ describe('sameAsUtc', () => {
 	it("reads UTC's other names as UTC, and leaves every other zone alone", () => {
 		expect(['UTC', 'Etc/UTC', 'Etc/Universal'].map(sameAsUtc)).toEqual(['UTC', 'UTC', 'UTC']);
 		expect(sameAsUtc('Europe/London')).toBe('Europe/London');
+	});
+});
+
+// F6 (NET-339): Settings › Network's use line, with a figure that is never too high
+describe('formatGB', () => {
+	it('is decimal GB with one decimal, as ISPs state caps', () => {
+		expect(formatGB(82_400_000_000)).toBe('82.4 GB');
+		expect(formatGB(100e9)).toBe('100.0 GB');
+		expect(formatGB(0)).toBe('0.0 GB');
+	});
+});
+
+describe('capUseLines', () => {
+	const GB = 1e9;
+	const cap = (extra: Partial<BandwidthCap> = {}): BandwidthCap => ({
+		monthly_cap_bytes: 100 * GB, monthly_cap_gb: 100, enabled: true, current_usage_bytes: 82.4 * GB, usage_percent: 82.4,
+		tz: 'Europe/London', since: '2026-10-01', complete: true, lower_bound_bytes: 82.4 * GB, first_day: '2026-11-01',
+		...extra,
+	});
+
+	it('a complete month: the total of the cap', () => {
+		expect(capUseLines(cap())).toEqual(['82.4 GB of 100.0 GB used this month']);
+	});
+
+	it('an incomplete month whose counting began inside it: at least the lower bound, counted since that day', () => {
+		expect(capUseLines(cap({ complete: false, since: '2026-11-13' }))).toEqual(['At least 82.4 GB of 100.0 GB used this month, counted since 13 Nov']);
+	});
+
+	it.each([
+		['began before the month', '2026-10-01', '2026-11-01'],
+		["began on the month's first day", '2026-11-01', '2026-11-01'],
+		['an older daemon sent no first day', '2026-11-13', undefined],
+	])("an incomplete month whose counting %s: some days aren't counted", (_name, since, firstDay) => {
+		expect(capUseLines(cap({ complete: false, since, first_day: firstDay }))).toEqual([
+			"At least 82.4 GB of 100.0 GB used this month, some days aren't counted",
+		]);
+	});
+
+	it('"at least" never rounds up past what was counted (82.46 GB reads 82.4, not 82.5)', () => {
+		expect(capUseLines(cap({ complete: false, since: '2026-11-13', current_usage_bytes: 82_460_000_000, lower_bound_bytes: 82_460_000_000 }))[0]).toBe(
+			'At least 82.4 GB of 100.0 GB used this month, counted since 13 Nov',
+		);
+	});
+
+	it('days under earlier exclusions: the lower bound, never the total, and says it is recounting', () => {
+		expect(capUseLines(cap({ complete: false, since: '2026-11-13', lower_bound_bytes: 50 * GB }))).toEqual([
+			'At least 50.0 GB of 100.0 GB used this month, counted since 13 Nov',
+			'Recounting under your new exclusions',
+		]);
+	});
+
+	it('no ledger count yet: still counting', () => {
+		expect(capUseLines(cap({ since: null, complete: false, current_usage_bytes: 0, lower_bound_bytes: 0 }))).toEqual(['Still counting']);
+	});
+
+	it('no cap: the use without "of …"', () => {
+		const none = { monthly_cap_bytes: 0, monthly_cap_gb: 0, enabled: false };
+		expect(capUseLines(cap(none))).toEqual(['82.4 GB used this month']);
+		expect(capUseLines(cap({ ...none, complete: false, since: '2026-11-13' }))).toEqual(['At least 82.4 GB used this month, counted since 13 Nov']);
+	});
+
+	it("an older daemon's missing fields are unknown, never zero use or an unsafe total", () => {
+		const unknown = ["This month's use isn't available"];
+		expect(capUseLines(cap({ since: undefined, complete: undefined, lower_bound_bytes: undefined }))).toEqual(unknown);
+		// incomplete without the lower bound: the total could count days under old exclusions
+		expect(capUseLines(cap({ complete: false, lower_bound_bytes: undefined }))).toEqual(unknown);
+		// complete without it: the total is the counted figure
+		expect(capUseLines(cap({ lower_bound_bytes: undefined }))).toEqual(['82.4 GB of 100.0 GB used this month']);
 	});
 });

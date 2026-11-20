@@ -46,7 +46,8 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
 	{
 		label: 'Network',
 		tabs: [
-			{ id: 'network', label: 'Network', intro: 'Where this network is, and the addresses left out of device views.' },
+			// OLD CODE: { id: 'network', label: 'Network', intro: 'Where this network is, and the addresses left out of device views.' }, (F6: + the data cap)
+			{ id: 'network', label: 'Network', intro: 'Where this network is, your monthly data cap, and the addresses left out of device views.' },
 			{ id: 'integrations', label: 'Integrations', intro: 'Device names, models and networks from your UniFi controller.' },
 			{ id: 'api-keys', label: 'API keys', intro: 'Credentials for GeoIP lookups and the email server, kept on this NetTap.' },
 		],

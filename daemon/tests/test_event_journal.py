@@ -120,7 +120,10 @@ def test_after_serves_the_window_and_pages_older_backlog_from_disk(tmp_path):
     assert journal.after(1500, 10) == []
 
 
-def _old_and_new(path, ages_days: list[int]) -> None:
+# NET-339: `types` overrides a line's type by seq (default new_device)
+def _old_and_new(
+    path, ages_days: list[int], types: dict[int, str] | None = None
+) -> None:
     lines = []
     for i, age in enumerate(ages_days, start=1):
         at = (NOW - timedelta(days=age)).isoformat()
@@ -129,7 +132,7 @@ def _old_and_new(path, ages_days: list[int]) -> None:
                 {
                     "seq": i,
                     "id": f"id{i}",
-                    "type": "new_device",
+                    "type": (types or {}).get(i, "new_device"),
                     "key": f"k{i}",
                     "recorded_at": at,
                     "data": {},
@@ -166,6 +169,21 @@ def test_compaction_caps_lines(tmp_path):
     journal = EventJournal(str(path), max_lines=4)
     journal.compact(NOW, keep_from_seq=10)
     assert [e["seq"] for e in _lines(path)] == [7, 8, 9, 10]
+
+
+def test_compaction_keeps_recent_data_cap_lines_past_the_line_cap(tmp_path):
+    """NET-339: a data cap line is the once-a-month record, so only its age drops it."""
+    path = tmp_path / "e.jsonl"
+    # 63 days is past CAP_KEEP but inside KEEP_DAYS: the line cap alone decides it
+    _old_and_new(
+        path,
+        [200, 63, 61, 30, 30, 1, 1, 1, 1, 1],
+        types={1: "data_cap", 2: "data_cap", 3: "data_cap", 4: "data_cap"},
+    )
+    journal = EventJournal(str(path), max_lines=3)
+    journal.compact(NOW, keep_from_seq=10)
+    # 3 and 4 outlive the 3-line cap; 1 and 2 are too old; the other old lines go as before
+    assert [e["seq"] for e in _lines(path)] == [3, 4, 8, 9, 10]
 
 
 def test_compaction_without_a_saved_cursor_keeps_everything(tmp_path):

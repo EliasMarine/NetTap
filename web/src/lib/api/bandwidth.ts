@@ -92,6 +92,18 @@ export interface BandwidthCap {
 	enabled: boolean;
 	current_usage_bytes: number;
 	usage_percent: number;
+	// F4/F6 (NET-329, NET-339): the ledger month behind current_usage_bytes. Optional because an older
+	// daemon leaves them out; a missing one means unknown, never zero use
+	/** The zone the month is counted in */
+	tz?: string;
+	/** The first day the ledger counted (YYYY-MM-DD); null before its first count */
+	since?: string | null;
+	/** Every elapsed day of the month is counted under the current exclusions */
+	complete?: boolean;
+	/** The month's use counted under the current exclusions only: never more than the real figure */
+	lower_bound_bytes?: number;
+	/** The owner month's first local date (YYYY-MM-DD), to tell a ledger that began this month from one that began before it */
+	first_day?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -264,8 +276,15 @@ export async function setBandwidthCap(
 		body: JSON.stringify({ monthly_cap_gb: capGb }),
 	});
 
+	// OLD CODE START — F6 (NET-339): dropped the daemon's reason ("Couldn't save the cap"), which the Settings card shows
+	// if (!res.ok) {
+	// 	throw new Error(`Failed to set bandwidth cap: ${res.status}`);
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		throw new Error(`Failed to set bandwidth cap: ${res.status}`);
+		const body = await res.json().catch(() => null);
+		// OLD CODE: throw new Error(body?.error || …) (review: a non-string error read "[object Object]")
+		throw new Error(body && typeof body.error === 'string' ? body.error : `Failed to set bandwidth cap: ${res.status}`);
 	}
 
 	return res.json();
