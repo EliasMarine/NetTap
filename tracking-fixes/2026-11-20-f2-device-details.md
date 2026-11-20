@@ -63,10 +63,11 @@
 
 These come from the NET-344 plan, §4 (`plans/2026-11-20-net344-backup-size.md`). NET-344 trims the oldest alert acknowledgements to fit the restore limit. It never leaves out an owner setting: a backup too big even without acknowledgements gets a specific 413 naming the largest part.
 
-- **Both live checks in `deploy-device-details.sh`** (before and after the recreate):
-  - accept a 200 that carries `device_details`, and print `acknowledgements_left_out`;
-  - report the specific size 413 as a finding, not a failure;
-  - fail on any other answer.
+- **The live checks in `deploy-device-details.sh` differ by stage:**
+  - **Before the deploy,** the running build is NET-344 without F2, so it has no `device_details`. A valid 200 passes there, and `acknowledgements_left_out` is printed.
+  - **After the recreate,** a 200 must carry `device_details`.
+  - **At both stages,** the specific size 413 and NET-344's named 422 (for example a legacy excluded-IP range) are findings, not failures. Any other answer fails.
+  - **One classifier:** a single function in `verify_device_details.py`, unit-tested with a pre-F2 200, a post-F2 200, a 413 and a 422.
   - The pre-deploy headroom arithmetic (the 768 KiB reserve) goes, because NET-344's `fit` measures the real file.
 - **Shared checks:** `device_details` joins NET-344's `section_errors`, which validate, import and export share.
 - **Serialisation test:** rewrite the serialisation-bound test in `test_config_backup.py` against `fit`, with ASCII and emoji notes.
