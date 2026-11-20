@@ -479,6 +479,8 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 			webhook: { enabled: true, url: '' },
 			// NET-319: SAVED never set it, which reads as on
 			new_device: true,
+			// F6 (NET-339): nor this one
+			data_cap: true,
 		});
 		expect(screen.getByRole('status')).toHaveTextContent('Notification settings saved.');
 	});
@@ -823,7 +825,11 @@ describe('Settings — load states', () => {
 
 	it('shows the error card, with no form, when the excluded IP list fails', async () => {
 		// OLD CODE: stubFetch(); (NET-273: the tab loads on open, so the location card beside it answers by then)
-		stubFetch({ '/api/settings/home-location': () => ({ body: { home: null } }) });
+		// OLD CODE: stubFetch({ '/api/settings/home-location': () => ({ body: { home: null } }) }); (F6: and the data cap card)
+		stubFetch({
+			'/api/settings/home-location': () => ({ body: { home: null } }),
+			'/api/bandwidth/cap': () => ({ body: { monthly_cap_bytes: 0, monthly_cap_gb: 0, enabled: false, current_usage_bytes: 0, usage_percent: 0, since: null, complete: false, lower_bound_bytes: 0 } }),
+		});
 		render(Page);
 		await flush();
 		await openTab('Network');
@@ -1027,6 +1033,8 @@ describe('Settings — links into a tab', () => {
 		await flush();
 		expect(screen.getByRole('tab', { name: 'Network' })).toHaveAttribute('aria-selected', 'true');
 		expect(screen.getByRole('heading', { name: 'Network location' })).toBeInTheDocument();
+		// F6 (NET-339): and the monthly data cap
+		expect(screen.getByRole('heading', { name: 'Monthly data cap' })).toBeInTheDocument();
 	});
 
 	it('an unknown tab is ignored', async () => {

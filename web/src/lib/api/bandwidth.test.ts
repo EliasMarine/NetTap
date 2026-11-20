@@ -223,6 +223,30 @@ describe('bandwidth API client', () => {
 			mockFetchFailure(500);
 			await expect(getBandwidthCap()).rejects.toThrow('HTTP 500');
 		});
+
+		// F6 (NET-339): the ledger month behind the figure, for the Settings card's use line
+		it("passes on the month's zone, start, completeness and lower bound", async () => {
+			const reply = {
+				monthly_cap_bytes: 100e9, monthly_cap_gb: 100, enabled: true, current_usage_bytes: 60e9, usage_percent: 60,
+				tz: 'Europe/London', since: '2026-11-13', complete: false, lower_bound_bytes: 50e9, first_day: '2026-11-01',
+			};
+			mockFetchSuccess(reply);
+
+			const result = await getBandwidthCap();
+
+			expect(result).toMatchObject({ tz: 'Europe/London', since: '2026-11-13', complete: false, lower_bound_bytes: 50e9, first_day: '2026-11-01' });
+		});
+
+		it('leaves the fields an older daemon omits undefined, not zero', async () => {
+			mockFetchSuccess({ monthly_cap_bytes: 0, monthly_cap_gb: 0, enabled: false, current_usage_bytes: 5e9, usage_percent: 0 });
+
+			const result = await getBandwidthCap();
+
+			expect(result.lower_bound_bytes).toBeUndefined();
+			expect(result.first_day).toBeUndefined();
+			expect(result.since).toBeUndefined();
+			expect(result.complete).toBeUndefined();
+		});
 	});
 
 	// -- setBandwidthCap ---------------------------------------------------
@@ -243,6 +267,28 @@ describe('bandwidth API client', () => {
 			mockFetchFailure(400);
 
 			await expect(setBandwidthCap(0)).rejects.toThrow();
+		});
+
+		// F6 (NET-339): the Settings card shows why
+		it("throws the daemon's reason when it gives one", async () => {
+			mockFetchSuccess({ error: "Couldn't save the cap" }, 500);
+
+			await expect(setBandwidthCap(100)).rejects.toThrow("Couldn't save the cap");
+		});
+
+		it('throws the status when the reply has no reason', async () => {
+			mockFetchFailure(502);
+
+			await expect(setBandwidthCap(100)).rejects.toThrow('Failed to set bandwidth cap: 502');
+		});
+
+		it('sends the cap in decimal GB as given', async () => {
+			mockFetchSuccess({ result: 'saved', monthly_cap_gb: 1.2, monthly_cap_bytes: 1_234_567_000 });
+
+			await setBandwidthCap(1.234567);
+
+			const [, init] = vi.mocked(fetch).mock.calls[0];
+			expect(JSON.parse(String(init?.body))).toEqual({ monthly_cap_gb: 1.234567 });
 		});
 	});
 });

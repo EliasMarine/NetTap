@@ -141,6 +141,7 @@ from services.live_connections import LiveConnectionTracker
 from services.bandwidth_tracker import BandwidthTracker
 from services.notification_hub import NotificationHub
 from services.notification_dispatcher import AlertDispatcher
+from services.data_cap import DataCapWatch
 from services.event_journal import EventJournal
 from services.scheduled_jobs import Job, Scheduler
 from services import owner_tz
@@ -1437,6 +1438,8 @@ def create_app(
     )
     notification_hub = NotificationHub(config_path=notification_config)
     register_notification_hub_routes(app, notification_hub)
+    # NET-339: data cap warnings, journaled by a job below and sent for the cap in force
+    data_cap_watch = DataCapWatch(bandwidth_tracker, usage_ledger, event_journal)
     # NET-224: alerts reach the channels from here, with or without a browser open
     alert_dispatcher = AlertDispatcher(
         notification_hub,
@@ -1447,6 +1450,7 @@ def create_app(
         ),
         # NET-319: new devices (and later events) from the journal
         journal=event_journal,
+        data_cap_now=data_cap_watch.now,
     )
     app.cleanup_ctx.append(alert_dispatcher.ctx)
 
@@ -1475,6 +1479,14 @@ def create_app(
                 every_s=900,
                 deadline_s=240,
                 run=usage_ledger.run,
+            ),
+            # NET-339: reads the ledger's snapshot, so no OpenSearch query
+            Job(
+                "data-cap",
+                "Data cap warnings",
+                every_s=900,
+                deadline_s=30,
+                run=data_cap_watch.run,
             ),
         ]
     )

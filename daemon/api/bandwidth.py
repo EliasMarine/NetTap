@@ -22,7 +22,7 @@ from opensearchpy import OpenSearchException
 
 from api.error_replies import public_json
 from api.devices import _accounted_devices, _ip_order
-from api.offload import in_thread
+from api.offload import in_thread, run_blocking
 from api.time_range import parse_time_range, slot_interval
 from api.usage import month_reply
 from services.bandwidth_tracker import (
@@ -341,6 +341,10 @@ def handle_cap(request: web.Request) -> web.Response:
         month["since"],
         month["complete"],
     )
+    # NET-339: never too high, so the card's "at least" is true (Codex r2 #6)
+    cap["lower_bound_bytes"] = month["bytes"]["lower_bound"]
+    # the owner month's first local date: the card says "counted since" only for a later since
+    cap["first_day"] = month["month_start"][:10]
     if cap["monthly_cap_bytes"] > 0:
         cap["usage_percent"] = round(
             cap["current_usage_bytes"] / cap["monthly_cap_bytes"] * 100, 1
@@ -393,7 +397,13 @@ async def handle_set_cap(request: web.Request) -> web.Response:
             {"error": "'monthly_cap_gb' must be at most 1,000,000 GB (1 PB)"},
             status=400,
         )
-    tracker.save_cap(cap_bytes)
+    try:
+        # OLD CODE: tracker.save_cap(cap_bytes) (NET-339: a failed write was an unhandled 500)
+        # off the request loop: the atomic write fsyncs
+        await run_blocking(tracker.save_cap, cap_bytes)
+    except OSError as exc:
+        logger.error("Couldn't save the bandwidth cap: %s", exc)
+        return public_json({"error": "Couldn't save the cap"}, status=500)
 
     return web.json_response(
         {

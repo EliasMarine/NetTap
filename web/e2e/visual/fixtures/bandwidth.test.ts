@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { hasFigures, type UsageMonth } from '../../../src/lib/api/usage.ts';
+import type { BandwidthCap } from '../../../src/lib/api/bandwidth.ts';
 import { BANDWIDTH_ROUTES } from './bandwidth.ts';
 
 const month = BANDWIDTH_ROUTES.find((r) => r.path === '/api/usage/month')!;
@@ -23,5 +24,23 @@ describe('usage ledger fixtures', () => {
 		// nothing is projected unless every elapsed day is counted
 		if (body.projected !== null) expect(body.days.every((d) => d.status === 'counted' || d.status === 'future')).toBe(true);
 		expect(body.complete).toBe(body.days.every((d) => d.status === 'counted' || d.status === 'future'));
+	});
+});
+
+// F6 (NET-339): the cap reply describes the same month as /api/usage/month, as the daemon's does
+describe('cap fixtures', () => {
+	const capRoute = BANDWIDTH_ROUTES.find((r) => r.path === '/api/bandwidth/cap')!;
+
+	it.each(['empty', 'populated'] as const)("%s: the use, start and completeness are the month's, and the lower bound is never higher", (mode) => {
+		const cap = capRoute[mode] as BandwidthCap;
+		const body = month[mode] as UsageMonth;
+		expect(cap.current_usage_bytes).toBe(body.bytes.total);
+		expect([cap.tz, cap.since, cap.complete]).toEqual([body.tz, body.since, body.complete]);
+		expect(cap.lower_bound_bytes).toBeLessThanOrEqual(cap.current_usage_bytes);
+	});
+
+	it('a fresh install has no cap; populated has one', () => {
+		expect((capRoute.empty as BandwidthCap).monthly_cap_bytes).toBe(0);
+		expect((capRoute.populated as BandwidthCap).monthly_cap_bytes).toBeGreaterThan(0);
 	});
 });

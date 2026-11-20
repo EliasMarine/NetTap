@@ -72,6 +72,8 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/settings?tab=backup', marker: 'Export configuration' },
 	{ path: '/settings?tab=notifications', marker: 'Notification channels' },
 	{ path: '/settings?tab=suricata-rules', marker: 'Rules Suricata runs' },
+	// F6 (NET-339): the Network tab, with the monthly data cap card (no cap when empty, one set when populated)
+	{ path: '/settings?tab=network', marker: 'Monthly data cap' },
 	{ path: '/system', marker: 'System' },
 	{ path: '/system/cyberchef', marker: 'CyberChef' },
 	{ path: '/system/updates', marker: 'Software updates' },

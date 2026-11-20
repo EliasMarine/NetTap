@@ -10,11 +10,13 @@ import calendar
 import logging
 import math
 import os
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
 from opensearchpy import OpenSearch
 
+from services.capture_config import write_file_atomic
 from services.device_accounting import (
     direction_aggs,
     gateways_if_needed,
@@ -100,6 +102,7 @@ class BandwidthTracker:
     def __init__(self, client: OpenSearch | None = None) -> None:
         self._client = client
         self._monthly_cap_bytes: int = DEFAULT_MONTHLY_CAP_BYTES
+        self._cap_lock = threading.Lock()  # NET-339: one cap save at a time
         self._load_cap()
 
     def set_client(self, client: OpenSearch) -> None:
@@ -137,15 +140,29 @@ class BandwidthTracker:
             logger.warning("Ignoring the bandwidth cap file %s: %s", _CAP_FILE, exc)
             self._monthly_cap_bytes = DEFAULT_MONTHLY_CAP_BYTES
 
+    # OLD CODE START — NET-339 (Codex r1 #3): the live value changed first, then a truncating
+    # write, so a failed write left a cap live that was never saved (and maybe an empty file)
+    # def save_cap(self, cap_bytes: int) -> None:
+    #     """Save monthly bandwidth cap to settings file."""
+    #     import json
+    #     from pathlib import Path
+    #
+    #     self._monthly_cap_bytes = max(0, cap_bytes)
+    #     Path(_CAP_FILE).parent.mkdir(parents=True, exist_ok=True)
+    #     with open(_CAP_FILE, "w") as f:
+    #         json.dump({"monthly_cap_bytes": self._monthly_cap_bytes}, f)
+    # OLD CODE END
     def save_cap(self, cap_bytes: int) -> None:
-        """Save monthly bandwidth cap to settings file."""
+        """Save the monthly cap: the file atomically, then the live value. OSError: not saved,
+        and both the live and the saved cap are as they were."""
         import json
         from pathlib import Path
 
-        self._monthly_cap_bytes = max(0, cap_bytes)
-        Path(_CAP_FILE).parent.mkdir(parents=True, exist_ok=True)
-        with open(_CAP_FILE, "w") as f:
-            json.dump({"monthly_cap_bytes": self._monthly_cap_bytes}, f)
+        cap = max(0, cap_bytes)
+        with self._cap_lock:
+            Path(_CAP_FILE).parent.mkdir(parents=True, exist_ok=True)
+            write_file_atomic(_CAP_FILE, json.dumps({"monthly_cap_bytes": cap}))
+            self._monthly_cap_bytes = cap
 
     def get_cap(self) -> dict[str, Any]:
         """Get configured monthly cap and current usage percentage."""

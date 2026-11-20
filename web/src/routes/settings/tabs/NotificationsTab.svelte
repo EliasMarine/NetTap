@@ -188,6 +188,7 @@
 	// Labels for every event type a stored rule can name
 	const eventTypes = [
 		{ value: 'new_device', label: 'New device' },
+		{ value: 'data_cap', label: 'Data cap' },
 		{ value: 'alert', label: 'Alert' },
 		{ value: 'anomaly', label: 'Anomaly' },
 		{ value: 'storage_warning', label: 'Storage warning' },
@@ -200,10 +201,15 @@
 	// OLD CODE START — NET-319: new devices have a sender now (the event journal), so the form offers them too
 	// const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert');
 	// OLD CODE END
-	const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert' || e.value === 'new_device');
+	// OLD CODE START — F6 (NET-339): data cap warnings come from the event journal too
+	// const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert' || e.value === 'new_device');
+	// OLD CODE END
+	const ruleEventTypes = eventTypes.filter((e) => ['alert', 'new_device', 'data_cap'].includes(e.value));
 	// The daemon sends new-device events at medium (3) and a rule fires only at or below its minimum, so a
 	// new-device rule takes 4 (All), as the daemon's own quick rule does; the form doesn't offer the choice
 	const NEW_DEVICE_MIN_SEVERITY = 4;
+	/** F6: data cap warnings are medium or high, so their rule takes 4 (All) the same way; no severity field for either */
+	const fixedSeverity = (type: string) => type === 'new_device' || type === 'data_cap';
 
 	// OLD CODE START — the page refresh contract (PLAN §5.5): every load goes through refresh.run()
 	// // Load data on mount
@@ -341,7 +347,8 @@
 	async function handleAddRule() {
 		addingRule = true;
 		// OLD CODE: const result = await createRule(newRuleEventType, newRuleChannels, newRuleSeverity); (a new-device rule at 1–3 never fired)
-		const minSeverity = newRuleEventType === 'new_device' ? NEW_DEVICE_MIN_SEVERITY : newRuleSeverity;
+		// OLD CODE: const minSeverity = newRuleEventType === 'new_device' ? NEW_DEVICE_MIN_SEVERITY : newRuleSeverity; (F6: data cap too)
+		const minSeverity = fixedSeverity(newRuleEventType) ? NEW_DEVICE_MIN_SEVERITY : newRuleSeverity;
 		const result = await createRule(newRuleEventType, newRuleChannels, minSeverity);
 		// OLD CODE: if (result) { … } else { showMessage('Failed to create rule.', 'error'); } (NET-224: no reason)
 		if (result.ok) {
@@ -613,7 +620,8 @@ OLD CODE END -->
 						</select>
 					</div>
 					<!-- OLD CODE: the severity field showed for every event type (a new-device rule always takes NEW_DEVICE_MIN_SEVERITY) -->
-					{#if newRuleEventType !== 'new_device'}
+					<!-- OLD CODE: {#if newRuleEventType !== 'new_device'} (F6: a data cap rule takes 4 too) -->
+					{#if !fixedSeverity(newRuleEventType)}
 						<div class="field">
 							<label class="label" for="rule-severity">Minimum severity</label>
 							<select class="select" id="rule-severity" bind:value={newRuleSeverity}>

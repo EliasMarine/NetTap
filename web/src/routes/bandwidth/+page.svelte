@@ -9,7 +9,8 @@
 	import type { BandwidthCap, DeviceUsage, HeatmapResponse } from '$lib/api/bandwidth';
 	import { getTimezone, getUsageMonth, hasFigures, setTimezone } from '$lib/api/usage';
 	import type { OwnerTimezone, UsageDay, UsageMonth } from '$lib/api/usage';
-	import { formatDate, monthNote, noRateReason, notFinalLine, sameAsUtc, STATUS_WORDS } from './usage-words';
+	// OLD CODE: import { formatDate, monthNote, noRateReason, notFinalLine, sameAsUtc, STATUS_WORDS } from './usage-words'; (F6: formatGB moved there)
+	import { formatDate, formatGB, monthNote, noRateReason, notFinalLine, sameAsUtc, STATUS_WORDS } from './usage-words';
 	// OLD CODE START — replaced by the system's DeviceList (Top consumers) and DataTable, which sorts
 	// import TopConsumers from '$lib/components/TopConsumers.svelte';
 	// import { compareValues } from '$lib/utils/table-sort.svelte';
@@ -97,9 +98,11 @@
 		return `${(bytes / 1e9).toFixed(1)} GB`;
 	}
 
-	function formatGB(bytes: number): string {
-		return `${(bytes / 1e9).toFixed(1)} GB`;
-	}
+	// OLD CODE START — F6 (NET-339): moved to ./usage-words.ts, so Settings' data cap card formats the same way
+	// function formatGB(bytes: number): string {
+	// 	return `${(bytes / 1e9).toFixed(1)} GB`;
+	// }
+	// OLD CODE END
 
 	/** The GB figure alone, for a KPI whose unit sits beside it. */
 	const gb = (bytes: number) => (bytes / 1e9).toFixed(1);
@@ -593,6 +596,9 @@
 					<Meter value={progressPercent(internet, capBytes)} label="{pct}% of your monthly cap used" />
 				{:else if capFailed && !cap}
 					<span class="cap">Couldn't load your cap</span>
+				{:else if cap}
+					<!-- F6 (NET-339): the cap is set on Settings › Network -->
+					<span class="cap">No cap set · <a class="link" href="/settings?tab=network">Set a monthly data cap</a></span>
 				{/if}
 			{/snippet}
 		</KpiCard>

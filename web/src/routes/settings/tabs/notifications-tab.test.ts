@@ -205,7 +205,8 @@ describe('Notification settings delivery results', () => {
 	});
 
 	// OLD CODE: it('the rule form offers only the alert event, the one NetTap sends', …) expected ['alert'] (NET-319: new devices have a sender now)
-	it('the rule form offers alerts and new devices, the events NetTap sends', async () => {
+	// OLD CODE: it('the rule form offers alerts and new devices, the events NetTap sends', …) (F6: and data cap warnings)
+	it('the rule form offers alerts, new devices and data cap warnings, the events NetTap sends', async () => {
 		stubFetch(LISTS);
 		render(Page);
 		await screen.findByText('Home Discord');
@@ -214,7 +215,9 @@ describe('Notification settings delivery results', () => {
 
 		const options = Array.from((screen.getByLabelText('Event type') as HTMLSelectElement).options).map((o) => o.value);
 		// OLD CODE: expect(options).toEqual(['alert']);
-		expect(options).toEqual(['new_device', 'alert']);
+		// OLD CODE: expect(options).toEqual(['new_device', 'alert']); (F6)
+		expect(options).toEqual(['new_device', 'data_cap', 'alert']);
+		expect(screen.getByRole('option', { name: 'Data cap' })).toHaveValue('data_cap');
 		for (const unsent of ['anomaly', 'storage_warning', 'smart_warning', 'capture_error', 'system_error']) {
 			expect(options).not.toContain(unsent);
 		}
@@ -241,6 +244,43 @@ describe('Notification settings delivery results', () => {
 
 		const post = fn.mock.calls.find(([url, init]) => url === '/api/notifications/rules' && init?.method === 'POST');
 		expect(JSON.parse(String(post?.[1]?.body))).toEqual({ event_type: 'new_device', channels: ['ch1'], min_severity: 4 });
+	});
+
+	// F6 (NET-339): cap warnings are medium (80%, on track) or high (100%), so their rule takes All (4) too
+	it('creates a data cap rule at All (4), with no severity field', async () => {
+		const fn = vi.fn(async (url: string, init?: RequestInit) => {
+			if (url === '/api/notifications/rules' && init?.method === 'POST') {
+				return { ok: true, status: 201, json: async () => ({ id: 'r1', ...JSON.parse(String(init.body)) }) };
+			}
+			const body = LISTS[url];
+			return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 500, json: async () => ({}) };
+		});
+		vi.stubGlobal('fetch', fn);
+		render(Page);
+		await screen.findByText('Home Discord');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+		await fireEvent.change(screen.getByLabelText('Event type'), { target: { value: 'data_cap' } });
+		expect(screen.queryByLabelText('Minimum severity')).not.toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('checkbox', { name: /Home Discord/ }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Create rule' }));
+
+		const post = fn.mock.calls.find(([url, init]) => url === '/api/notifications/rules' && init?.method === 'POST');
+		expect(JSON.parse(String(post?.[1]?.body))).toEqual({ event_type: 'data_cap', channels: ['ch1'], min_severity: 4 });
+	});
+
+	it('names a stored data cap rule "Data cap"', async () => {
+		stubFetch({
+			...LISTS,
+			'/api/notifications/rules': {
+				rules: [{ id: 'settings-datacap', event_type: 'data_cap', channels: ['ch1'], min_severity: 4, created_at: '2026-11-18T10:00:00Z' }],
+				count: 1,
+			},
+		});
+		render(Page);
+
+		const row = (await screen.findByText('Data cap')).closest('li') as HTMLElement;
+		expect(within(row).getByText(/to 1 channel/)).toBeInTheDocument();
 	});
 
 	it('marks a rule that is off, and only that one (NET-319)', async () => {

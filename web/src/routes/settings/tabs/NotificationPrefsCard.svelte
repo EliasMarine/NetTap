@@ -37,6 +37,8 @@
 	let smtpConfigured = $state(false);
 	// NET-319: new devices go to the same channels; a config that never set it reads as on
 	let newDevice = $state(true);
+	// F6 (NET-339): data cap warnings too, on unless turned off
+	let dataCap = $state(true);
 	let notifSaving = $state(false);
 	let notifMessage = $state('');
 	let notifError = $state(false);
@@ -47,8 +49,9 @@
 	let testError = $state(false);
 	// review L3: the test sends through the saved settings, so it waits while the form differs
 	// OLD CODE: JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl]); (NET-319: and new devices)
+	// OLD CODE: JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice]); (F6: and data cap warnings)
 	const notifForm = () =>
-		JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice]);
+		JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice, dataCap]);
 	// the blank form until the load lands, so nothing reads as unsaved while it loads
 	let notifSavedForm = $state(notifForm());
 	// a failed load leaves nothing to compare with; the test then reports the daemon's own answer
@@ -88,9 +91,11 @@
 		email?: { enabled?: boolean; recipients?: string[]; smtp_configured?: boolean };
 		webhook?: { enabled?: boolean; has_url?: boolean; url_hint?: string };
 		new_device?: boolean;
+		data_cap?: boolean;
 	}) {
 		severityThreshold = SEVERITY_VALUES[(data.min_severity ?? 2) - 1] ?? 'high';
 		newDevice = data.new_device ?? true;
+		dataCap = data.data_cap ?? true;
 		emailEnabled = data.email?.enabled ?? false;
 		emailAddress = (data.email?.recipients ?? []).join(', ');
 		smtpConfigured = data.email?.smtp_configured ?? false;
@@ -171,6 +176,7 @@
 					// a blank URL keeps the saved one
 					webhook: { enabled: webhookEnabled, url: webhookUrl.trim() },
 					new_device: newDevice,
+					data_cap: dataCap,
 				}),
 			});
 			// OLD CODE START — review L2: a body that couldn't be read, even after the daemon saved, said "Failed to connect"
@@ -256,7 +262,8 @@
 
 <!-- OLD CODE: sub="Which alerts reach you · by email and webhook" (NET-224: the daemon sends them now) -->
 <!-- OLD CODE: sub="Which alerts reach you · by email and webhook, with or without this page open" (NET-319: new devices too) -->
-<Card title="Notification preferences" sub="Which alerts and new devices reach you · by email and webhook, with or without this page open" class="c-12">
+<!-- OLD CODE: sub="Which alerts and new devices reach you · by email and webhook, with or without this page open" (F6: data cap warnings too) -->
+<Card title="Notification preferences" sub="Which alerts, new devices and data cap warnings reach you · by email and webhook, with or without this page open" class="c-12">
 	<!-- NET-273: disabled while the tab's lock is held, so nothing is typed into a form a reply is about to replace -->
 	<fieldset class="stack prefs" disabled={locked}>
 		{#if notifLoadFailed}
@@ -299,6 +306,17 @@
 			<div>
 				<label class="label" for="new-device-toggle">Tell me about new devices</label>
 				<p class="field-help" id="new-device-toggle-help">A message when a device joins your network for the first time, through the webhook and email below, whatever the severity threshold.</p>
+			</div>
+		</div>
+
+		<!-- F6 (NET-339): data cap warnings reach the same webhook and email -->
+		<div class="switch-row">
+			<input type="checkbox" role="switch" class="switch" id="data-cap-toggle" bind:checked={dataCap} aria-describedby="data-cap-toggle-help" />
+			<div>
+				<label class="label" for="data-cap-toggle">Tell me when I near my data cap</label>
+				<p class="field-help" id="data-cap-toggle-help">
+					A message at 80% and 100% of your monthly cap, and when the month is on track to go over, through the webhook and email below, whatever the severity threshold. Set the cap in the <a class="link" href="?tab=network">Network tab</a>.
+				</p>
 			</div>
 		</div>
 

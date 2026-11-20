@@ -4,7 +4,34 @@
  * monthName, which they need.
  */
 import type { UsageDay, UsageDayStatus, UsageMonth } from '$lib/api/usage';
+import type { BandwidthCap } from '$lib/api/bandwidth';
 import { formatWhen } from '$lib/utils/drilldown';
+
+/** Decimal GB (10^9 bytes, as ISPs state caps), one decimal: "82.4 GB". Moved from +page.svelte (F6) so Settings' cap card says the same. */
+export const formatGB = (bytes: number): string => `${(bytes / 1e9).toFixed(1)} GB`;
+
+/**
+ * Settings › Network's use line for the cap reply (F6, NET-339), with a figure that is never too high:
+ * a complete month's total; otherwise the lower bound, as "at least", with why it isn't the whole month.
+ * A field an older daemon leaves out is unknown, never zero use.
+ */
+export function capUseLines(cap: BandwidthCap): string[] {
+	const unknown = ["This month's use isn't available"];
+	if (cap.since === null) return ['Still counting'];
+	if (cap.since === undefined || cap.complete === undefined) return unknown;
+	const of = cap.monthly_cap_bytes > 0 ? ` of ${formatGB(cap.monthly_cap_bytes)}` : '';
+	const low = cap.lower_bound_bytes;
+	const recounting = low !== undefined && low < cap.current_usage_bytes ? ['Recounting under your new exclusions'] : [];
+	if (cap.complete) return [`${formatGB(cap.current_usage_bytes)}${of} used this month`, ...recounting];
+	// the total isn't a safe "at least" under changed exclusions, so without the lower bound there is no figure
+	if (low === undefined) return unknown;
+	// OLD CODE START — F6 review: a ledger begun before this month read "counted since 1 Oct" when only a later day was missing
+	// return [`At least ${formatGB(low)}${of} used this month, counted since ${formatDate(cap.since)}`, ...recounting];
+	// OLD CODE END
+	// counting began inside this month (as startsBeforeSince): the days before it are what's missing
+	const why = cap.first_day !== undefined && cap.since > cap.first_day ? `counted since ${formatDate(cap.since)}` : 'some days are still being counted';
+	return [`At least ${formatGB(low)}${of} used this month, ${why}`, ...recounting];
+}
 
 export function formatDate(dateStr: string): string {
 	try {
