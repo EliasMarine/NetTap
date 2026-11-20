@@ -205,10 +205,14 @@ class TestPictures:
         store.set_photo(MAC, b64(PNG))
         fields = store.owner_fields(MAC.lower())
         digest = store.get(MAC)["photo"]["file"].split("-")[1].split(".")[0]
+        # NET-320: + group, owner and watch time (None without a details store)
         assert fields == {
             "custom_name": "TV",
             "icon": None,
             "picture": f"/api/devices/registry/{MAC}/picture?v={digest}",
+            "group": None,
+            "owner": None,
+            "watch_after_min": None,
         }
         row = {"mac": MAC, "hostname": "android-123", "ip": "10.0.0.2"}
         shown = store.present(row)

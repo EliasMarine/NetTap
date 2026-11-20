@@ -11,7 +11,13 @@ from pathlib import Path
 import pytest
 
 from services.config_backup import ConfigBackup, _SCHEMA_VERSION, _NETTAP_VERSION
-from services.device_custom import DeviceCustomStore
+from services.device_custom import DEVICES_MAX, DeviceCustomStore
+from services.device_details import (
+    DETAILS_MAX_BYTES,
+    WATCH_MAX,
+    DeviceDetailsStore,
+    encode,
+)
 from services.notification_hub import NotificationHub
 
 
@@ -905,3 +911,140 @@ class TestA9NotificationRestore:
         Path(config_paths["env_file"]).write_text("SMTP_HOST=smtp.example.net\n")
         result = backup.import_config(_data({"notification_channels": quick}))
         assert not any("SMTP server" in w for w in result["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# NET-320: device details (watch time, group, owner, notes)
+# ---------------------------------------------------------------------------
+
+
+def _box(config_paths, root) -> tuple[ConfigBackup, DeviceDetailsStore]:
+    """A box with its own names, pictures and details stores under ``root``."""
+    details = DeviceDetailsStore(str(root))
+    hub = NotificationHub(
+        config_path=config_paths["notification_config"],
+        env_file=config_paths["env_file"],
+    )
+    backup = ConfigBackup(
+        config_paths=config_paths,
+        device_custom=DeviceCustomStore(str(root)),
+        notification_hub=hub,
+        device_details=details,
+    )
+    return backup, details
+
+
+def _full_section() -> dict:
+    """DEVICES_MAX devices with every field (50 watched), notes of four-byte characters filling
+    the file to within one device's share of DETAILS_MAX_BYTES: F2's worst case in a backup."""
+    section = {
+        f"AA:BB:CC:DD:{i // 256:02X}:{i % 256:02X}": {
+            "group": "Kids",
+            "owner": "Sam",
+            "notes": "\U0001f600",
+            **({"watch_after_min": 15} if i < WATCH_MAX else {}),
+        }
+        for i in range(DEVICES_MAX)
+    }
+    spare = (DETAILS_MAX_BYTES - len(encode(section))) // 4
+    each, extra = divmod(spare, DEVICES_MAX)
+    for n, entry in enumerate(section.values()):
+        entry["notes"] += "\U0001f600" * (each + (n < extra))
+    return section
+
+
+class TestDeviceDetailsBackup:
+    def test_export_then_restore_on_another_box_round_trips(
+        self, config_paths, tmp_path
+    ):
+        source, details = _box(config_paths, tmp_path / "a")
+        details.update("AA:BB:CC:DD:EE:01", {"group": "Kids", "watch_after_min": 30})
+        details.update(
+            "AA:BB:CC:DD:EE:02", {"owner": "Sam", "notes": "Desk \U0001f600"}
+        )
+        exported = json.loads(json.dumps(source.export_config()))  # as the file travels
+
+        target, restored = _box(config_paths, tmp_path / "b")
+        result = target.import_config(exported)
+
+        assert result["success"] is True, result
+        assert "device_details" in result["applied"]
+        assert restored.export() == details.export()
+
+    def test_a_present_section_replaces_the_set(self, config_paths, tmp_path):
+        backup, details = _box(config_paths, tmp_path)
+        details.update("AA:BB:CC:DD:EE:01", {"group": "Kids"})
+        result = backup.import_config(
+            _data({"device_details": {"AA:BB:CC:DD:EE:02": {"owner": "Sam"}}})
+        )
+        assert result["applied"] == ["device_details"]
+        assert details.export() == {"AA:BB:CC:DD:EE:02": {"owner": "Sam"}}
+
+    def test_a_backup_from_before_f2_leaves_details_alone_with_no_note(
+        self, config_paths, tmp_path
+    ):
+        backup, details = _box(config_paths, tmp_path)
+        details.update("AA:BB:CC:DD:EE:01", {"group": "Kids"})
+        result = backup.import_config(_data({"excluded_ips": ["10.0.0.9"]}))
+        assert result["success"] is True
+        assert "device_details" not in result["applied"]
+        assert not any("detail" in w.lower() for w in result["warnings"])
+        assert details.export() == {"AA:BB:CC:DD:EE:01": {"group": "Kids"}}
+
+    def test_without_a_details_store_the_section_is_skipped_quietly(self, backup):
+        section = {"device_details": {"AA:BB:CC:DD:EE:01": {"group": "Kids"}}}
+        assert backup.validate_import(_data(section))["is_valid"] is True
+        assert "device_details" not in backup.export_config()["sections"]
+        result = backup.import_config(_data(section))
+        assert result["success"] is True
+        assert result["applied"] == []
+
+    def test_bad_entries_refuse_the_import_with_at_most_five_reasons(
+        self, config_paths, tmp_path
+    ):
+        backup, details = _box(config_paths, tmp_path)
+        bad = {f"aa:bb:cc:dd:ee:{i:02x}": {"group": "x"} for i in range(8)}
+        validation = backup.validate_import(_data({"device_details": bad}))
+        assert validation["is_valid"] is False
+        assert len(validation["errors"]) == 5
+        assert backup.import_config(_data({"device_details": bad}))["applied"] == []
+
+    def test_a_restore_failure_is_an_error_not_an_exception(
+        self, config_paths, tmp_path, monkeypatch
+    ):
+        backup, details = _box(config_paths, tmp_path)
+
+        def disk_full(*_args, **_kwargs):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr("services.device_details.write_file_atomic", disk_full)
+        result = backup.import_config(
+            _data({"device_details": {"AA:BB:CC:DD:EE:01": {"group": "Kids"}}})
+        )
+        assert result["success"] is False
+        assert any("Device details not restored" in e for e in result["errors"])
+        assert details.export() == {}
+
+    def test_a_full_store_adds_under_768_kib_to_the_backup_as_the_browser_saves_it(
+        self, config_paths, tmp_path
+    ):
+        section = _full_section()
+        size = len(encode(section))
+        assert DETAILS_MAX_BYTES - 4 * DEVICES_MAX < size <= DETAILS_MAX_BYTES
+        backup, details = _box(config_paths, tmp_path)
+        details.restore(section)
+        config = backup.export_config()
+        without = {
+            **config,
+            "sections": {
+                k: v for k, v in config["sections"].items() if k != "device_details"
+            },
+        }
+
+        def saved(
+            c: dict,
+        ) -> int:  # downloadConfigFile: JSON.stringify(config, null, 2)
+            return len(json.dumps(c, indent=2, ensure_ascii=False).encode("utf-8"))
+
+        assert config["sections"]["device_details"] == section
+        assert saved(config) - saved(without) < 768 * 1024

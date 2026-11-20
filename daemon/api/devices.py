@@ -37,6 +37,7 @@ from storage.time_slots import histogram_buckets, time_slots
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.device_fingerprint import DeviceFingerprint
 from services.device_registry import DeviceRegistry
+from services.device_details import FIELDS as DETAIL_FIELDS, strict_mac
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 from services.excluded_ips import (
     CONN_ACCOUNTING,
@@ -907,6 +908,24 @@ def _with_owner(request: web.Request, device: dict) -> dict:
     """
     custom = request.app.get("device_custom")
     return custom.present(device) if custom is not None else device
+
+
+def _details_of(request: web.Request, mac: str | None) -> dict:
+    """NET-320: the owner's watch time, group, owner and notes for a MAC, from one snapshot.
+
+    For the two device pages only; list rows carry no notes. All None without a store or MAC.
+    """
+    store = request.app.get("device_details")
+    return store.get(mac) if store is not None else dict.fromkeys(DETAIL_FIELDS)
+
+
+def _registry_mac(mac: str | None) -> str | None:
+    """The canonical MAC the registry files this observed MAC under (an 8-byte DHCP chaddr
+    becomes its first six octets), which is the one the details API edits; None if unusable."""
+    try:
+        return strict_mac(_mac_key(mac))
+    except ValueError:
+        return None
 
 
 def _get_fingerprint(request: web.Request) -> DeviceFingerprint:
@@ -2183,9 +2202,16 @@ def handle_device_detail(request: web.Request) -> web.Response:
 
     # OLD CODE: return web.json_response({"device": device}) (NET-200: the owner's fields)
     # OLD CODE: return web.json_response({"device": _with_owner(request, device)}) (NET-249: + the chart's window)
+    # NET-320: the owner's details, keyed and editable by the registry's MAC, from one snapshot
+    registry_mac = _registry_mac(mac)
     return web.json_response(
         {
-            "device": _with_owner(request, device),
+            # OLD CODE: "device": _with_owner(request, device), (NET-320: + registry_mac and details)
+            "device": {
+                **_with_owner(request, device),
+                "registry_mac": registry_mac,
+                **_details_of(request, registry_mac),
+            },
             "from": from_ts,
             "to": to_ts,
             "bandwidth_interval": interval,

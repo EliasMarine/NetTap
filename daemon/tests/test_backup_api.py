@@ -14,9 +14,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
-from api.backup import register_backup_routes
+from api.backup import EXPORT_UNREADABLE, register_backup_routes
+from api.error_replies import safe_error_middleware
 from api.server import IlmSyncState
-from services.config_backup import ConfigBackup
+from services.config_backup import DETAILS_UNREADABLE, ConfigBackup
+from services.device_details import DeviceDetailsStore
 from services.notification_hub import NotificationHub
 from storage.manager import RetentionConfig, StorageManager
 from storage.retention_config import RetentionConfigManager
@@ -41,6 +43,9 @@ def _ok_response():
 
 
 class BackupImportTest(AioHTTPTestCase):
+    # NET-320: what device_details.json holds when the daemon starts (None: no file yet)
+    DETAILS_FILE: str | None = None
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.ini = os.path.join(self.tmp, "capture-mode.conf")
@@ -56,7 +61,8 @@ class BackupImportTest(AioHTTPTestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     async def get_application(self):
-        app = web.Application()
+        # OLD CODE: app = web.Application() (NET-320: the production error middleware, for the 503)
+        app = web.Application(middlewares=[safe_error_middleware])
         with patch.object(StorageManager, "_create_client", return_value=MagicMock()):
             storage = StorageManager(RetentionConfig(), "http://localhost:9200")
         app["storage"] = storage
@@ -90,8 +96,19 @@ class BackupImportTest(AioHTTPTestCase):
             config_path=paths["notification_config"], env_file=paths["env_file"]
         )
         app["notification_hub"] = hub
+        # OLD CODE: register_backup_routes(app, ConfigBackup(config_paths=paths, notification_hub=hub))
+        # (NET-320: with the device details store, as create_app builds it)
+        appdata = os.path.join(self.tmp, "appdata")
+        if self.DETAILS_FILE is not None:
+            os.makedirs(appdata)
+            with open(os.path.join(appdata, "device_details.json"), "w") as f:
+                f.write(self.DETAILS_FILE)
+        self.details = DeviceDetailsStore(appdata)
         register_backup_routes(
-            app, ConfigBackup(config_paths=paths, notification_hub=hub)
+            app,
+            ConfigBackup(
+                config_paths=paths, notification_hub=hub, device_details=self.details
+            ),
         )
         return app
 
@@ -349,3 +366,94 @@ class TestQuietHoursPreflight(BackupImportTest):
         with open(cap_file) as f:
             self.assertEqual(f.read(), before)
         self.assertFalse(self.app["notification_hub"].quiet()["enabled"])
+
+
+class DetailsImportTest(BackupImportTest):
+    """NET-320: a device details section beside a valid bandwidth cap."""
+
+    CAP = {"monthly_cap_bytes": 500_000_000_000}
+
+    def _cap_file(self) -> str:
+        """The box's own cap, so a refused import can be shown to leave it alone."""
+        path = os.path.join(self.tmp, "bandwidth_cap.json")
+        with open(path, "w") as f:
+            json.dump({"monthly_cap_bytes": 1_000_000_000_000}, f)
+        return path
+
+    def _read(self, path: str) -> str:
+        with open(path) as f:
+            return f.read()
+
+
+class TestDeviceDetailsPreflight(DetailsImportTest):
+    async def test_a_bad_section_beside_a_valid_cap_applies_nothing(self):
+        self.details.update("AA:BB:CC:DD:EE:01", {"group": "Kids"})
+        cap_file = self._cap_file()
+        before = self._read(cap_file)
+
+        status, result = await self._import(
+            {
+                # not canonical: two spellings could otherwise collapse onto one device
+                "device_details": {"aa:bb:cc:dd:ee:02": {"owner": "Sam"}},
+                "bandwidth_cap": self.CAP,
+            }
+        )
+
+        self.assertEqual(status, 400, result)
+        self.assertEqual(result["applied"], [])
+        self.assertIn("AA:BB:CC:DD:EE:FF", " ".join(result["errors"]))
+        self.assertEqual(self._read(cap_file), before)
+        self.assertEqual(
+            self.details.export(), {"AA:BB:CC:DD:EE:01": {"group": "Kids"}}
+        )
+
+    async def test_validate_runs_off_the_loop_and_refuses_a_bad_section(self):
+        body = {
+            "metadata": {"schema_version": 2},
+            "sections": {
+                "device_details": {"AA:BB:CC:DD:EE:01": {"watch_after_min": 7}}
+            },
+        }
+        offload = AsyncMock(side_effect=lambda fn, *args: fn(*args))
+        with patch("api.backup.run_blocking", new=offload):
+            resp = await self.client.post("/api/backup/validate", json=body)
+        result = await resp.json()
+
+        self.assertEqual(resp.status, 200)
+        offload.assert_awaited_once_with(
+            self.app["config_backup"].validate_import, body
+        )
+        self.assertFalse(result["is_valid"])
+        self.assertIn("Pick 15, 30, 60, 240 or 1440 minutes.", result["errors"][0])
+
+
+class TestDamagedDetailsFile(DetailsImportTest):
+    """A details file this daemon can't trust: the import and the export both refuse."""
+
+    DETAILS_FILE = "{not json"
+
+    async def test_the_import_is_refused_and_a_valid_cap_beside_it_left_alone(self):
+        cap_file = self._cap_file()
+        before = self._read(cap_file)
+
+        status, result = await self._import(
+            {
+                "device_details": {"AA:BB:CC:DD:EE:01": {"group": "Kids"}},
+                "bandwidth_cap": self.CAP,
+            }
+        )
+
+        self.assertEqual(status, 400, result)
+        self.assertEqual(result["applied"], [])
+        self.assertEqual(result["errors"], [DETAILS_UNREADABLE])
+        self.assertEqual(self._read(cap_file), before)
+
+    async def test_export_is_a_503_with_the_fixed_reason_and_the_log_names_the_file(
+        self,
+    ):
+        with self.assertLogs("nettap.api.backup", "ERROR") as logs:
+            resp = await self.client.get("/api/backup/export")
+
+        self.assertEqual(resp.status, 503)
+        self.assertEqual(await resp.json(), {"error": EXPORT_UNREADABLE})
+        self.assertIn("device_details.json", "\n".join(logs.output))

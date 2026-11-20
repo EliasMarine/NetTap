@@ -2,7 +2,7 @@
 NetTap ConfigBackup — Export/import all NetTap settings.
 
 Gathers capture mode config, storage retention, notification channels (without
-their secrets), notification rules and quiet hours, device names and pictures, excluded IPs,
+their secrets), notification rules and quiet hours, device names, pictures and details, excluded IPs,
 bandwidth cap, home location, alert acknowledgements and suppressions into a
 single JSON-serializable dict. Includes version stamp for compatibility checking.
 
@@ -54,6 +54,8 @@ from services.backup_fit import (
 # OLD CODE: from services.backup_notifications import redact_channels, restore_channels (NET-224: the hub restores)
 from services.backup_notifications import redact_channels
 from services.capture_config import load_capture_config, write_file_atomic
+from services.device_custom import StoreUnavailable
+from services.device_details import problems as details_problems
 from services.excluded_ips import parse_single_ip
 from services.home_location import load_home, parse_home, save_home
 
@@ -121,7 +123,13 @@ _VALID_SECTIONS = {
     "alert_suppressions",
     # NET-330: quiet hours, with the owner's zone they were set in ({..., "tz"})
     "notification_quiet",
+    # NET-320: watch time, group, owner and notes ({MAC: entry})
+    "device_details",
 }
+
+DETAILS_UNREADABLE = (
+    "Device details on this NetTap are unreadable; fix that before restoring them."
+)
 
 
 class ConfigBackup:
@@ -139,17 +147,22 @@ class ConfigBackup:
     #     # DeviceCustomStore: the owner's device names, icons and photos (NET-200)
     #     self._device_custom = device_custom
     # OLD CODE END
+    # OLD CODE: def __init__(self, config_paths=None, device_custom=None, notification_hub=None)
+    # (NET-320: plus the device details store)
     def __init__(
         self,
         config_paths: dict[str, str] | None = None,
         device_custom: Any = None,
         notification_hub: Any = None,
+        device_details: Any = None,
     ) -> None:
         self._paths = {**_DEFAULT_PATHS, **(config_paths or {})}
         # DeviceCustomStore: the owner's device names, icons and photos (NET-200)
         self._device_custom = device_custom
         # NotificationHub: a restore goes through it, so it is live at once and validated
         self._notification_hub = notification_hub
+        # DeviceDetailsStore: watch time, group, owner and notes (NET-320)
+        self._device_details = device_details
 
     # ------------------------------------------------------------------
     # Export
@@ -232,6 +245,9 @@ class ConfigBackup:
             names, pictures = self._device_custom.export()
             config["sections"]["device_aliases"] = names
             config["sections"]["device_pictures"] = pictures
+        # NET-320: a damaged details file raises StoreUnavailable too, for the same reason
+        if self._device_details is not None:
+            config["sections"]["device_details"] = self._device_details.export()
 
         # Excluded IPs
         config["sections"]["excluded_ips"] = self._read_json(
@@ -393,6 +409,15 @@ class ConfigBackup:
             result["is_valid"] = False
             result["errors"].extend(problems)
 
+        # NET-320: bad details, or a damaged details file here, refuse the whole import the same way
+        if "device_details" in sections and self._device_details is not None:
+            reasons = details_problems(sections["device_details"])
+            if not self._device_details.healthy:
+                reasons.append(DETAILS_UNREADABLE)
+            if reasons:
+                result["is_valid"] = False
+                result["errors"].extend(reasons)
+
         # A9: restoring a different capture mode restarts capture, so the page asks first
         capture = capture_section(sections.get("capture_mode_config"))
         result["capture_restart"] = bool(capture) and capture != self.current_capture()
@@ -514,6 +539,16 @@ class ConfigBackup:
             except (ValueError, TypeError, RuntimeError, OSError) as exc:
                 logger.error("Device names and pictures not restored: %s", exc)
                 errors.append(f"Device names and pictures not restored: {exc}")
+
+        # NET-320: a present section replaces the set; a backup from before F2 has none, and the
+        # current details are kept. No details store (older setups): skipped.
+        if "device_details" in sections and self._device_details is not None:
+            try:
+                self._device_details.restore(sections["device_details"])
+                applied.append("device_details")
+            except (ValueError, StoreUnavailable, OSError) as exc:
+                logger.error("Device details not restored: %s", exc)
+                errors.append(f"Device details not restored: {exc}")
 
         # OLD CODE START — A9: any JSON was written, CIDRs and junk included (the Settings
         # form refuses them), and the running daemon kept its old list
