@@ -707,6 +707,13 @@ def test_quick_settings_save_for_real_and_hide_the_url(hub, env_file):
             "has_url": True,
             "url_hint": "https://hooks.example.net/…",
         },
+        # NET-330: off until the owner sets it
+        "quiet": {
+            "enabled": False,
+            "start": "22:00",
+            "end": "07:00",
+            "critical_through": True,
+        },
     }
     assert hub.channels_for("alert", 3) == [nc.QUICK_EMAIL, nc.QUICK_WEBHOOK]
     assert hub.channels_for("alert", 4) == []

@@ -39,6 +39,17 @@
 	let newDevice = $state(true);
 	// F6 (NET-339): data cap warnings too, on unless turned off
 	let dataCap = $state(true);
+	// F8 (NET-330): quiet hours. The daemon's default is off, 22:00 to 07:00, critical alerts through.
+	const QUIET_DEFAULT = { enabled: false, start: '22:00', end: '07:00', critical_through: true };
+	let quietEnabled = $state(QUIET_DEFAULT.enabled);
+	let quietStart = $state(QUIET_DEFAULT.start);
+	let quietEnd = $state(QUIET_DEFAULT.end);
+	let quietCritical = $state(QUIET_DEFAULT.critical_through);
+	// The last saved times: the daemon refuses an equal pair, so these are always a pair it accepts
+	let savedQuietStart = QUIET_DEFAULT.start;
+	let savedQuietEnd = QUIET_DEFAULT.end;
+	// The owner's zone (Settings › Display); the daemon reads the times in it. Shown, never edited here.
+	let tz = $state('UTC');
 	let notifSaving = $state(false);
 	let notifMessage = $state('');
 	let notifError = $state(false);
@@ -50,14 +61,39 @@
 	// review L3: the test sends through the saved settings, so it waits while the form differs
 	// OLD CODE: JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl]); (NET-319: and new devices)
 	// OLD CODE: JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice]); (F6: and data cap warnings)
+	// OLD CODE: JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice, dataCap]); (F8: and quiet hours)
 	const notifForm = () =>
-		JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice, dataCap]);
+		JSON.stringify([
+			severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice, dataCap,
+			quietEnabled, quietStart, quietEnd, quietCritical,
+		]);
 	// the blank form until the load lands, so nothing reads as unsaved while it loads
 	let notifSavedForm = $state(notifForm());
 	// a failed load leaves nothing to compare with; the test then reports the daemon's own answer
 	const notifUnsaved = $derived(!notifLoadFailed && notifForm() !== notifSavedForm);
 	// NET-273: a channel or rule changed while this form had edits; a save could undo that change
 	let conflict = $state(false);
+
+	// F8: with the switch on, the window needs two different times; the daemon refuses anything else.
+	// A cleared time field reads as '' in the browser.
+	const quietProblem = $derived(
+		!quietEnabled
+			? ''
+			: !quietStart || !quietEnd
+				? 'Choose both times.'
+				: quietStart === quietEnd
+					? 'From and To must be different times.'
+					: '',
+	);
+
+	/** Turning quiet hours off puts back the last saved times, so a half-typed pair can't stop "off" from saving. */
+	function setQuietEnabled(on: boolean) {
+		quietEnabled = on;
+		if (!on) {
+			quietStart = savedQuietStart;
+			quietEnd = savedQuietEnd;
+		}
+	}
 
 	$effect(() => {
 		dirty = notifUnsaved;
@@ -92,10 +128,20 @@
 		webhook?: { enabled?: boolean; has_url?: boolean; url_hint?: string };
 		new_device?: boolean;
 		data_cap?: boolean;
+		quiet?: { enabled?: boolean; start?: string; end?: string; critical_through?: boolean };
+		tz?: string;
 	}) {
 		severityThreshold = SEVERITY_VALUES[(data.min_severity ?? 2) - 1] ?? 'high';
 		newDevice = data.new_device ?? true;
 		dataCap = data.data_cap ?? true;
+		// F8: a daemon from before quiet hours sends neither field, which reads as off with the defaults
+		quietEnabled = data.quiet?.enabled ?? QUIET_DEFAULT.enabled;
+		quietStart = data.quiet?.start || QUIET_DEFAULT.start;
+		quietEnd = data.quiet?.end || QUIET_DEFAULT.end;
+		quietCritical = data.quiet?.critical_through ?? QUIET_DEFAULT.critical_through;
+		savedQuietStart = quietStart;
+		savedQuietEnd = quietEnd;
+		tz = data.tz || 'UTC';
 		emailEnabled = data.email?.enabled ?? false;
 		emailAddress = (data.email?.recipients ?? []).join(', ');
 		smtpConfigured = data.email?.smtp_configured ?? false;
@@ -177,6 +223,7 @@
 					webhook: { enabled: webhookEnabled, url: webhookUrl.trim() },
 					new_device: newDevice,
 					data_cap: dataCap,
+					quiet: { enabled: quietEnabled, start: quietStart, end: quietEnd, critical_through: quietCritical },
 				}),
 			});
 			// OLD CODE START — review L2: a body that couldn't be read, even after the daemon saved, said "Failed to connect"
@@ -320,6 +367,61 @@
 			</div>
 		</div>
 
+		<!-- F8 (NET-330): quiet hours hold every channel's messages overnight, then send one -->
+		<div class="switch-row">
+			<input
+				type="checkbox"
+				role="switch"
+				class="switch"
+				id="quiet-toggle"
+				checked={quietEnabled}
+				onchange={(e) => setQuietEnabled(e.currentTarget.checked)}
+				aria-describedby="quiet-toggle-help"
+			/>
+			<div>
+				<label class="label" for="quiet-toggle">Hold notifications overnight</label>
+				<p class="field-help" id="quiet-toggle-help">Alerts, new devices and data cap warnings wait, then arrive as one message when quiet hours end.</p>
+			</div>
+		</div>
+
+		{#if quietEnabled}
+			<div class="form-grid">
+				<div class="field">
+					<label class="label" for="quiet-start">From</label>
+					<input
+						class="input"
+						id="quiet-start"
+						type="time"
+						bind:value={quietStart}
+						aria-invalid={quietProblem ? 'true' : undefined}
+						aria-describedby={quietProblem ? 'quiet-zone-help quiet-error' : 'quiet-zone-help'}
+					/>
+				</div>
+				<div class="field">
+					<label class="label" for="quiet-end">To</label>
+					<input
+						class="input"
+						id="quiet-end"
+						type="time"
+						bind:value={quietEnd}
+						aria-invalid={quietProblem ? 'true' : undefined}
+						aria-describedby={quietProblem ? 'quiet-zone-help quiet-error' : 'quiet-zone-help'}
+					/>
+				</div>
+			</div>
+			{#if quietProblem}<p class="field-error" id="quiet-error" role="alert">{quietProblem}</p>{/if}
+			<p class="field-help" id="quiet-zone-help">
+				Times are in your time zone, {tz}. Change it in the <a class="link" href="?tab=display">Display tab</a>.
+			</p>
+			<div class="switch-row">
+				<input type="checkbox" role="switch" class="switch" id="quiet-critical-toggle" bind:checked={quietCritical} aria-describedby="quiet-critical-toggle-help" />
+				<div>
+					<label class="label" for="quiet-critical-toggle">Critical alerts come through</label>
+					<p class="field-help" id="quiet-critical-toggle-help">A critical alert is sent at once, on its own. Held notifications stay held until quiet hours end.</p>
+				</div>
+			</div>
+		{/if}
+
 		<div class="switch-row">
 			<input type="checkbox" role="switch" class="switch" id="webhook-toggle" bind:checked={webhookEnabled} aria-describedby="webhook-toggle-help" />
 			<div>
@@ -374,7 +476,8 @@
 				{testingSending ? 'Sending…' : 'Send test notification'}
 			</button>
 			<!-- OLD CODE: disabled={notifSaving || notifLoadFailed} (NET-273: also off after a channel change, until the form is reloaded) -->
-			<button class="btn primary" type="button" onclick={save} disabled={notifSaving || notifLoadFailed || conflict}>
+			<!-- OLD CODE: disabled={notifSaving || notifLoadFailed || conflict} (F8: also off while the quiet hours times are invalid) -->
+			<button class="btn primary" type="button" onclick={save} disabled={notifSaving || notifLoadFailed || conflict || !!quietProblem}>
 				{notifSaving ? 'Saving…' : 'Save notification settings'}
 			</button>
 		</div>

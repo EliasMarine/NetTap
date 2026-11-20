@@ -13,6 +13,7 @@ from aiohttp import web
 from api.error_replies import public_json
 
 from services import notification_config as nc
+from services import owner_tz
 from services.notification_hub import NotificationHub
 
 logger = logging.getLogger("nettap.api.notifications_hub")
@@ -152,10 +153,16 @@ async def handle_test_all(request: web.Request) -> web.Response:
     return web.json_response({"success": True, "results": results})
 
 
+def _with_tz(view: dict) -> dict:
+    """NET-330: the owner's zone, which quiet hours are read in, so the card can name it."""
+    return {**view, "tz": owner_tz.read()["tz"]}
+
+
 async def handle_get_config(request: web.Request) -> web.Response:
     """GET /api/notifications/config — The Settings tab's setup (no URL or password)."""
     hub: NotificationHub = request.app["notification_hub"]
-    return web.json_response(hub.get_quick_settings())
+    # OLD CODE: return web.json_response(hub.get_quick_settings()) (NET-330: + tz)
+    return web.json_response(_with_tz(hub.get_quick_settings()))
 
 
 async def handle_put_config(request: web.Request) -> web.Response:
@@ -163,6 +170,8 @@ async def handle_put_config(request: web.Request) -> web.Response:
 
     Body: {min_severity: 1-4, email: {enabled, recipients}, webhook: {enabled, url}}. A blank
     url keeps the saved one; off keeps a channel's settings for when it comes back on.
+    Optional: new_device, data_cap and quiet ({enabled, start, end, critical_through}, NET-330);
+    each left out keeps what is saved.
     """
     hub: NotificationHub = request.app["notification_hub"]
     try:
@@ -170,7 +179,8 @@ async def handle_put_config(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
     try:
-        return web.json_response(hub.set_quick_settings(body))
+        # OLD CODE: return web.json_response(hub.set_quick_settings(body)) (NET-330: + tz)
+        return web.json_response(_with_tz(hub.set_quick_settings(body)))
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     except OSError as exc:

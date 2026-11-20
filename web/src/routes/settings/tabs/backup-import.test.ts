@@ -167,6 +167,13 @@ describe('Backup restore reports what it did (A9)', () => {
 		expect(await screen.findByText('Restored: constructor, Retention')).toBeInTheDocument();
 	});
 
+	it('names the quiet hours section by its label, not its key (F8)', async () => {
+		stub({}, { ...RESULT, applied: ['notification_rules', 'notification_quiet'] });
+		await fireEvent.click(await chooseFile());
+
+		expect(await screen.findByText('Restored: Notification rules, Quiet hours')).toBeInTheDocument();
+	});
+
 	it('says what a backup leaves out', () => {
 		stub({}, RESULT);
 		render(Page);

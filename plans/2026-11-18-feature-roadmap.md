@@ -1099,10 +1099,10 @@ The owner's standing rule is to take the recommended option and keep going. **Ea
 | P1 US English | M0 | — | (create at start) | [ ] |
 | P2 SvelteKit 3 | M0 | — | NET-315 | [ ] |
 | P3 G11 baseline | M0 | — | — | [ ] |
-| F1 Jobs, events and journal | M1 | L | NET-319 | [ ] |
+| F1 Jobs, events and journal | M1 | L | NET-319 | [x] #336 |
 | #3 Accounts | M1 | M | NET-321 | [ ] |
-| F4 Usage ledger | M1 | M | NET-329 | [ ] |
-| #6 Data cap warnings | M1 | S | NET-339 | [ ] |
+| F4 Usage ledger | M1 | M | NET-329 | [x] #337, #338 |
+| #6 Data cap warnings | M1 | S | NET-339 | [x] #339 |
 | #8 Quiet hours and digest | M1 | S–M | NET-330 | [ ] |
 | F2 Device details store | M1 | S | NET-320 | [ ] |
 | #5 Watched devices | M1 | M | NET-331 | [ ] |

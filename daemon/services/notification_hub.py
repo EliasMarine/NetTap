@@ -30,6 +30,7 @@ from typing import Any
 import aiohttp
 
 from services import notification_config as nc
+from services import owner_tz, quiet_hours
 from services.backup_notifications import restore_channels
 from services.capture_config import write_file_atomic
 
@@ -165,6 +166,22 @@ def _refuse_unusable(channels: dict[str, Any]) -> None:
             raise ValueError(f"the channel {cid!r} in this backup {problem}")
 
 
+def _restored_quiet(section: Any) -> tuple[dict[str, Any], str | None]:
+    """NET-330: a backup's quiet hours and, when they were set in another zone, the note saying
+    so. ValueError: not valid (backup preflight refuses it first; this guards a direct call)."""
+    reason = quiet_hours.problem(section)
+    if reason:
+        raise ValueError(reason)
+    theirs, ours = section.get("tz"), owner_tz.read()["tz"]
+    note = None
+    if theirs is not None and theirs != ours:
+        note = (
+            f"Quiet hours in this backup were set for {theirs}; this NetTap uses {ours}. "
+            "Times follow this NetTap's zone (Settings › Display)."
+        )
+    return quiet_hours.of(section), note
+
+
 def _cut_off(server: smtplib.SMTP) -> None:
     """The SMTP deadline: shutting the socket down wakes a blocked read, so the send raises."""
     with contextlib.suppress(OSError, AttributeError):
@@ -190,6 +207,8 @@ class NotificationHub:
         # every read spanning channels and rules, holds this, so none sees half a config. Nothing
         # awaits under it.
         self._lock = threading.RLock()
+        # NET-330: set before loading, so the environment seed's first save writes it too
+        self._quiet: dict[str, Any] = dict(quiet_hours.DEFAULT)
         self._load_config()
 
     # ------------------------------------------------------------------
@@ -211,6 +230,8 @@ class NotificationHub:
                 # OLD CODE: self._channels = channels if isinstance(channels, dict) else {}
                 self._channels = _usable_channels(channels)
                 self._rules = rules if isinstance(rules, dict) else {}
+                # before the event rule seed, whose save would otherwise write the default
+                self._quiet = self._loaded_quiet(data)
                 self._seed_event_rules()
                 logger.info(
                     "Loaded %d channels, %d rules from %s",
@@ -222,11 +243,25 @@ class NotificationHub:
                 logger.warning("Failed to load notification config: %s", exc)
                 self._channels = {}
                 self._rules = {}
+                self._quiet = dict(quiet_hours.DEFAULT)
         else:
             logger.info(
                 "No notification config at %s, starting fresh", self._config_path
             )
             self._seed_from_env()
+
+    @staticmethod
+    def _loaded_quiet(data: dict[str, Any]) -> dict[str, Any]:
+        """NET-330: the saved quiet hours. Absent (a config from before them) is the default, said
+        nothing about; a hand-broken value is the default too, with one warning."""
+        raw = data.get("quiet", quiet_hours.DEFAULT)
+        reason = quiet_hours.problem(raw)
+        if reason:
+            logger.warning(
+                "Ignoring the saved quiet hours (%s); they are off until set again",
+                reason,
+            )
+        return quiet_hours.of(raw)
 
     def _seed_event_rules(self) -> None:
         """NET-319: new devices on by default for a setup that never chose (D1), saved once."""
@@ -269,13 +304,32 @@ class NotificationHub:
     #     self._config_path.write_text(json.dumps(data, indent=2))
     #     logger.debug("Saved notification config to %s", self._config_path)
     # OLD CODE END
-    def _commit(self, channels: dict[str, Any], rules: dict[str, Any]) -> None:
-        """Write the new config atomically (600), then make it live. OSError leaves both as they were."""
+    # OLD CODE: def _commit(self, channels: dict[str, Any], rules: dict[str, Any]) -> None: (NET-330: + quiet)
+    def _commit(
+        self,
+        channels: dict[str, Any],
+        rules: dict[str, Any],
+        quiet: dict[str, Any] | None = None,
+    ) -> None:
+        """Write the new config atomically (600), then make it live. OSError leaves all as they were.
+
+        `quiet` None keeps the saved quiet hours (NET-330): a key left out of the file is lost.
+        """
+        quiet = self._quiet if quiet is None else quiet
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps({"channels": channels, "rules": rules}, indent=2)
+        # OLD CODE: text = json.dumps({"channels": channels, "rules": rules}, indent=2) (NET-330)
+        text = json.dumps(
+            {"channels": channels, "rules": rules, "quiet": quiet}, indent=2
+        )
         write_file_atomic(str(self._config_path), text, mode=0o600)
-        self._channels, self._rules = channels, rules
+        # OLD CODE: self._channels, self._rules = channels, rules (NET-330)
+        self._channels, self._rules, self._quiet = channels, rules, quiet
         logger.debug("Saved notification config to %s", self._config_path)
+
+    def quiet(self) -> dict[str, Any]:
+        """The quiet hours setting (NET-330), a copy the caller may keep."""
+        with self._lock:
+            return dict(self._quiet)
 
     # ------------------------------------------------------------------
     # Channel CRUD
@@ -374,20 +428,27 @@ class NotificationHub:
         """The Settings tab's email, webhook and minimum severity (no URL or password)."""
         smtp = self.smtp_configured()
         with self._lock:
-            return nc.quick_view(self._channels, self._rules, smtp)
+            # OLD CODE: return nc.quick_view(self._channels, self._rules, smtp) (NET-330: + quiet)
+            return nc.quick_view(self._channels, self._rules, smtp, self._quiet)
 
     def set_quick_settings(self, body: Any) -> dict[str, Any]:
         """Save the Settings tab. ValueError: the reason it can't; OSError: the write failed."""
         smtp = self.smtp_configured()
         with self._lock:
-            channels, rules = nc.apply_quick_settings(
-                self._channels, self._rules, body, smtp, _now()
+            # OLD CODE START — NET-330: quick settings carry quiet hours too
+            # channels, rules = nc.apply_quick_settings(
+            #     self._channels, self._rules, body, smtp, _now()
+            # )
+            # self._commit(channels, rules)
+            # OLD CODE END
+            channels, rules, quiet = nc.apply_quick_settings(
+                self._channels, self._rules, body, smtp, _now(), self._quiet
             )
-            self._commit(channels, rules)
+            self._commit(channels, rules, quiet)
             return self.get_quick_settings()
 
     def restore_backup(self, sections: dict[str, Any]) -> list[str]:
-        """A config backup's notification channels and/or rules, live at once (NET-227).
+        """A config backup's notification channels, rules and/or quiet hours, live at once (NET-227).
 
         A missing section keeps what is there; an empty one clears it. Channels keep the box's own
         secrets only where the destination is unchanged (backup_notifications.restore_channels).
@@ -397,6 +458,8 @@ class NotificationHub:
         smtp = self.smtp_configured()
         with self._lock:
             channels, rules, warnings = self._channels, self._rules, []
+            # NET-330: a backup without the section keeps the box's own
+            quiet = self._quiet
             if "notification_channels" in sections:
                 section = sections["notification_channels"]
                 # the box's own channels it may merge in were checked when they were saved
@@ -409,8 +472,14 @@ class NotificationHub:
                     isinstance(r, dict) for r in rules.values()
                 ):
                     raise ValueError("Notification rules in this backup aren't valid")
+            if "notification_quiet" in sections:
+                quiet, note = _restored_quiet(sections["notification_quiet"])
+                warnings = [*warnings, note] if note else warnings
             # OLD CODE: self._commit(channels, rules) (NET-319: a pre-NET-319 backup gets the default too)
-            self._commit(channels, nc.with_default_event_rules(channels, rules, _now()))
+            # OLD CODE: self._commit(channels, nc.with_default_event_rules(channels, rules, _now())) (NET-330: + quiet)
+            self._commit(
+                channels, nc.with_default_event_rules(channels, rules, _now()), quiet
+            )
         return warnings
 
     # ------------------------------------------------------------------

@@ -50,6 +50,7 @@
 		storage_retention: 'Retention',
 		notification_channels: 'Notification channels',
 		notification_rules: 'Notification rules',
+		notification_quiet: 'Quiet hours',
 		device_aliases: 'Device names',
 		device_pictures: 'Device pictures',
 		excluded_ips: 'Excluded IPs',
