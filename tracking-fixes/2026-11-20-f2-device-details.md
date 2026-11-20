@@ -66,8 +66,8 @@ These come from the NET-344 plan, §4 (`plans/2026-11-20-net344-backup-size.md`)
 - **The live checks in `deploy-device-details.sh` differ by stage:**
   - **Before the deploy,** the running build is NET-344 without F2, so it has no `device_details`. A valid 200 passes there, and `acknowledgements_left_out` is printed.
   - **After the recreate,** a 200 must carry `device_details`.
-  - **At both stages,** the specific size 413 and NET-344's named 422 (for example a legacy excluded-IP range) are findings, not failures. Any other answer fails.
-  - **One classifier:** a single function in `verify_device_details.py`, unit-tested with a pre-F2 200, a post-F2 200, a 413 and a 422.
+  - **At both stages,** the size 413 and the `legacy_excluded_ips` 422 are findings, not failures. An `invalid_section` 422 (for example on `device_details`) fails, and so does any other answer.
+  - **The classifier** is NET-344's standard-library-only `scripts/remote/classify_backup_export.py`, which imports nothing from the daemon. The deploy script pipes it into whichever daemon image is running, so it works on the NET-344 image before F2 exists. `verify_device_details.py` imports F2 code, so it can't be the classifier. The F2 stage rule (is `device_details` required?) is a flag passed to the classifier.
   - The pre-deploy headroom arithmetic (the 768 KiB reserve) goes, because NET-344's `fit` measures the real file.
 - **Shared checks:** `device_details` joins NET-344's `section_errors`, which validate, import and export share.
 - **Serialisation test:** rewrite the serialisation-bound test in `test_config_backup.py` against `fit`, with ASCII and emoji notes.
