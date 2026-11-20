@@ -317,3 +317,35 @@ class TestRunningStateReload(BackupImportTest):
         self.assertEqual([c["id"] for c in hub.get_channels()], [kept["id"]])
         resp = await self.client.get("/api/backup/export")
         self.assertEqual(resp.status, 200)
+
+
+class TestQuietHoursPreflight(BackupImportTest):
+    """NET-330: bad quiet hours refuse the whole import, so a valid section beside them (here the
+    bandwidth cap) isn't applied either."""
+
+    async def test_bad_quiet_hours_beside_a_valid_cap_apply_nothing(self):
+        cap_file = os.path.join(self.tmp, "bandwidth_cap.json")
+        with open(cap_file, "w") as f:
+            json.dump({"monthly_cap_bytes": 1_000_000_000_000}, f)
+        with open(cap_file) as f:
+            before = f.read()
+        bad = {
+            "enabled": True,
+            "start": "0٠:0٠",
+            "end": "07:00",
+            "critical_through": True,
+        }
+
+        status, result = await self._import(
+            {
+                "notification_quiet": bad,
+                "bandwidth_cap": {"monthly_cap_bytes": 500_000_000_000},
+            }
+        )
+
+        self.assertEqual(status, 400, result)
+        self.assertEqual(result["applied"], [])
+        self.assertIn("start and end must be times", " ".join(result["errors"]))
+        with open(cap_file) as f:
+            self.assertEqual(f.read(), before)
+        self.assertFalse(self.app["notification_hub"].quiet()["enabled"])

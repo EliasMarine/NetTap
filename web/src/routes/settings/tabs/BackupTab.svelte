@@ -50,6 +50,7 @@
 		storage_retention: 'Retention',
 		notification_channels: 'Notification channels',
 		notification_rules: 'Notification rules',
+		notification_quiet: 'Quiet hours',
 		device_aliases: 'Device names',
 		device_pictures: 'Device pictures',
 		excluded_ips: 'Excluded IPs',
@@ -195,9 +196,10 @@ OLD CODE END -->
 		</p>
 		OLD CODE END -->
 		<p class="card-text">
-			Download your NetTap settings as a JSON file: capture mode, retention, notification channels
-			and rules, device names and pictures, excluded IPs, bandwidth cap, home location, alert
-			acknowledgements and suppressions.
+			<!-- OLD CODE: "…, notification channels and rules, …" (F8: quiet hours are exported too) -->
+			Download your NetTap settings as a JSON file: capture mode, retention, notification channels,
+			rules and quiet hours, device names and pictures, excluded IPs, bandwidth cap, home location,
+			alert acknowledgements and suppressions.
 		</p>
 		<p class="card-text">
 			Left out: passwords, API keys and tokens (the admin login, notification passwords, webhook

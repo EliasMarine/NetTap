@@ -11,6 +11,8 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
+from services import quiet_hours
+
 CHANNEL_TYPES = {"email", "discord", "slack", "telegram", "pushover", "webhook"}
 EVENT_TYPES = {
     "new_device",
@@ -255,7 +257,8 @@ def rule_on(rule: Any) -> bool:
     return not (isinstance(rule, dict) and rule.get("enabled") is False)
 
 
-def quick_view(channels: dict, rules: dict, smtp_configured: bool) -> dict:
+# OLD CODE: def quick_view(channels: dict, rules: dict, smtp_configured: bool) -> dict: (NET-330: + quiet)
+def quick_view(channels: dict, rules: dict, smtp_configured: bool, quiet: dict) -> dict:
     """What the Settings tab shows: no URL or password, only whether one is saved."""
     email = channels.get(QUICK_EMAIL) or {}
     webhook = channels.get(QUICK_WEBHOOK) or {}
@@ -278,6 +281,7 @@ def quick_view(channels: dict, rules: dict, smtp_configured: bool) -> dict:
             "has_url": bool(url),
             "url_hint": url_hint(url),
         },
+        "quiet": dict(quiet),  # NET-330
     }
 
 
@@ -426,10 +430,21 @@ def with_default_event_rules(channels: dict, rules: dict, now: str) -> dict:
     return {**rules, **missing}
 
 
+# OLD CODE START — NET-330: quiet hours are saved with the tab too
+# def apply_quick_settings(
+#     channels: dict, rules: dict, body: Any, smtp_configured: bool, now: str
+# ) -> tuple[dict, dict]:
+#     """The new (channels, rules) for a Settings tab save. Raises ValueError with the reason.
+# OLD CODE END
 def apply_quick_settings(
-    channels: dict, rules: dict, body: Any, smtp_configured: bool, now: str
-) -> tuple[dict, dict]:
-    """The new (channels, rules) for a Settings tab save. Raises ValueError with the reason.
+    channels: dict,
+    rules: dict,
+    body: Any,
+    smtp_configured: bool,
+    now: str,
+    quiet: dict,
+) -> tuple[dict, dict, dict]:
+    """The new (channels, rules, quiet) for a Settings tab save. ValueError with the reason.
 
     Off keeps a channel's settings (enabled: false), so a webhook comes back on with a blank URL.
     """
@@ -450,6 +465,11 @@ def apply_quick_settings(
     data_cap = body.get("data_cap", rule_on(rules.get(QUICK_DATACAP)))
     if not isinstance(data_cap, bool):
         raise ValueError("data_cap must be true or false")
+    # NET-330: quiet hours, the same way: left out keeps the saved setting
+    new_quiet = body.get("quiet", quiet)
+    reason = quiet_hours.problem(new_quiet)
+    if reason:
+        raise ValueError(reason)
 
     new = dict(channels)
     old_email = channels.get(QUICK_EMAIL)
@@ -482,7 +502,12 @@ def apply_quick_settings(
 
     # OLD CODE: return new, _with_quick_rule(new, rules, min_severity, now) (NET-319: + new devices)
     # OLD CODE: return new, _with_quick_rule(new, rules, min_severity, now, new_device) (NET-339: + data cap)
-    return new, _with_quick_rule(new, rules, min_severity, now, new_device, data_cap)
+    # OLD CODE: return new, _with_quick_rule(new, rules, min_severity, now, new_device, data_cap) (NET-330: + quiet)
+    return (
+        new,
+        _with_quick_rule(new, rules, min_severity, now, new_device, data_cap),
+        quiet_hours.of(new_quiet),
+    )
 
 
 def seed_from_env(get: Callable[[str], str], now: str) -> tuple[dict, dict, list[str]]:

@@ -336,6 +336,12 @@ Lane A (F1) does not wait for P1 or P2: it is daemon-only, and its two new label
 
 ### #8: Quiet hours and a daily digest
 
+- [x] **Done 2026-11-20 (NET-330, PR #340, `feature/f8-quiet-hours`).** As the slice plan `plans/2026-11-20-f8-quiet-hours.md` (six Codex rounds, owner sign-off) changed it:
+  - **Quiet hours only.** The daily summary moved to NET-343: it needs saved per-channel state that the overnight window doesn't.
+  - **The clock decides; nothing per window is saved.** `quiet` is `{enabled, start, end, critical_through}`, read in the owner's zone (F4), not a `tz` of its own. Held items carry `"held": true`, and the first send after the window releases them under one heading.
+  - **The 50-alert cut ranks criticals that may go first, then worst first,** a held item ahead of a fresh one only at the same severity (review fixes).
+  - **Backups carry it** as `notification_quiet`, with the zone it was set in; an invalid section refuses the whole import.
+
 - **What the owner gets:** no notifications overnight. Everything held arrives as one summary in the morning, and critical alerts can still come through. Optionally, one summary a day instead of instant messages.
 - **Scope:**
   - A hub-owned `quiet` key in `notifications.json`: `{enabled, start, end, tz, critical_through, daily_digest}`.
@@ -1099,11 +1105,11 @@ The owner's standing rule is to take the recommended option and keep going. **Ea
 | P1 US English | M0 | — | (create at start) | [ ] |
 | P2 SvelteKit 3 | M0 | — | NET-315 | [ ] |
 | P3 G11 baseline | M0 | — | — | [ ] |
-| F1 Jobs, events and journal | M1 | L | NET-319 | [ ] |
+| F1 Jobs, events and journal | M1 | L | NET-319 | [x] #336 |
 | #3 Accounts | M1 | M | NET-321 | [ ] |
-| F4 Usage ledger | M1 | M | NET-329 | [ ] |
-| #6 Data cap warnings | M1 | S | NET-339 | [ ] |
-| #8 Quiet hours and digest | M1 | S–M | NET-330 | [ ] |
+| F4 Usage ledger | M1 | M | NET-329 | [x] #337, #338 |
+| #6 Data cap warnings | M1 | S | NET-339 | [x] #339 |
+| #8 Quiet hours and digest | M1 | S–M | NET-330 | [x] #340 (digest → NET-343) |
 | F2 Device details store | M1 | S | NET-320 | [ ] |
 | #5 Watched devices | M1 | M | NET-331 | [ ] |
 | #2 Internet health | M1 | M | NET-322 | [ ] |

@@ -20,6 +20,11 @@ the alert state, so after a rollback it would erase queues kept there). An event
 channel's next message with its alerts, under the same budget, and is never given up: it stays
 queued until a send works. A crash between a send and the saves repeats that message; nothing
 committed to the journal is lost.
+
+Quiet hours (NET-330): inside the owner's overnight window only critical alerts go (when the
+owner lets them through); everything else stays queued, flagged "held", and the first send after
+the window carries it all under one heading. The clock decides at each send decision, so nothing
+per window is saved (plans/2026-11-20-f8-quiet-hours.md).
 """
 
 import asyncio
@@ -41,6 +46,7 @@ from services.notification_hub import (
 
 if TYPE_CHECKING:
     from services.event_journal import EventJournal
+    from services.quiet_hours import Hold
 
 logger = logging.getLogger("nettap.services.notification_dispatcher")
 
@@ -79,6 +85,12 @@ _CAP_TITLE = {
     "100": "Data cap reached",
     "projected": "Data cap: on track to go over",
 }
+# NET-330: the heading of the first send after quiet hours, and its line when the queue was full
+QUIET_PREAMBLE = "Notifications held by your quiet hours setting:\n\n"
+QUIET_FULL = (
+    f"Quiet hours keep at most {MAX_PENDING} alert types; see the Alerts page for all."
+)
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _iso(t: datetime) -> str:
@@ -243,7 +255,10 @@ def _fit(lines: list[str], room: int | None) -> list[int]:
 
 
 def digest(
-    items: list[dict], overflow: int = 0, max_chars: int | None = None
+    items: list[dict],
+    overflow: int = 0,
+    max_chars: int | None = None,
+    extra: tuple[str, ...] = (),
 ) -> tuple[str, str, int, list[dict]]:
     """(title, body, worst severity, the items it rendered) of one channel's message.
 
@@ -251,6 +266,7 @@ def digest(
     alone, else "N new notifications"; `overflow` events past the queue's cap are counted.
     NET-339: lines go in the given order while the body stays within `max_chars` (the channel's
     body_limit; None for no limit), so a service's clip never cuts a line that was rendered.
+    NET-330: `extra` lines go before the footer and are measured with it.
     """
     worst = min(i["severity"] for i in items)
     level = SEVERITY_LEVELS[worst]
@@ -270,8 +286,10 @@ def digest(
         if alerts_only
         else "Open NetTap for details."
     )
+    # OLD CODE: tail = [*([f"and {overflow} more …"] if overflow else []), "", footer] (NET-330: + extra)
     tail = [
         *([f"and {overflow} more events not listed; see NetTap"] if overflow else []),
+        *extra,
         "",
         footer,
     ]
@@ -440,13 +458,15 @@ def cap_queue(
 #     shown = {i.get("sig") for i in rendered}
 #     return [e for e in events if e.get("sig") not in shown]
 # OLD CODE END
-def _unshown(events: list[dict], rendered: list[dict]) -> list[dict]:
-    """The data cap warnings a sent message didn't show: they go in the next one (Codex r2 #1).
-    Other events it didn't show were counted in its "and N more", as before NET-339."""
-    shown = {i.get("sig") for i in rendered}
-    return [
-        e for e in events if e.get("event") == "data_cap" and e.get("sig") not in shown
-    ]
+# OLD CODE START — NET-330: replaced by _after_send, which also keeps quiet-held events
+# def _unshown(events: list[dict], rendered: list[dict]) -> list[dict]:
+#     """The data cap warnings a sent message didn't show: they go in the next one (Codex r2 #1).
+#     Other events it didn't show were counted in its "and N more", as before NET-339."""
+#     shown = {i.get("sig") for i in rendered}
+#     return [
+#         e for e in events if e.get("event") == "data_cap" and e.get("sig") not in shown
+#     ]
+# OLD CODE END
 
 
 def _record(items: list[dict], now: datetime, ok: bool) -> dict:
@@ -461,6 +481,81 @@ def _record(items: list[dict], now: datetime, ok: bool) -> dict:
     }
 
 
+# --- quiet hours (NET-330) ---------------------------------------------------
+
+
+def _due(item: dict, hold: "Hold | None") -> bool:
+    """Whether `item` may go now: outside quiet hours anything; inside, a critical alert when the
+    owner lets them through (only an alert can be critical; events have an "event" key)."""
+    if hold is None:
+        return True
+    return hold.critical_through and "event" not in item and item.get("severity") == 1
+
+
+def _merge(old: dict | None, new: dict) -> dict:
+    """A fresh copy of a queued alert: it keeps the queued attempts and held flag. If the queued
+    copy was worse, that whole observation stays (severity, example, count together) and only
+    last_seen moves on, so a critical held overnight isn't reported as the medium that followed."""
+    if old is None:
+        return new
+    kept = {
+        "attempts": old.get("attempts", 0),
+        **({"held": True} if old.get("held") else {}),
+    }
+    newest = max(
+        old.get("last_seen") or "",
+        new.get("last_seen") or "",
+        key=lambda t: _when(t) or _EPOCH,
+    )
+    # OLD CODE: {**i, "attempts": by_sig.get(i["sig"], i)["attempts"]} (a milder copy downgraded it)
+    base = old if old.get("severity", 5) < new["severity"] else new
+    return {**base, **kept, "last_seen": newest}
+
+
+def _rank(item: dict, hold: "Hold | None") -> tuple:
+    """The 50-alert cut's order: criticals that may go now, then worst first as before, a held
+    item ahead of a fresh one of the same severity. So a release keeps what was held over equally
+    mild arrivals, which come back on the next poll's overlapping read, and a worse fresh alert
+    still beats the mildest held one (its 5-minute overlap ends; the held one is on the Alerts
+    page, and the release's full line says so)."""
+    # OLD CODE START — security review: held items ranked as a group ahead of every fresh
+    # non-critical alert, so after a full night a fresh high alert was cut while the release was
+    # blocked, until it left the query's overlap
+    # # OLD CODE: if hold is not None and _due(item, hold): (ponytail review: after a window a fresh
+    # # critical ranked behind 50 held alerts, and a blocked release cut it until it left the overlap)
+    # if _due(item, hold) and item.get("severity") == 1:
+    #     group = 0
+    # elif item.get("held"):
+    #     group = 1
+    # else:
+    #     group = 2
+    # return (group, *_worst_first(item))
+    # OLD CODE END
+    urgent = _due(item, hold) and item.get("severity") == 1
+    severity, fewer = _worst_first(item)
+    return (not urgent, severity, not item.get("held"), fewer)
+
+
+def _cap_first(item: dict) -> tuple:
+    """A release's order: data cap warnings first, so none is left past the cut for a second send."""
+    return (item.get("event") != "data_cap", *_worst_first(item))
+
+
+def _after_send(
+    events: list[dict], due: list[dict], rendered: list[dict]
+) -> list[dict]:
+    """The event queue after a send that worked: what it didn't carry stays (held by quiet hours
+    or kept by cap_queue), and so do the due data cap warnings it couldn't show. Other due events
+    it didn't show were counted in its "and N more" (NET-339's rule)."""
+    shown = {i.get("sig") for i in rendered}
+    sent = {
+        e.get("sig")
+        for e in due
+        if e.get("event") != "data_cap" or e.get("sig") in shown
+    }
+    return [e for e in events if e.get("sig") not in sent]
+
+
 class AlertDispatcher:
     """Sends new alerts to the channels the routing rules pick, from a background task."""
 
@@ -472,8 +567,14 @@ class AlertDispatcher:
         state_path: str,
         journal: "EventJournal | None" = None,
         data_cap_now: Callable[[], tuple[str, int]] | None = None,
+        quiet: "Callable[[datetime], Hold | None] | None" = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._hub = hub
+        # NET-330: the quiet hours window at a time (quiet_hours.source), asked at each send
+        # decision with a fresh clock reading; None holds nothing
+        self._quiet = quiet
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         # NET-339: (owner month "YYYY-MM", cap bytes) at send time; None sends cap warnings as queued
         self._data_cap_now = data_cap_now
         self._client = client
@@ -620,6 +721,19 @@ class AlertDispatcher:
             )
             return None
 
+    def _hold_now(self) -> "Hold | None":
+        """The quiet hours window holding now, or None. Fails open: a message at night beats a
+        held critical alert."""
+        if self._quiet is None:
+            return None
+        try:
+            return self._quiet(self._clock())
+        except Exception as exc:
+            logger.warning(
+                "Quiet hours can't be read, so notifications go as usual: %s", exc
+            )
+            return None
+
     def _routed(self, severity: int) -> set[str]:
         return set(self._hub.channels_for("alert", severity))
 
@@ -746,6 +860,24 @@ class AlertDispatcher:
         if self._data_cap_now and any(e.get("event") == "data_cap" for e in events):
             events, offered = cap_queue(events, self._cap_now(), cid)
         overflow = ev.get("overflow", 0) if events else 0
+        # NET-330: inside quiet hours no event goes (none is critical); held ones stay queued,
+        # flagged, for the release. The window is read now, after the slow reads (Codex r1 #6)
+        hold = self._hold_now()
+        due_events = [e for e in offered if _due(e, hold)]
+        # every queued event, also one cap_queue keeps for another cap: it waited the night too
+        held_sigs = {e.get("sig") for e in events if not _due(e, hold)}
+        # OLD CODE: events = [{**e, "held": True} if e.get("sig") in held_sigs else e for e in events]
+        # (Python review: after the window, a cap warning kept for another cap kept its flag, so a
+        # send days later carried the quiet hours heading; outside a window only what goes keeps it)
+        on_offer = {e.get("sig") for e in offered}
+        events = [
+            {**e, "held": True}
+            if e.get("sig") in held_sigs
+            else {k: v for k, v in e.items() if k != "held"}
+            if hold is None and e.get("sig") not in on_offer
+            else e
+            for e in events
+        ]
         done = {
             sig: v
             for sig, v in (st.get("done") or {}).items()
@@ -759,13 +891,18 @@ class AlertDispatcher:
         ]
         queued = [i for i in st.get("pending") or [] if routed.get(i.get("severity"))]
         by_sig = {i["sig"]: i for i in queued}
-        # a fresh item replaces its queued copy (newer figures) but keeps the queued attempts
-        by_sig.update(
-            {
-                i["sig"]: {**i, "attempts": by_sig.get(i["sig"], i)["attempts"]}
-                for i in fresh
-            }
-        )
+        # OLD CODE START — NET-330: a milder fresh copy downgraded a queued critical (review r4 #3)
+        # # a fresh item replaces its queued copy (newer figures) but keeps the queued attempts
+        # by_sig.update(
+        #     {
+        #         i["sig"]: {**i, "attempts": by_sig.get(i["sig"], i)["attempts"]}
+        #         for i in fresh
+        #     }
+        # )
+        # OLD CODE END
+        # a fresh item replaces its queued copy (newer figures), keeping the queued attempts and
+        # held flag, and the queued observation when that was worse
+        by_sig.update({i["sig"]: _merge(by_sig.get(i["sig"]), i) for i in fresh})
         # OLD CODE START — review M2: no daily budget, so a channel could get a digest every minute
         # candidates = sorted(by_sig.values(), key=_worst_first)[:MAX_PENDING]
         # retry_at = _when(st.get("retry_at")) if st.get("retry_at") else None
@@ -803,7 +940,14 @@ class AlertDispatcher:
         #     "retry_at": _iso(now + delay) if delay else None,
         # }
         # OLD CODE END
-        candidates = sorted(by_sig.values(), key=_worst_first)[:MAX_PENDING]
+        # OLD CODE: candidates = sorted(by_sig.values(), key=_worst_first)[:MAX_PENDING]
+        # (NET-330: held items are flagged, and the cut keeps them ahead of fresh arrivals)
+        kept = sorted(
+            [i if _due(i, hold) else {**i, "held": True} for i in by_sig.values()],
+            key=lambda i: _rank(i, hold),
+        )[:MAX_PENDING]
+        candidates = [i for i in kept if _due(i, hold)]
+        held_alerts = [i for i in kept if not _due(i, hold)]
         day = now.date().isoformat()
         # OLD CODE START — security delta D3: past the budget nothing went out until midnight, so a flood an attacker trips held a critical alert back
         # today = {
@@ -848,16 +992,19 @@ class AlertDispatcher:
         waiting = {"events": events, "overflow": overflow}
         # OLD CODE: if not candidates or (retry_at and retry_at > now): (NET-319: queued events send too)
         # OLD CODE: if (not candidates and not events) or (retry_at and retry_at > now): (NET-339: held cap warnings don't send)
-        if (not candidates and not offered) or (retry_at and retry_at > now):
+        # OLD CODE: if (not candidates and not offered) or (retry_at and retry_at > now): (NET-330: quiet-held ones don't either)
+        if (not candidates and not due_events) or (retry_at and retry_at > now):
             # the queue waits for the hourly digest; the hub keeps a failed send's error over this
             # OLD CODE: if slow and candidates and not any(i["attempts"] for i in candidates): (security delta: the hub decides, so a given-up queue can't hide a wrong password)
             # OLD CODE: if slow and candidates: (NET-319: queued events wait for the digest too)
             # OLD CODE: if slow and (candidates or events): (NET-339: offered, not held)
-            if slow and (candidates or offered):
+            # OLD CODE: if slow and (candidates or offered): (NET-330: due, not quiet-held)
+            if slow and (candidates or due_events):
                 n = len(candidates)
                 # NET-319: queued events are named after the alerts, so alert-only wording is unchanged
                 # OLD CODE: others = len(events) + overflow (NET-339)
-                others = len(offered) + overflow
+                # OLD CODE: others = len(offered) + overflow (NET-330)
+                others = len(due_events) + overflow
                 also = (
                     f" and {others} other event{'' if others == 1 else 's'}"
                     if others
@@ -880,11 +1027,14 @@ class AlertDispatcher:
             # OLD CODE END
             return {
                 "done": done,
-                "pending": candidates,
+                # OLD CODE: "pending": candidates, (NET-330: held alerts wait here too)
+                "pending": [*candidates, *held_alerts],
                 # past the budget the hourly slot holds even with nothing queued
                 # OLD CODE: if candidates or events or slow (NET-339: offered, not held)
+                # OLD CODE: if candidates or offered or slow (NET-330: a held-only poll cleared a
+                # refusal throttle, so a critical at 22:01 retried the refused password; Codex r3 #4)
                 "retry_at": st.get("retry_at")
-                if candidates or offered or slow
+                if candidates or due_events or held_alerts or held_sigs or slow
                 else None,
                 **today,
             }, waiting
@@ -917,12 +1067,40 @@ class AlertDispatcher:
             else ""
         )
         limit = body_limit((self._hub.get_channel(cid) or {}).get("type", ""))
-        title, body, worst, rendered = digest(
-            sorted([*candidates, *offered], key=_worst_first),
-            overflow,
-            None if limit is None else limit - len(notice),
+        # OLD CODE START — NET-330: quiet hours add a release heading, cap-first order and held items
+        # title, body, worst, rendered = digest(
+        #     sorted([*candidates, *offered], key=_worst_first),
+        #     overflow,
+        #     None if limit is None else limit - len(notice),
+        # )
+        # body = notice + body
+        # OLD CODE END
+        # the first send after quiet hours carries what they held, under one heading; decided
+        # from everything due, before any line is fitted (Codex r4 #1)
+        # OLD CODE: release = hold is None and any(i.get("held") for i in [*candidates, *due_events])
+        # (security review: held alerts that worse fresh ones cut still make it a release)
+        held_total = sum(1 for i in by_sig.values() if i.get("held"))
+        release = hold is None and (
+            held_total > 0 or any(e.get("held") for e in due_events)
         )
-        body = notice + body
+        preamble = QUIET_PREAMBLE if release else ""
+        # a full queue of held alerts, or held alerts cut now, left some out: say where they are
+        # OLD CODE: full = release and sum(1 for i in candidates if i.get("held")) >= MAX_PENDING
+        # (ponytail review: criticals now take slots first, so count the held ones before the cut)
+        # OLD CODE: full = release and held_total >= MAX_PENDING (security review: + cut now)
+        held_kept = sum(1 for i in candidates if i.get("held"))
+        full = release and (held_total >= MAX_PENDING or held_kept < held_total)
+        # held events' overflow count waits for the release that shows them
+        shown_overflow = overflow if hold is None else 0
+        title, body, worst, rendered = digest(
+            sorted(
+                [*candidates, *due_events], key=_cap_first if release else _worst_first
+            ),
+            shown_overflow,
+            None if limit is None else limit - len(notice) - len(preamble),
+            (QUIET_FULL,) if full else (),
+        )
+        body = notice + preamble + body
         # OLD CODE START — delta review: a failed send used the budget, so a server outage spent the day
         # today = {**today, "sent": today["sent"] + 1}
         # OLD CODE END
@@ -947,7 +1125,8 @@ class AlertDispatcher:
             # OLD CODE END
             return {
                 "done": {**done, **_record(candidates, now, True)},
-                "pending": [],
+                # OLD CODE: "pending": [], (NET-330: held alerts wait for the release)
+                "pending": held_alerts,
                 # OLD CODE: "retry_at": None, (security delta D3: past the budget, one digest an hour)
                 "retry_at": _iso(_next_digest_at(now))
                 if sent >= DAILY_BUDGET
@@ -955,7 +1134,12 @@ class AlertDispatcher:
                 **today,
                 "sent": sent,
                 # OLD CODE: }, _NO_EVENTS (NET-339: an event not shown waited for nothing; it stays queued)
-            }, {"events": _unshown(events, rendered), "overflow": 0}
+                # OLD CODE: }, {"events": _unshown(events, rendered), "overflow": 0}
+                # (NET-330: events held by quiet hours stay, and so does a count not yet shown)
+            }, {
+                "events": _after_send(events, due_events, rendered),
+                "overflow": overflow - shown_overflow,
+            }
 
         # The service turned it down: that counts, since a wrong password tried every minute gets
         # the account locked. A send that never reached it doesn't (an outage mustn't use the day)
@@ -974,7 +1158,8 @@ class AlertDispatcher:
         # NET-319: events never give up; past the last back-off they retry at its pace
         # OLD CODE: tried_events = [{**e, "attempts": e.get("attempts", 0) + 1} for e in events]
         # (NET-339: a held cap warning wasn't tried, so it keeps its count and its queue place)
-        offered_sigs = {e.get("sig") for e in offered}
+        # OLD CODE: offered_sigs = {e.get("sig") for e in offered} (NET-330: quiet-held ones weren't tried)
+        offered_sigs = {e.get("sig") for e in due_events}
         queue = [
             {**e, "attempts": e.get("attempts", 0) + 1}
             if e.get("sig") in offered_sigs
@@ -1005,7 +1190,8 @@ class AlertDispatcher:
         return {
             # given-up items are recorded too, so re-reading the same alerts never restarts them
             "done": {**done, **_record(gave_up, now, False)},
-            "pending": kept,
+            # OLD CODE: "pending": kept, (NET-330: held alerts weren't tried; they wait as they were)
+            "pending": [*kept, *held_alerts],
             # OLD CODE: "retry_at": _iso(now + delay) if delay else None, (security delta: see retry)
             "retry_at": _iso(retry) if retry else None,
             **today,

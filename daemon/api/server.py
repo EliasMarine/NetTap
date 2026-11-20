@@ -145,6 +145,7 @@ from services.data_cap import DataCapWatch
 from services.event_journal import EventJournal
 from services.scheduled_jobs import Job, Scheduler
 from services import owner_tz
+from services import quiet_hours
 from services.usage_ledger import UsageLedger
 from api.jobs import register_jobs_routes
 from api.usage import register_usage_routes
@@ -1451,7 +1452,11 @@ def create_app(
         # NET-319: new devices (and later events) from the journal
         journal=event_journal,
         data_cap_now=data_cap_watch.now,
+        # NET-330: the owner's quiet hours, in the owner's time zone
+        quiet=quiet_hours.source(notification_hub),
     )
+    # NET-330: kept so a test built through create_app checks the real wiring
+    app["alert_dispatcher"] = alert_dispatcher
     app.cleanup_ctx.append(alert_dispatcher.ctx)
 
     # NET-319: background checks; later slices add their jobs here

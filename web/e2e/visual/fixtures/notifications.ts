@@ -33,15 +33,22 @@ const LOG = {
 } satisfies DeliveryLogResponse;
 
 // NET-224: the Settings tab's notification setup (GET /api/notifications/config)
+// F8 (NET-330): quiet hours and the owner's time zone ride on the same reply. The empty fixture is the daemon's default; the populated one has them on.
 const CONFIG_EMPTY = {
 	min_severity: 2,
 	email: { enabled: false, recipients: [], smtp_configured: false },
 	webhook: { enabled: false, has_url: false, url_hint: '' },
+	quiet: { enabled: false, start: '22:00', end: '07:00', critical_through: true },
+	tz: 'UTC',
+	tz_set: false,
 };
 const CONFIG = {
 	min_severity: 2,
 	email: { enabled: true, recipients: ['admin@example.com'], smtp_configured: true },
 	webhook: { enabled: true, has_url: true, url_hint: 'https://hooks.example.com/…' },
+	quiet: { enabled: true, start: '22:00', end: '07:00', critical_through: true },
+	tz: 'Europe/London',
+	tz_set: true,
 };
 
 // NET-319: the daemon's background checks (GET /api/jobs), shown on the same tab

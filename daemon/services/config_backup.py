@@ -2,7 +2,7 @@
 NetTap ConfigBackup — Export/import all NetTap settings.
 
 Gathers capture mode config, storage retention, notification channels (without
-their secrets), notification rules, device names and pictures, excluded IPs,
+their secrets), notification rules and quiet hours, device names and pictures, excluded IPs,
 bandwidth cap, home location, alert acknowledgements and suppressions into a
 single JSON-serializable dict. Includes version stamp for compatibility checking.
 
@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from services import alert_intelligence
+from services import alert_intelligence, owner_tz, quiet_hours
 
 # OLD CODE: from services.backup_notifications import redact_channels, restore_channels (NET-224: the hub restores)
 from services.backup_notifications import redact_channels
@@ -99,6 +99,8 @@ _VALID_SECTIONS = {
     "home_location",
     "alert_acknowledgements",
     "alert_suppressions",
+    # NET-330: quiet hours, with the owner's zone they were set in ({..., "tz"})
+    "notification_quiet",
 }
 
 
@@ -232,6 +234,12 @@ class ConfigBackup:
             notif_data.get("channels", {})
         )
         config["sections"]["notification_rules"] = notif_data.get("rules", {})
+        # NET-330: as this version accepts them (a hand-broken value as the default), and the zone
+        # they are read in, so a restore on a box in another zone can say so
+        config["sections"]["notification_quiet"] = {
+            **quiet_hours.of(notif_data.get("quiet")),
+            "tz": owner_tz.read()["tz"],
+        }
 
         # OLD CODE START — NET-200: device_baseline.json is a flat {MAC: info} map with no
         # "aliases" key, so this always exported {} (and its import planted an "aliases" MAC)
@@ -366,6 +374,13 @@ class ConfigBackup:
 
         if not sections:
             result["warnings"].append("No sections found in import data")
+
+        # NET-330: bad quiet hours refuse the whole import, before any section applies
+        if "notification_quiet" in sections:
+            reason = quiet_hours.problem(sections["notification_quiet"])
+            if reason:
+                result["is_valid"] = False
+                result["errors"].append(reason)
 
         # A9: restoring a different capture mode restarts capture, so the page asks first
         capture = capture_section(sections.get("capture_mode_config"))
@@ -590,9 +605,20 @@ class ConfigBackup:
     def _restore_notifications(
         self, sections: dict, applied: list, errors: list, notes: list
     ) -> None:
-        """Channels (the box's own secrets where safe) and rules, through the running hub."""
+        """Channels (the box's own secrets where safe), rules and quiet hours, through the hub."""
+        # OLD CODE START — NET-330: quiet hours are restored with them
+        # present = [
+        #     s for s in ("notification_channels", "notification_rules") if s in sections
+        # ]
+        # OLD CODE END
         present = [
-            s for s in ("notification_channels", "notification_rules") if s in sections
+            s
+            for s in (
+                "notification_channels",
+                "notification_rules",
+                "notification_quiet",
+            )
+            if s in sections
         ]
         if not present:
             return
