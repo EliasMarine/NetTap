@@ -61,13 +61,19 @@
 
 ## Rebase requirements once NET-344 is merged
 
-From the NET-344 plan, §4:
+These come from the NET-344 plan, §4 (`plans/2026-11-20-net344-backup-size.md`). NET-344 trims the oldest alert acknowledgements to fit the restore limit. It never leaves out an owner setting: a backup too big even without acknowledgements gets a specific 413 naming the largest part.
 
-- **Pre-deploy step:** the headroom step in `deploy-device-details.sh` (pre-deploy) becomes "the live export answers 200; print `sections_left_out`". NET-344 leaves whole sections out instead of refusing.
-- **Post-deploy check:** keep requiring `device_details` in every live 200. It is never left out.
-- **Serialisation test:** rewrite the serialisation-bound test in `test_config_backup.py` against NET-344's `fit`, with ASCII and emoji notes.
-- **Section checks:** move `device_details` into NET-344's shared `section_errors` (validate, import and export).
-- **Release fixture:** 32 photos, 46,000 acknowledgements and 480 notes must give a 200 download that validates and imports. It must carry `device_details` and leave out only acknowledgements.
+- **Both live checks in `deploy-device-details.sh`** (before and after the recreate):
+  - accept a 200 that carries `device_details`, and print `acknowledgements_left_out`;
+  - report the specific size 413 as a finding, not a failure;
+  - fail on any other answer.
+  - The pre-deploy headroom arithmetic (the 768 KiB reserve) goes, because NET-344's `fit` measures the real file.
+- **Shared checks:** `device_details` joins NET-344's `section_errors`, which validate, import and export share.
+- **Serialisation test:** rewrite the serialisation-bound test in `test_config_backup.py` against `fit`, with ASCII and emoji notes.
+- **Release fixture:** 32 photos, 46,000 acknowledgements and 480 notes. It must give:
+  - a 200 whose `acknowledgements_left_out` equals the expected count;
+  - kept acknowledgement IDs equal to an independently computed newest set;
+  - after import, the names, pictures and notes intact.
 
 ## Next
 
