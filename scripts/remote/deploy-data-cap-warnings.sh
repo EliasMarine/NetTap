@@ -181,16 +181,28 @@ LOW=$(daemon_py "
 _, b = call('GET', '/api/bandwidth/cap')
 print(json.loads(b)['lower_bound_bytes'])")
 case "$LOW" in ''|*[!0-9]*) LOW=0; check "read this month's lower bound" 1 "got: $LOW" ;; esac
-if [ "$LOW" -lt 2000000000 ]; then
-    # a correct watcher sends nothing under the cap, so there is nothing to see: a pass
-    check "synthetic crossing" 0 "skipped: under 2 GB counted this month ($LOW bytes)"
-else
-    SAVED_CAP=$CAP_BEFORE
-    trap restore_cap EXIT  # first, so the owner's cap comes back even if a later step fails
-    MONTH=$(daemon_py "
+# security review: a dispatcher poll inside the test window would send the test warnings to
+# every channel the data cap rule reaches, so the test runs only on a box with none
+CHANNELS=$(daemon_py "
+s, b = call('GET', '/api/notifications/channels')
+print(json.loads(b)['count'] if s == 200 else 'FAIL')")
+MONTH=$(daemon_py "
 _, b = call('GET', '/api/usage/month')
 m = json.loads(b)
 print('%04d-%02d' % (m['year'], m['month']))")
+if [ "$LOW" -lt 2000000000 ]; then
+    # a correct watcher sends nothing under the cap, so there is nothing to see: a pass
+    check "synthetic crossing" 0 "skipped: under 2 GB counted this month ($LOW bytes)"
+elif [ "$CHANNELS" != "0" ]; then
+    case "$CHANNELS" in
+        ''|*[!0-9]*) check "count the notification channels" 1 "got: $CHANNELS" ;;
+        *) check "synthetic crossing" 0 "skipped: $CHANNELS notification channel(s) set up, which a test warning could reach" ;;
+    esac
+elif ! [[ "$MONTH" =~ ^[0-9]{4}-[0-9]{2}$ ]]; then
+    check "read the owner month" 1 "got: $MONTH"
+else
+    SAVED_CAP=$CAP_BEFORE
+    trap restore_cap EXIT  # first, so the owner's cap comes back even if a later step fails
     result "test cap saved" "$(daemon_py "
 s, b = call('PUT', '/api/settings/bandwidth-cap', json.dumps({'monthly_cap_gb': $TEST_CAP_GB}))
 print('OK' if s == 200 else 'FAIL', 'status', s, b[:120])")"

@@ -11,6 +11,7 @@
 	import { getBandwidthCap, setBandwidthCap, type BandwidthCap } from '$lib/api/bandwidth';
 	import { capUseLines } from '../bandwidth/usage-words';
 	import Feedback from './Feedback.svelte';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	interface Props {
 		/** The typed cap differs from the saved one. */
@@ -57,8 +58,10 @@
 	}
 
 	async function save() {
-		const text = typed.trim();
-		const gb = text === '' ? 0 : Number(text);
+		// OLD CODE: const text = typed.trim(); (review: Number() took "0x10" and "1e-400", refused "1,200")
+		// digits with an optional decimal part; commas and spaces are thousands separators
+		const text = typed.replace(/[,\s]/g, '');
+		const gb = text === '' ? 0 : /^\d+(\.\d+)?$/.test(text) ? Number(text) : NaN;
 		if (!Number.isFinite(gb) || gb < 0 || gb > MAX_GB) {
 			inputError = RANGE_ERROR;
 			return;
@@ -89,7 +92,7 @@
 	{#if phase === 'loading'}
 		<CardState state="loading" title="Loading your data cap" />
 	{:else if phase === 'failed'}
-		<CardState state="error" title="Couldn't load your data cap: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={load} />
+		<CardState state="error" title={loadFailed('your data cap')} message="Check that NetTap is running on the System page, then try again." onaction={load} />
 	{:else}
 		<div class="stack">
 			<div>
@@ -106,6 +109,7 @@
 					type="text"
 					inputmode="decimal"
 					bind:value={typed}
+					disabled={saving}
 					oninput={() => (inputError = '')}
 					placeholder="No cap"
 					aria-invalid={inputError ? 'true' : undefined}

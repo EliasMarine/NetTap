@@ -259,3 +259,13 @@ Run it after `git pull` on `main`, or after checking out the branch first (F4 le
 | 2 | Telegram clips title and body together | `body_limit(channel_type)` reserves 300 characters for Telegram's tag and title; a test checks the real outbound payload of each clipped service |
 | 3 | An oversized event could block the queue | `event_item` clips every line to 300 characters; the fitter skips a misfit and carries on |
 | 4 | The deploy baseline read a field the old build lacks, and the synthetic crossing assumed enough usage | baseline reads only the cap; the lower bound is read after the upgrade; the synthetic test is skipped under 2 GB counted; a `trap` restores the cap on failure |
+
+## 14. Changes after the code reviews (PR #339)
+
+| Source | Finding | Change |
+|---|---|---|
+| Security review, LOW | Carrying every unshown event over to the next message turned a burst of 500 new MACs into about 50 one-a-minute messages, half the channel's daily budget; F1 sent one "and N more" | §4.3 narrowed: only unshown **data cap** warnings wait for the next message (they are at most 12 a queue). Other events a message didn't show are counted in its "and N more", as in F1 |
+| Security review, LOW | The deploy check's test warnings could reach a real channel if a dispatcher poll fell inside the test window | §8 step 4 runs only when no notification channel is set up, and checks the month's format |
+| Web review, MEDIUM | "At least" rounded half up, so 82.46 GB read "at least 82.5 GB" | the card and the warning floor an "at least" figure to 0.1 GB |
+| Web review, LOW | Edits during a save were overwritten; `Number()` took "0x10" and refused "1,200"; a non-string error read "[object Object]" | the input is disabled while saving; the GB field takes digits with commas; the error text must be a string |
+| `/ponytail-review` | A ledger begun on the 1st read "counted since 1 Nov"; a failed cap restore in the deploy check wasn't retried | "counted since" only after the month's first day, as on the card; the restore keeps its trap until it succeeds |

@@ -283,7 +283,8 @@ export async function setBandwidthCap(
 	// OLD CODE END
 	if (!res.ok) {
 		const body = await res.json().catch(() => null);
-		throw new Error(body?.error || `Failed to set bandwidth cap: ${res.status}`);
+		// OLD CODE: throw new Error(body?.error || …) (review: a non-string error read "[object Object]")
+		throw new Error(body && typeof body.error === 'string' ? body.error : `Failed to set bandwidth cap: ${res.status}`);
 	}
 
 	return res.json();

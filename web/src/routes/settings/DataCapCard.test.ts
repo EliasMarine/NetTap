@@ -73,7 +73,7 @@ describe('Monthly data cap card (F6)', () => {
 		[
 			'at least, counting began before the month',
 			{ complete: false, since: '2026-10-01' },
-			['At least 82.4 GB of 100.0 GB used this month, some days are still being counted'],
+			["At least 82.4 GB of 100.0 GB used this month, some days aren't counted"],
 		],
 		[
 			'recounting, with the lower bound and never the total',
@@ -119,7 +119,8 @@ describe('Monthly data cap card (F6)', () => {
 		expect(screen.getByText('82.4 GB used this month')).toBeInTheDocument();
 	});
 
-	it.each(['-1', '1000001', 'lots', 'Infinity'])('refuses %j inline, without a request', async (typed) => {
+	// OLD CODE: it.each(['-1', '1000001', 'lots', 'Infinity']) (review: Number() took "0x10" and "1e-400")
+	it.each(['-1', '1000001', 'lots', 'Infinity', '0x10', '1e3', '1e-400', '1.2.3'])('refuses %j inline, without a request', async (typed) => {
 		const fn = stubCap(CAP);
 		render(Card);
 		await screen.findByText('82.4 GB of 100.0 GB used this month');
@@ -137,6 +138,38 @@ describe('Monthly data cap card (F6)', () => {
 		await fireEvent.input(input(), { target: { value: '5' } });
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 		expect(input()).not.toHaveAttribute('aria-invalid');
+	});
+
+	it('takes thousands separators, as the error text writes them ("1,200" is 1200 GB)', async () => {
+		const fn = stubCap(CAP);
+		render(Card);
+		await screen.findByText('82.4 GB of 100.0 GB used this month');
+
+		await fireEvent.input(input(), { target: { value: '1,200' } });
+		await fireEvent.click(saveButton());
+
+		expect(await screen.findByText('Data cap saved.')).toBeInTheDocument();
+		expect(JSON.parse(String(puts(fn)[0][1]?.body))).toEqual({ monthly_cap_gb: 1200 });
+	});
+
+	it('locks the input while a save runs, so a later edit is never overwritten', async () => {
+		stubCap(CAP);
+		render(Card);
+		await screen.findByText('82.4 GB of 100.0 GB used this month');
+		// the PUT waits until released, so the test sees the save in flight
+		let release = () => {};
+		const held = new Promise<void>((resolve) => (release = resolve));
+		vi.stubGlobal('fetch', vi.fn(async () => {
+			await held;
+			return { ok: true, status: 200, json: async () => ({ result: 'saved', monthly_cap_gb: 200, monthly_cap_bytes: 200 * GB }) };
+		}));
+
+		await fireEvent.input(input(), { target: { value: '200' } });
+		await fireEvent.click(saveButton());
+		expect(input()).toBeDisabled();
+		release();
+		expect(await screen.findByText('Data cap saved.')).toBeInTheDocument();
+		expect(input()).not.toBeDisabled();
 	});
 
 	it('takes 1 PB, the most the daemon keeps', async () => {

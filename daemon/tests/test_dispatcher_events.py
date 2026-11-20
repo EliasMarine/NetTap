@@ -167,23 +167,25 @@ def test_a_backlog_is_read_over_several_polls_and_nothing_is_lost(h):
         h.device(n)
     for minute in range(1, 7):
         h.poll(minute)
-    # OLD CODE START — NET-339: a message acknowledged its whole queue, the unshown ones too
-    # titles = [s[1] for s in h.sent_to(h.all)]
-    # assert titles == ["200 new notifications (worst: medium)"] * 5
+    # OLD CODE START — NET-339 security review: unshown devices went in the next message, so a
+    # burst became one message a minute; they're counted in "and N more" again, as in F1
+    # sends = h.sent_to(h.all)
+    # assert len(sends) == 6  # one message a poll
+    # assert h.events_state()["journal_seq"] == 1000
+    # # each device is shown, counted as "not listed", or still queued for the next message
+    # shown = sum(s[2].count("- [medium] New device") for s in sends)
+    # counted = sum(
+    #     int(line.split()[1])
+    #     for s in sends
+    #     for line in s[2].splitlines()
+    #     if line.endswith("more events not listed; see NetTap")
+    # )
+    # queued = len(h.events_state()["channels"][h.all]["events"])
+    # assert shown == 60 and shown + counted + queued == 1000
     # OLD CODE END
-    sends = h.sent_to(h.all)
-    assert len(sends) == 6  # one message a poll
-    assert h.events_state()["journal_seq"] == 1000
-    # each device is shown, counted as "not listed", or still queued for the next message
-    shown = sum(s[2].count("- [medium] New device") for s in sends)
-    counted = sum(
-        int(line.split()[1])
-        for s in sends
-        for line in s[2].splitlines()
-        if line.endswith("more events not listed; see NetTap")
-    )
-    queued = len(h.events_state()["channels"][h.all]["events"])
-    assert shown == 60 and shown + counted + queued == 1000
+    titles = [s[1] for s in h.sent_to(h.all)]
+    assert titles == ["200 new notifications (worst: medium)"] * 5
+    assert h.events_state() == {"journal_seq": 1000, "channels": {}}
 
 
 def test_recovery_without_the_event_state_rereads_one_day(tmp_path):
@@ -314,9 +316,11 @@ def test_overflow_past_the_queue_cap_is_counted_and_reported(h):
     assert msg[1] == "600 new notifications (worst: medium)"
     assert "and 490 more" in msg[2]
     assert "and 100 more events not listed; see NetTap" in msg[2]
-    # OLD CODE: assert h.dispatcher._events["channels"] == {} (NET-339: the 490 not shown wait)
-    q = h.dispatcher._events["channels"][h.all]
-    assert (len(q["events"]), q["overflow"]) == (490, 0)
+    # OLD CODE START — NET-339 security review: the 490 not shown are in "and 490 more" again
+    # q = h.dispatcher._events["channels"][h.all]
+    # assert (len(q["events"]), q["overflow"]) == (490, 0)
+    # OLD CODE END
+    assert h.dispatcher._events["channels"] == {}
 
 
 def test_a_crash_between_send_and_save_repeats_never_loses(h):
@@ -441,6 +445,22 @@ USED = "82.4 GB of your 100 GB cap used in November (Europe/London)"
             "Data cap: 80% used",
             f"{USED}, at least",
         ),
+        # "at least" floors: 82.46 GB counted so far never reads 82.5
+        (
+            "80",
+            {"complete": False, "since": "2026-10-20", "used": 82_460_000_000},
+            3,
+            "Data cap: 80% used",
+            f"{USED}, at least",
+        ),
+        # a complete month is the real figure, rounded as usual
+        (
+            "80",
+            {"used": 82_460_000_000},
+            3,
+            "Data cap: 80% used",
+            "82.5 GB of your 100 GB cap used in November (Europe/London)",
+        ),
         # it started on the 1st: nothing before it is missing, so no "counted since 1 Nov"
         (
             "80",
@@ -480,6 +500,11 @@ def test_a_malformed_data_cap_entry_gives_nothing(key, change):
     assert nd.event_item(cap_entry(key, **change)) is None
 
 
+@pytest.mark.parametrize("data", [["cap", 100], "82.4 GB"])
+def test_a_data_cap_entry_whose_data_is_not_a_dict_gives_nothing(data):
+    assert nd.event_item({**cap_entry("80"), "data": data}) is None
+
+
 @pytest.mark.parametrize("field", ["cap", "used"])
 def test_a_data_cap_entry_missing_a_figure_gives_nothing(field):
     entry = cap_entry("80")
@@ -497,40 +522,86 @@ def test_a_data_cap_warning_reaches_the_channels_its_rule_names(h):
     assert h.events_state()["channels"] == {}
 
 
-def test_a_clipped_channel_sends_what_fits_and_the_rest_in_the_next_message(h):
+# OLD CODE START — NET-339 security review: unshown devices no longer go in the next message
+# def test_a_clipped_channel_sends_what_fits_and_the_rest_in_the_next_message(h):
+#     po = h.channel("pushover")
+#     every = {f"AA:BB:CC:00:00:{n:02X}" for n in range(12)}
+#     h.groups = [group(1, 1, 0)]
+#     for n in range(12):
+#         h.device(n, vendor="V" * 40)
+#     h.poll(1)
+#     [first] = h.sent_to(po)
+#     assert first[2].startswith("- [critical] ET TEST signature 1")
+#     shown = macs(first[2])
+#     # the clip, not the 10-line cap, stopped it (the critical alert is a line too)
+#     assert 0 < len(shown) < nd.DIGEST_LINES - 1
+#     assert f"and {12 - len(shown)} more" in first[2]
+#     # nothing unshown was acknowledged
+#     assert macs(" ".join(e["line"] for e in h.queued(po))) == every - shown
+#     h.poll(2)
+#     second = h.sent_to(po)[1]
+#     assert macs(second[2]) == every - shown
+#     assert h.queued(po) == []
+#     assert all(len(s[2]) <= body_limit("pushover") for s in h.sent_to(po))
+# OLD CODE END
+def test_a_clipped_channel_counts_unshown_devices_and_sends_a_cap_warning_past_the_cut_next(
+    h,
+):
     po = h.channel("pushover")
-    every = {f"AA:BB:CC:00:00:{n:02X}" for n in range(12)}
     h.groups = [group(1, 1, 0)]
     for n in range(12):
         h.device(n, vendor="V" * 40)
+    # medium like the devices; _worst_first ties keep queue order, so it sorts past the cut
+    h.cap_warning("80")
     h.poll(1)
     [first] = h.sent_to(po)
     assert first[2].startswith("- [critical] ET TEST signature 1")
     shown = macs(first[2])
     # the clip, not the 10-line cap, stopped it (the critical alert is a line too)
     assert 0 < len(shown) < nd.DIGEST_LINES - 1
-    assert f"and {12 - len(shown)} more" in first[2]
-    # nothing unshown was acknowledged
-    assert macs(" ".join(e["line"] for e in h.queued(po))) == every - shown
+    assert USED not in first[2]
+    # the devices left out and the warning
+    assert f"and {13 - len(shown)} more" in first[2]
+    assert [e["event"] for e in h.queued(po)] == ["data_cap"]
     h.poll(2)
     second = h.sent_to(po)[1]
-    assert macs(second[2]) == every - shown
+    assert f"- [medium] {USED}" in second[2]
+    assert macs(second[2]) == set()  # a device counted in "and N more" isn't sent again
     assert h.queued(po) == []
     assert all(len(s[2]) <= body_limit("pushover") for s in h.sent_to(po))
 
 
-def test_pushover_s_body_fits_with_the_budget_notice_and_the_unshown_stay_queued(h):
+# OLD CODE START — NET-339 security review: unshown devices are counted, not queued
+# def test_pushover_s_body_fits_with_the_budget_notice_and_the_unshown_stay_queued(h):
+#     po = h.channel("pushover")
+#     for n in range(12):
+#         h.device(n, vendor="V" * 200)
+#     with patch.object(nd, "DAILY_BUDGET", 1):  # the first message is the day's last
+#         h.poll(1)
+#     [msg] = h.sent_to(po)
+#     assert msg[2].startswith("This channel has reached its limit of 1 messages today")
+#     assert len(msg[2]) <= body_limit("pushover")
+#     shown = macs(msg[2])
+#     left = macs(" ".join(e["line"] for e in h.queued(po)))
+#     assert shown and not shown & left and len(shown | left) == 12
+# OLD CODE END
+def test_pushover_s_body_fits_with_the_budget_notice_and_only_cap_warnings_stay_queued(
+    h,
+):
     po = h.channel("pushover")
+    # three of these lines fill all but 38 characters, too few for the cap warning's line
     for n in range(12):
-        h.device(n, vendor="V" * 200)
+        h.device(n, vendor="V" * 185)
+    h.cap_warning("80")  # last in the queue, past the cut
     with patch.object(nd, "DAILY_BUDGET", 1):  # the first message is the day's last
         h.poll(1)
     [msg] = h.sent_to(po)
     assert msg[2].startswith("This channel has reached its limit of 1 messages today")
     assert len(msg[2]) <= body_limit("pushover")
     shown = macs(msg[2])
-    left = macs(" ".join(e["line"] for e in h.queued(po)))
-    assert shown and not shown & left and len(shown | left) == 12
+    assert shown and USED not in msg[2]
+    assert f"and {13 - len(shown)} more" in msg[2]
+    assert [e["event"] for e in h.queued(po)] == ["data_cap"]
 
 
 def test_a_new_device_flood_never_trims_a_queued_data_cap_warning(h):

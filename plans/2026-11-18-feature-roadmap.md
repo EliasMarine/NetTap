@@ -309,7 +309,7 @@ Lane A (F1) does not wait for P1 or P2: it is daemon-only, and its two new label
   - **The journal is the only record of "sent".** No job state: each warning is one append keyed by `(threshold, "<YYYY-MM>|<cap bytes>")`, kept past the journal's line cap for 62 days. A new cap re-arms; returning to an earlier cap sends nothing again.
   - **Every 15 min from the ledger's snapshot, not hourly from OpenSearch.** Thresholds use a lower bound counted under the current exclusions, so a changed exclusion can't fake a crossing.
   - **Only the current month and cap are sent.** A queued warning for a cap the owner has left is held; one for a month that is over is dropped. A crossing first accounted after the month's last local midnight is not warned about (stated limit).
-  - **Delivery acknowledges only what a message showed,** fitted to each service's length limit, for new-device events too.
+  - **Each message is fitted to the service's length limit,** and a data cap warning it didn't show waits for the next one (other events stay in "and N more").
   - **Deploy:** `deploy-data-cap-warnings.sh` (a synthetic crossing under a 1.234567 GB test cap, then the owner's cap restored).
 
 - **What the owner gets:** a warning at 80% and 100% of the monthly cap, and one when the month is on track to go over. A place to set the cap.

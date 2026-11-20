@@ -116,10 +116,16 @@ describe('capUseLines', () => {
 		['began before the month', '2026-10-01', '2026-11-01'],
 		["began on the month's first day", '2026-11-01', '2026-11-01'],
 		['an older daemon sent no first day', '2026-11-13', undefined],
-	])('an incomplete month whose counting %s: some days are still being counted', (_name, since, firstDay) => {
+	])("an incomplete month whose counting %s: some days aren't counted", (_name, since, firstDay) => {
 		expect(capUseLines(cap({ complete: false, since, first_day: firstDay }))).toEqual([
-			'At least 82.4 GB of 100.0 GB used this month, some days are still being counted',
+			"At least 82.4 GB of 100.0 GB used this month, some days aren't counted",
 		]);
+	});
+
+	it('"at least" never rounds up past what was counted (82.46 GB reads 82.4, not 82.5)', () => {
+		expect(capUseLines(cap({ complete: false, since: '2026-11-13', current_usage_bytes: 82_460_000_000, lower_bound_bytes: 82_460_000_000 }))[0]).toBe(
+			'At least 82.4 GB of 100.0 GB used this month, counted since 13 Nov',
+		);
 	});
 
 	it('days under earlier exclusions: the lower bound, never the total, and says it is recounting', () => {

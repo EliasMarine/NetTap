@@ -29,8 +29,11 @@ export function capUseLines(cap: BandwidthCap): string[] {
 	// return [`At least ${formatGB(low)}${of} used this month, counted since ${formatDate(cap.since)}`, ...recounting];
 	// OLD CODE END
 	// counting began inside this month (as startsBeforeSince): the days before it are what's missing
-	const why = cap.first_day !== undefined && cap.since > cap.first_day ? `counted since ${formatDate(cap.since)}` : 'some days are still being counted';
-	return [`At least ${formatGB(low)}${of} used this month, ${why}`, ...recounting];
+	// OLD CODE: ... : 'some days are still being counted'; (review: a not_counted gap is never counted)
+	const why = cap.first_day !== undefined && cap.since > cap.first_day ? `counted since ${formatDate(cap.since)}` : "some days aren't counted";
+	// OLD CODE: return [`At least ${formatGB(low)}${of} used …`] (review: rounding up made 82.46 read "at least 82.5")
+	// "at least" floors to 0.1 GB, so the figure is never above what was counted
+	return [`At least ${formatGB(Math.floor(low / 1e8) * 1e8)}${of} used this month, ${why}`, ...recounting];
 }
 
 export function formatDate(dateStr: string): string {

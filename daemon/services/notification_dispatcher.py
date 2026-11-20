@@ -310,8 +310,13 @@ def _cap_line(key: str, data: dict) -> str:
     month, cap = data.get("month_label") or "this month", _cap_gb(data["cap"])
     if key == "projected":
         return f"On track for {_gb(data['projected'])} in {month}, over your {cap} cap"
-    line = f"{_gb(data['used'])} of your {cap} cap used in {month} ({data.get('tz')})"
-    if data.get("complete"):
+    # OLD CODE: line = f"{_gb(data['used'])} of your {cap} cap used in {month} ({data.get('tz')})"
+    # (review: rounding half up made an "at least" 82.46 GB read 82.5)
+    complete = data.get("complete")
+    # an "at least" figure floors to 0.1 GB, so it is never above what was counted
+    used = data["used"] if complete else data["used"] // 10**8 * 10**8
+    line = f"{_gb(used)} of your {cap} cap used in {month} ({data.get('tz')})"
+    if complete:
         return line
     since = data.get("since")
     # "counted since" only for a ledger that started after the month's first day (as the card's
@@ -327,6 +332,10 @@ def _cap_line(key: str, data: dict) -> str:
 def _data_cap_item(entry: dict) -> dict | None:
     """NET-339: a data cap warning; None when its data isn't one (a hand-edited journal)."""
     key, data = entry.get("key"), entry.get("data") or {}
+    if not isinstance(
+        data, dict
+    ):  # review: a list or string here raised, failing every poll
+        return None
     figures = ("cap", "projected" if key == "projected" else "used")
     if key not in _CAP_SEVERITY or not all(_is_bytes(data.get(f)) for f in figures):
         return None
@@ -424,10 +433,20 @@ def cap_queue(
     return [events[n] for n in kept], [events[n] for n in kept if states[n] == "send"]
 
 
+# OLD CODE START — security review: every unshown event waited for the next message, so a burst
+# of 500 new MACs became 50 messages and spent the channel's day (it used to be one "and N more")
+# def _unshown(events: list[dict], rendered: list[dict]) -> list[dict]:
+#     """The queued events a sent message didn't show: they go in the next one (Codex r2 #1)."""
+#     shown = {i.get("sig") for i in rendered}
+#     return [e for e in events if e.get("sig") not in shown]
+# OLD CODE END
 def _unshown(events: list[dict], rendered: list[dict]) -> list[dict]:
-    """The queued events a sent message didn't show: they go in the next one (Codex r2 #1)."""
+    """The data cap warnings a sent message didn't show: they go in the next one (Codex r2 #1).
+    Other events it didn't show were counted in its "and N more", as before NET-339."""
     shown = {i.get("sig") for i in rendered}
-    return [e for e in events if e.get("sig") not in shown]
+    return [
+        e for e in events if e.get("event") == "data_cap" and e.get("sig") not in shown
+    ]
 
 
 def _record(items: list[dict], now: datetime, ok: bool) -> dict:
