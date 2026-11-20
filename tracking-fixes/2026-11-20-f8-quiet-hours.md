@@ -17,7 +17,7 @@
 - **Dispatcher** (`notification_dispatcher.py`): the clock decides at each send decision, so nothing per window is saved.
   - Inside the window only critical alerts go (when the owner lets them). Everything else stays queued with `"held": true`, and so do retries and the hourly slot's digest.
   - The first send after the window carries everything held under "Notifications held by your quiet hours setting:", data cap warnings first. With 50 held alert types it adds a line pointing to the Alerts page.
-  - The 50-alert cut ranks criticals that may go first, then held items, then the rest (ponytail review: a critical arriving at 07:00 behind 50 held alerts was otherwise cut while the morning send failed, and lost).
+  - The 50-alert cut ranks criticals that may go first, then worst first, a held item ahead of a fresh one only at the same severity. The ponytail review found a critical arriving at 07:00 behind 50 held alerts was cut while the morning send failed, and lost; the security review found the same for a high alert. A held alert that worse fresh ones displace still makes the send a release, with the full line.
   - A fresh copy of a queued alert keeps the worse observation, so a critical held overnight isn't reported as the medium that followed.
   - A held-only poll keeps the refusal throttle, so a critical at 22:01 doesn't retry a refused password.
   - Held events' "and N more" count waits for the release. Events held for another cap survive a critical send.
@@ -29,9 +29,9 @@
 
 ## Tests
 
-- **Daemon:** 5,589 passed and 5 skipped (from 5,492). New:
+- **Daemon:** 5,594 passed and 5 skipped (from 5,492). New:
   - `test_quiet_hours.py` (34): validation, the window, clock changes, the skipped and repeated hour, `source`;
-  - `test_dispatcher_quiet.py` (32): the plan's §6 cases, plus the critical at the end of a full night, the full-queue line, and the held overflow count;
+  - `test_dispatcher_quiet.py` (36): the plan's §6 cases, plus the reviews' cases: a critical and a high alert at the end of a full night, a held alert displaced by worse ones, a critical failing inside the window, a stale cap flag, the full-queue line and the held overflow count;
   - `test_quiet_hours_config.py`, `test_backup_api.py::TestQuietHoursPreflight`: the hub, quick settings, API, export, preflight, restore.
 - **Mutation checks:** each new dispatcher behaviour was broken on purpose and a test failed every time (retry_at kept, held-first cut, merge, heading, cap-first order, held kept after a send, overflow, the fresh clock, critical first, the full-queue count).
 - **Lint:** ruff 0.17.3 check and format clean over `daemon/`; shellcheck clean.
@@ -42,6 +42,10 @@
 - **`/codex-review` on the plan:** 6 rounds; the owner signed off. The design got simpler on the way: no daily mode (NET-343), no saved window state, no alert cut count.
 - **`/deep-review`:** no findings (`security-reviews/feature-f8-quiet-hours/`).
 - **`/ponytail-review`:** two findings, both fixed: the critical cut at the end of a full night (above), and `_unshown` left live with no caller (now an OLD CODE block).
+- **Two-angle review on PR #340:**
+  - **Security:** no critical, high or medium. LOW-1 fixed: severity ranks before the held flag. Not taken, all INFO: a MAC flood can push the first real new-device event into the "and N more" count overnight (the count and the Devices page still show it); a backup's zone name is any string, quoted as plain text and bounded by the 16 MiB request cap; a 23-hour window with criticals held is the owner's own choice, as turning channels off is.
+  - **Python:** no high or medium. Both LOWs fixed: a test for a critical that fails inside the window (it must keep the night's held alerts and events), and a cap warning kept for another cap now loses its held flag once the window is over, so a later send doesn't carry the quiet hours heading.
+  - **TypeScript:** no critical or high. Fixed: the card no longer calls UTC "your time zone" when none is set (the reply adds `tz_set`); the Backup export sentence lists quiet hours; the no-PUT test now clicks a disabled Save; the time fields have a group name and only the wrong one is marked invalid. Not taken: the "overnight" label (the plan's wording) and switch-off bringing back the saved times (the plan's rule, so off can always be saved).
 
 ## Lessons
 

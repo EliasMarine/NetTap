@@ -246,7 +246,7 @@ The live daemon is only read. Delivery is exercised in isolation, so no live con
 - **A held alert's line shows the latest poll's count,** as a retried alert does today, but keeps its worst severity; the message points to the Alerts page.
 - **More than 50 distinct alert signatures in one night:** the least severe aren't in the release, as today's queue limit. The release says the queue keeps at most 50, and they are on the Alerts page.
 - **No eligible send in the open interval** (the channel throttled through it): the batch waits for the next one.
-- **A blocked release after a full night** (50 held alert types, and the morning send fails, is refused or waits for the hourly slot for more than 5 minutes): fresh *non-critical* alerts that the cut leaves out drop out of the query's overlap and aren't sent; they stay on the Alerts page. Criticals always rank first when they may go (ponytail review), so a critical is never cut behind held items.
+- **The 50-alert cut after a full night** (two-angle and ponytail reviews): criticals that may go rank first, then worst first, with a held item ahead of a fresh one only at the same severity. So a critical or a worse fresh alert is never cut behind milder held ones. What a full cut leaves out is on the Alerts page, and the release's full line says so: a fresh alert no worse than every held one, if the morning send is blocked for more than 5 minutes (it leaves the query's overlap), or a held alert that worse fresh ones displaced.
 - **Owner time zone unreadable means UTC** until fixed.
 
 **Effort:** S.

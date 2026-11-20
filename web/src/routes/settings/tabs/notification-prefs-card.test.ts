@@ -238,8 +238,11 @@ describe('Notification preferences: quiet hours (F8)', () => {
 
 		expect(screen.getByRole('alert')).toHaveTextContent('From and To must be different times.');
 		expect(toTime()).toHaveAttribute('aria-invalid', 'true');
-		// a real browser sends no click to a disabled button (jsdom does, so none is simulated here)
 		expect(saveButton()).toBeDisabled();
+		// OLD CODE: a PUT count with no click, which passed whatever Save's state (two-angle review).
+		// button.click() is ignored on a disabled button, as in a browser (fireEvent.click isn't)
+		saveButton().click();
+		await new Promise((r) => setTimeout(r));
 		expect(putBodies(fn)).toHaveLength(0);
 
 		await setTime(toTime(), '07:00');
@@ -256,6 +259,9 @@ describe('Notification preferences: quiet hours (F8)', () => {
 
 		expect(screen.getByRole('alert')).toHaveTextContent('Choose both times.');
 		expect(saveButton()).toBeDisabled();
+		expect(fromTime()).toHaveAttribute('aria-invalid', 'true');
+		expect(toTime()).not.toHaveAttribute('aria-invalid');
+		expect(screen.getByRole('group', { name: 'Hold notifications overnight' })).toContainElement(fromTime());
 	});
 
 	it('lets an invalid draft be switched off and saved with the last saved times', async () => {
@@ -273,6 +279,16 @@ describe('Notification preferences: quiet hours (F8)', () => {
 
 		await screen.findByText('Notification settings saved.');
 		expect(putBodies(fn)[0].quiet).toEqual({ enabled: false, start: '23:00', end: '06:30', critical_through: false });
+	});
+
+	it('says the times are in UTC when the owner never set a zone', async () => {
+		stubConfig({ ...CONFIG, quiet: QUIET_ON, tz: 'UTC', tz_set: false });
+		renderCard();
+		await loaded();
+
+		expect(screen.getByText(/You haven't set a time zone yet, so times are in UTC/)).toBeInTheDocument();
+		expect(screen.queryByText(/Times are in your time zone/)).not.toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Display tab' })).toHaveAttribute('href', '?tab=display');
 	});
 
 	it('keeps naming the zone after a save, from the reply rather than the first load', async () => {

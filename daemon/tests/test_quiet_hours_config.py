@@ -205,6 +205,12 @@ class QuietHoursApiTest(AioHTTPTestCase):
         got = await (await self.client.get("/api/notifications/config")).json()
         self.assertEqual(got["quiet"], quiet_hours.DEFAULT)
         self.assertEqual(got["tz"], "America/New_York")
+        self.assertIs(got["tz_set"], True)
+
+    async def test_a_zone_never_set_is_utc_and_says_so(self):
+        os.remove(os.environ["OWNER_TZ_FILE"])
+        got = await (await self.client.get("/api/notifications/config")).json()
+        self.assertEqual((got["tz"], got["tz_set"]), ("UTC", False))
 
     async def test_put_saves_and_its_reply_names_the_zone(self):
         status, reply = await self._put(quiet=ON)

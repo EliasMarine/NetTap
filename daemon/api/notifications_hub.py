@@ -154,8 +154,11 @@ async def handle_test_all(request: web.Request) -> web.Response:
 
 
 def _with_tz(view: dict) -> dict:
-    """NET-330: the owner's zone, which quiet hours are read in, so the card can name it."""
-    return {**view, "tz": owner_tz.read()["tz"]}
+    """NET-330: the owner's zone, which quiet hours are read in, so the card can name it, and
+    whether the owner set it (UTC until then, which the card mustn't call "your time zone")."""
+    # OLD CODE: return {**view, "tz": owner_tz.read()["tz"]} (two-angle review: + tz_set)
+    zone = owner_tz.read()
+    return {**view, "tz": zone["tz"], "tz_set": zone["set"]}
 
 
 async def handle_get_config(request: web.Request) -> web.Response:

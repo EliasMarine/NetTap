@@ -389,6 +389,42 @@ def test_a_held_queue_s_overflow_count_waits_for_the_release(h):
     assert h.dispatcher._events["channels"] == {}
 
 
+def test_a_failing_critical_inside_the_window_keeps_the_night_s_held_items(h):
+    # Python review: nothing covered a failed send inside the window
+    h.groups = [group(1, 3, m(0, "23:00"))]
+    h.device(1)
+    h.poll(m(0, "23:00"))
+    h.fail.add(h.all)
+    h.groups = [group(1, 3, m(0, "23:00")), group(9, 1, m(0, "23:30"))]
+    h.poll(m(0, "23:30"))
+    assert len(h.sent_to(h.all)) == 1  # the critical, failed
+    h.take()
+    pending = {i["sig"]: i for i in h.state(h.all)["pending"]}
+    assert pending["9"]["attempts"] == 1 and not pending["9"].get("held")
+    assert pending["1"]["held"] is True and pending["1"]["attempts"] == 0
+    [event] = h.held_events(h.all)
+    assert event["held"] is True and event.get("attempts", 0) == 0
+    h.fail.clear()
+    h.poll(m(0, "23:31"))
+    [(_, title, body, _)] = h.sent_to(h.all)
+    assert "signature 9" in title and "signature 1" not in body
+    assert "New device" not in body
+
+
+def test_a_cap_warning_kept_for_another_cap_loses_its_flag_after_the_window(h):
+    h.cap_warning("80")
+    h.cap_now = ("2026-11", 200 * GB)  # the owner changed the cap overnight
+    h.poll(m(0, "23:00"))
+    assert h.held_events(h.all)[0]["held"] is True
+    h.poll(m(1, "07:00", 30))  # the window ends with the other cap in force
+    assert h.sent_to(h.all) == []
+    assert "held" not in h.held_events(h.all)[0]
+    h.cap_now = ("2026-11", 100 * GB)  # back to the first cap that afternoon
+    h.poll(m(1, "14:00"))
+    [body] = bodies(h, h.all)
+    assert "cap used" in body and not body.startswith(QUIET_PREAMBLE)
+
+
 # 10 --------------------------------------------------------------------------
 
 
@@ -435,11 +471,12 @@ def test_a_held_critical_keeps_its_own_observation_when_a_milder_one_follows(h):
     assert "800" not in body
 
 
-def test_held_items_are_kept_ahead_of_fresh_ones_at_the_release(h):
+def test_held_items_are_kept_ahead_of_equally_mild_fresh_ones_at_the_release(h):
+    # OLD CODE: fresh severity-2 alerts (security review: a worse fresh alert now beats a held one)
     h.groups = [group(1, 3, m(0, "23:00"))]
     h.poll(m(0, "23:00"))
     h.groups = [
-        group(500 + n, 2, m(1, "07:00"), count=100 - n) for n in range(nd.MAX_PENDING)
+        group(500 + n, 3, m(1, "07:00"), count=100 - n) for n in range(nd.MAX_PENDING)
     ]
     h.poll(m(1, "07:00", 30))
     [body] = bodies(h, h.all)
@@ -467,6 +504,35 @@ def test_a_critical_at_the_end_of_a_full_night_survives_a_failing_release(h):
     for minute in range(6, 12):
         h.poll(m(1, f"07:{minute:02d}", 30))
     assert any("signature 999" in body for body in bodies(h, h.all))
+
+
+def test_a_high_alert_at_the_end_of_a_full_night_survives_a_failing_release(h):
+    # security review: a fresh severity-2 alert ranked behind 50 held severity-4 ones was cut
+    # while the morning send failed, until it left the query's overlap
+    h.range_aware = True
+    h.poll(m(0, "22:00"))  # the cursor
+    held = [group(600 + n, 4, m(0, "23:00")) for n in range(nd.MAX_PENDING)]
+    h.groups = held
+    h.poll(m(0, "23:00"))
+    h.fail.add(h.all)
+    h.groups = [*held, group(998, 2, m(1, "07:00"))]
+    for minute in range(6):
+        h.poll(m(1, f"07:{minute:02d}", 30))
+    h.fail.clear()
+    h.take()
+    for minute in range(6, 12):
+        h.poll(m(1, f"07:{minute:02d}", 30))
+    assert any("signature 998" in body for body in bodies(h, h.all))
+
+
+def test_a_held_alert_cut_by_worse_fresh_ones_is_a_release_that_says_so(h):
+    h.groups = [group(1, 4, m(0, "23:00"))]
+    h.poll(m(0, "23:00"))
+    h.groups = [group(700 + n, 2, m(1, "07:00")) for n in range(nd.MAX_PENDING)]
+    h.poll(m(1, "07:00", 30))
+    [body] = bodies(h, h.all)
+    assert body.startswith(QUIET_PREAMBLE) and QUIET_FULL in body
+    assert "signature 1:" not in body
 
 
 def test_criticals_ahead_of_a_full_held_queue_still_say_it_was_full(h):

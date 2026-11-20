@@ -513,18 +513,27 @@ def _merge(old: dict | None, new: dict) -> dict:
 
 
 def _rank(item: dict, hold: "Hold | None") -> tuple:
-    """The 50-alert cut's order: criticals that may go now, then held items, then the rest, worst
-    first in each. So a release keeps what was held over fresh non-critical arrivals, which come
-    back on the next poll's overlapping read; with nothing held it is the cut as before."""
-    # OLD CODE: if hold is not None and _due(item, hold): (ponytail review: after a window a fresh
-    # critical ranked behind 50 held alerts, and a blocked release cut it until it left the overlap)
-    if _due(item, hold) and item.get("severity") == 1:
-        group = 0
-    elif item.get("held"):
-        group = 1
-    else:
-        group = 2
-    return (group, *_worst_first(item))
+    """The 50-alert cut's order: criticals that may go now, then worst first as before, a held
+    item ahead of a fresh one of the same severity. So a release keeps what was held over equally
+    mild arrivals, which come back on the next poll's overlapping read, and a worse fresh alert
+    still beats the mildest held one (its 5-minute overlap ends; the held one is on the Alerts
+    page, and the release's full line says so)."""
+    # OLD CODE START — security review: held items ranked as a group ahead of every fresh
+    # non-critical alert, so after a full night a fresh high alert was cut while the release was
+    # blocked, until it left the query's overlap
+    # # OLD CODE: if hold is not None and _due(item, hold): (ponytail review: after a window a fresh
+    # # critical ranked behind 50 held alerts, and a blocked release cut it until it left the overlap)
+    # if _due(item, hold) and item.get("severity") == 1:
+    #     group = 0
+    # elif item.get("held"):
+    #     group = 1
+    # else:
+    #     group = 2
+    # return (group, *_worst_first(item))
+    # OLD CODE END
+    urgent = _due(item, hold) and item.get("severity") == 1
+    severity, fewer = _worst_first(item)
+    return (not urgent, severity, not item.get("held"), fewer)
 
 
 def _cap_first(item: dict) -> tuple:
@@ -857,8 +866,17 @@ class AlertDispatcher:
         due_events = [e for e in offered if _due(e, hold)]
         # every queued event, also one cap_queue keeps for another cap: it waited the night too
         held_sigs = {e.get("sig") for e in events if not _due(e, hold)}
+        # OLD CODE: events = [{**e, "held": True} if e.get("sig") in held_sigs else e for e in events]
+        # (Python review: after the window, a cap warning kept for another cap kept its flag, so a
+        # send days later carried the quiet hours heading; outside a window only what goes keeps it)
+        on_offer = {e.get("sig") for e in offered}
         events = [
-            {**e, "held": True} if e.get("sig") in held_sigs else e for e in events
+            {**e, "held": True}
+            if e.get("sig") in held_sigs
+            else {k: v for k, v in e.items() if k != "held"}
+            if hold is None and e.get("sig") not in on_offer
+            else e
+            for e in events
         ]
         done = {
             sig: v
@@ -1059,16 +1077,19 @@ class AlertDispatcher:
         # OLD CODE END
         # the first send after quiet hours carries what they held, under one heading; decided
         # from everything due, before any line is fitted (Codex r4 #1)
-        release = hold is None and any(
-            i.get("held") for i in [*candidates, *due_events]
+        # OLD CODE: release = hold is None and any(i.get("held") for i in [*candidates, *due_events])
+        # (security review: held alerts that worse fresh ones cut still make it a release)
+        held_total = sum(1 for i in by_sig.values() if i.get("held"))
+        release = hold is None and (
+            held_total > 0 or any(e.get("held") for e in due_events)
         )
         preamble = QUIET_PREAMBLE if release else ""
-        # a full queue of held alerts may have left some out: say where they all are
+        # a full queue of held alerts, or held alerts cut now, left some out: say where they are
         # OLD CODE: full = release and sum(1 for i in candidates if i.get("held")) >= MAX_PENDING
         # (ponytail review: criticals now take slots first, so count the held ones before the cut)
-        full = (
-            release and sum(1 for i in by_sig.values() if i.get("held")) >= MAX_PENDING
-        )
+        # OLD CODE: full = release and held_total >= MAX_PENDING (security review: + cut now)
+        held_kept = sum(1 for i in candidates if i.get("held"))
+        full = release and (held_total >= MAX_PENDING or held_kept < held_total)
         # held events' overflow count waits for the release that shows them
         shown_overflow = overflow if hold is None else 0
         title, body, worst, rendered = digest(

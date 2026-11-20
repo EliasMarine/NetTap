@@ -40,6 +40,7 @@ const CONFIG_EMPTY = {
 	webhook: { enabled: false, has_url: false, url_hint: '' },
 	quiet: { enabled: false, start: '22:00', end: '07:00', critical_through: true },
 	tz: 'UTC',
+	tz_set: false,
 };
 const CONFIG = {
 	min_severity: 2,
@@ -47,6 +48,7 @@ const CONFIG = {
 	webhook: { enabled: true, has_url: true, url_hint: 'https://hooks.example.com/…' },
 	quiet: { enabled: true, start: '22:00', end: '07:00', critical_through: true },
 	tz: 'Europe/London',
+	tz_set: true,
 };
 
 // NET-319: the daemon's background checks (GET /api/jobs), shown on the same tab

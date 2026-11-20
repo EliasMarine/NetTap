@@ -50,6 +50,8 @@
 	let savedQuietEnd = QUIET_DEFAULT.end;
 	// The owner's zone (Settings › Display); the daemon reads the times in it. Shown, never edited here.
 	let tz = $state('UTC');
+	// false until the owner picks a zone: the daemon then reads the times in UTC, which isn't "theirs"
+	let tzSet = $state(true);
 	let notifSaving = $state(false);
 	let notifMessage = $state('');
 	let notifError = $state(false);
@@ -130,6 +132,7 @@
 		data_cap?: boolean;
 		quiet?: { enabled?: boolean; start?: string; end?: string; critical_through?: boolean };
 		tz?: string;
+		tz_set?: boolean;
 	}) {
 		severityThreshold = SEVERITY_VALUES[(data.min_severity ?? 2) - 1] ?? 'high';
 		newDevice = data.new_device ?? true;
@@ -142,6 +145,8 @@
 		savedQuietStart = quietStart;
 		savedQuietEnd = quietEnd;
 		tz = data.tz || 'UTC';
+		// a daemon from before tz_set sends a zone only once one is known
+		tzSet = data.tz_set ?? Boolean(data.tz);
 		emailEnabled = data.email?.enabled ?? false;
 		emailAddress = (data.email?.recipients ?? []).join(', ');
 		smtpConfigured = data.email?.smtp_configured ?? false;
@@ -385,7 +390,9 @@
 		</div>
 
 		{#if quietEnabled}
-			<div class="form-grid">
+			<!-- OLD CODE: <div class="form-grid"> (two-angle review: From and To had no group name) -->
+			<!-- OLD CODE: aria-invalid={quietProblem ? 'true' : undefined} on both times (two-angle review: only the empty one is wrong when one is cleared) -->
+			<div class="form-grid" role="group" aria-labelledby="quiet-toggle">
 				<div class="field">
 					<label class="label" for="quiet-start">From</label>
 					<input
@@ -393,7 +400,7 @@
 						id="quiet-start"
 						type="time"
 						bind:value={quietStart}
-						aria-invalid={quietProblem ? 'true' : undefined}
+						aria-invalid={quietProblem && (!quietStart || quietStart === quietEnd) ? 'true' : undefined}
 						aria-describedby={quietProblem ? 'quiet-zone-help quiet-error' : 'quiet-zone-help'}
 					/>
 				</div>
@@ -404,14 +411,19 @@
 						id="quiet-end"
 						type="time"
 						bind:value={quietEnd}
-						aria-invalid={quietProblem ? 'true' : undefined}
+						aria-invalid={quietProblem && (!quietEnd || quietStart === quietEnd) ? 'true' : undefined}
 						aria-describedby={quietProblem ? 'quiet-zone-help quiet-error' : 'quiet-zone-help'}
 					/>
 				</div>
 			</div>
 			{#if quietProblem}<p class="field-error" id="quiet-error" role="alert">{quietProblem}</p>{/if}
+			<!-- OLD CODE: one line, "Times are in your time zone, {tz}. …" (two-angle review: a zone never set is UTC, not the owner's) -->
 			<p class="field-help" id="quiet-zone-help">
-				Times are in your time zone, {tz}. Change it in the <a class="link" href="?tab=display">Display tab</a>.
+				{#if tzSet}
+					Times are in your time zone, {tz}. Change it in the <a class="link" href="?tab=display">Display tab</a>.
+				{:else}
+					You haven't set a time zone yet, so times are in UTC. Set yours in the <a class="link" href="?tab=display">Display tab</a>.
+				{/if}
 			</p>
 			<div class="switch-row">
 				<input type="checkbox" role="switch" class="switch" id="quiet-critical-toggle" bind:checked={quietCritical} aria-describedby="quiet-critical-toggle-help" />
