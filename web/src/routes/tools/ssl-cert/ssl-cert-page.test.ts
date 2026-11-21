@@ -4,14 +4,15 @@ import Page from './+page.svelte';
 
 const search = vi.hoisted(() => ({ value: '' }));
 // Each subscriber reads the query string the current test set
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: {
 		subscribe(run: (value: unknown) => void) {
 			run({ url: new URL(`http://localhost/tools/ssl-cert${search.value}`), params: {} });
 			return () => {};
 		},
 	},
-}));
+})));
 
 const DAY = 86_400_000;
 const cert = (notAfterMs: number) => ({

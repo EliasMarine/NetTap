@@ -1,7 +1,7 @@
 <script lang="ts">
 	// OLD CODE: import { onDestroy, onMount } from 'svelte'; (slice 2a: the URL hand-off starts the first load, not onMount)
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	import {
 		getAlerts,
@@ -168,7 +168,7 @@
 	// OLD CODE START: let selectedTimeRange = $state('24h'); — a link's ?range= was ignored OLD CODE END
 	// OLD CODE START — 2026-11-06 (slice 2a): read once; the URL hand-off below applies ?range= on every change
 	// // A link from a page with its own window (?range=, NET-160) opens on that window when it is one of ours
-	// const urlRange = $page.url.searchParams.get('range');
+	// const urlRange = page.url.searchParams.get('range');
 	// let selectedTimeRange = $state(TIME_RANGES.some((r) => r.value === urlRange) ? (urlRange as string) : '24h');
 	// OLD CODE END
 	/** One of TIME_RANGES, or 'custom' while a link's exact window (?from=&to=) is on. */
@@ -207,12 +207,12 @@
 	let activeFilter = $state<SeverityFilter>('all');
 	let signatureSearch = $state('');
 	// OLD CODE START — 2026-11-06 (slice 2a): signature was read once and ip derived; the URL hand-off applies both now
-	// let urlSignature = $page.url.searchParams.get('signature') || '';
+	// let urlSignature = page.url.searchParams.get('signature') || '';
 	// OLD CODE END
-	let urlCategory = $page.url.searchParams.get('category') || '';
+	let urlCategory = page.url.searchParams.get('category') || '';
 	// OLD CODE START — 2026-11-06 (slice 2a)
 	// let signatureFilter = $state(urlSignature);
-	// let ipFilter = $derived($page.url.searchParams.get('ip') || '');
+	// let ipFilter = $derived(page.url.searchParams.get('ip') || '');
 	// OLD CODE END
 	let signatureFilter = $state('');
 	let ipFilter = $state('');
@@ -982,14 +982,15 @@
 
 	/** Change only the given list parameters in the URL (null drops one); the URL hand-off below applies them. */
 	function setListParams(changes: Partial<Record<(typeof LIST_PARAMS)[number], string | null>>) {
-		const url = new URL($page.url);
+		// OLD CODE: const url = new URL(page.url); (kit 3: page.url is a read-only URL; NET-315)
+		const url = new URL(page.url.href);
 		for (const [key, value] of Object.entries(changes)) {
 			if (value) url.searchParams.set(key, value);
 			else url.searchParams.delete(key);
 		}
 		// A control's own search: the figure a link was clicked at no longer describes it (section D)
 		url.searchParams.delete('count');
-		return goto(`${url.pathname}${url.search}`, { replaceState: true, keepFocus: true, noScroll: true });
+		return goto(`${url.pathname}${url.search}`, { replace: true, reset: false });
 	}
 
 	// OLD CODE START — 2026-11-06 (slice 2a): the controls set local state and fetched; they write the URL now
@@ -1060,7 +1061,7 @@
 		const data = snapshot?.data;
 		if (!data) return;
 		const q = new URLSearchParams({ severity: level, from: data.from, to: data.to, range: baseRange });
-		void goto(`/alerts?${q.toString()}`, { keepFocus: true, noScroll: true });
+		void goto(`/alerts?${q.toString()}`, { reset: false });
 		scrollToList();
 	}
 
@@ -1074,7 +1075,7 @@
 	 * slots' window with every list filter cleared (the timeline request carries none), and their figure.
 	 */
 	function pickTimeline(chart: TimeChart, i: number, j: number) {
-		void goto(withCount(`/alerts?${windowQuery(pickWindow(chart, i, j), baseRange)}`, pickedTotal(chart, i, j)), { keepFocus: true, noScroll: true });
+		void goto(withCount(`/alerts?${windowQuery(pickWindow(chart, i, j), baseRange)}`, pickedTotal(chart, i, j)), { reset: false });
 		scrollToList();
 	}
 
@@ -1085,7 +1086,7 @@
 	function showActivity() {
 		if (!activityCount) return;
 		const q = new URLSearchParams({ activity: 'true', from: activityCount.from, to: activityCount.to, range: baseRange });
-		void goto(`/alerts?${q.toString()}`, { keepFocus: true, noScroll: true });
+		void goto(`/alerts?${q.toString()}`, { reset: false });
 		scrollToList();
 	}
 
@@ -1253,7 +1254,7 @@
 	// page 1 with one request: a list search when only severity, signature, ip, src, dst or count changed,
 	// otherwise a full reload on the new window. The first run is the page's first load.
 	$effect(() => {
-		const params = $page.url.searchParams;
+		const params = page.url.searchParams;
 		const next = LIST_PARAMS.map((key) => params.get(key) ?? '');
 		const count = linkedCount(params.get('count'));
 		untrack(() => {

@@ -16,13 +16,14 @@ const { IP, IP2, page } = vi.hoisted(() => ({
 	page: { set: (_ip: string) => {} },
 }));
 
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable } = await import('svelte/store');
 	const at = (ip: string) => ({ url: new URL(`http://localhost/devices/${ip}`), params: { ip } });
 	const store = writable(at(IP));
 	page.set = (ip: string) => store.set(at(ip));
 	return { page: store };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$api/devices', () => ({
 	getDeviceDetail: vi.fn(),

@@ -11,7 +11,7 @@
 	 * No trust ring: the registry has no score for a device (PLAN.md §4.1, left out, not faked).
 	 */
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	// OLD CODE: import { onDestroy, untrack } from 'svelte';
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { getRegistryDevice, getDeviceTraffic, isNewDevice } from '$api/devices-registry';
@@ -56,7 +56,7 @@
 	let deviceFailed = $state(false);
 	let trafficFailed = $state(false);
 
-	let mac = $derived($page.params.mac);
+	let mac = $derived(page.params.mac);
 
 	// NET-192 PR 4: the same range pills as devices/[ip] (it read only the daemon's default 24 hours)
 	// OLD CODE: let rangeValue = $state<DrillRangeValue>('24h'); (NET-195: Settings › Display's default, read where the range starts)

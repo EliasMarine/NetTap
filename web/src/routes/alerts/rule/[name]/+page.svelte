@@ -6,7 +6,7 @@
 	 * from the same filters over the response's own window.
 	 */
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	import { getSuricataRule, type RuleAddresses, type RuleAddressRow, type RuleLink, type SuricataRuleFigures } from '$lib/api/drilldown';
 	import { getRegistryDevices } from '$lib/api/devices-registry';
@@ -47,8 +47,8 @@
 	type RuleRange = Pick<DrillRange, 'label' | 'hours' | 'words'> & { value: string };
 
 	/** The stored name, as given: SvelteKit has decoded the path segment once. */
-	const name = $derived(($page.params as Record<string, string>).name ?? '');
-	const params = $derived($page.url.searchParams);
+	const name = $derived((page.params as Record<string, string>).name ?? '');
+	const params = $derived(page.url.searchParams);
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	const baseRange = $derived(DRILL_RANGES.find((r) => r.value === params.get('range')) ?? DRILL_RANGES.find((r) => r.value === startRange('24h'))!);
 	const range = $derived<RuleRange>(custom ?? baseRange);
@@ -108,7 +108,7 @@
 
 	/** This page with one setting changed (the other list, or a rolling range ending now). */
 	function reopen(change: { range?: string; activity?: boolean }) {
-		const q = new URLSearchParams($page.url.search);
+		const q = new URLSearchParams(page.url.search);
 		if (change.range) {
 			q.delete('from');
 			q.delete('to');
@@ -118,7 +118,7 @@
 			if (change.activity) q.set('activity', 'true');
 			else q.delete('activity');
 		}
-		void goto(`${$page.url.pathname}?${q.toString()}`, { replaceState: true, keepFocus: true, noScroll: true });
+		void goto(`${page.url.pathname}?${q.toString()}`, { replace: true, reset: false });
 	}
 
 	/** The Alerts list holding a figure on screen: this rule, on this page's list, narrowed by `ip`, carrying that figure. */

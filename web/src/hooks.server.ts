@@ -1,4 +1,5 @@
-import type { Handle, ServerInit } from '@sveltejs/kit';
+// OLD CODE: import type { Handle, ServerInit } from '@sveltejs/kit'; (kit 3 moved the hook types to @sveltejs/kit/hooks; NET-315)
+import type { Handle, ServerInit } from '@sveltejs/kit/hooks';
 import { json, redirect } from '@sveltejs/kit';
 import { verifyToken, hasUsers, ensureSetupCode } from '$lib/server/auth.js';
 import { hasSetupCookie } from '$lib/server/middleware.js';

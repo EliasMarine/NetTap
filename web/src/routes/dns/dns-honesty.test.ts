@@ -5,9 +5,10 @@ import DnsPage from './+page.svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import { ENCRYPTED_DNS_NOTE } from '$lib/api/dns';
 
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: readable({ url: new URL('http://localhost/dns') }),
-}));
+})));
 
 // NET-225 (DNS-1, DNS-3). Its own file: the capture-mode store is a module singleton, and the
 // recovery test needs it fresh.

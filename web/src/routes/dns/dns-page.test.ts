@@ -5,9 +5,10 @@ import DnsPage from './+page.svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: readable({ url: new URL('http://localhost/dns') }),
-}));
+})));
 
 // #96: a failed suspicious-DNS check read as "No suspicious DNS patterns detected", and a
 // complete detection list (hundreds of entries on a busy network) rendered in full.

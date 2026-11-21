@@ -9,7 +9,7 @@
 	 * Reads URL query params: ?target=X&tab=traceroute (or tab=mtu)
 	 */
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	// OLD CODE: import { ping, traceroute } from '$api/tools'; (NET-267)
 	import { pathMtu, ping, traceroute } from '$api/tools';
 	import type { MtuProbe, PathMtuResult, PingReply, PingResult, TracerouteHop, TracerouteResult } from '$api/tools';
@@ -46,7 +46,7 @@
 	// ---------------------------------------------------------------------------
 
 	$effect(() => {
-		const params = $page.url.searchParams;
+		const params = page.url.searchParams;
 		const t = params.get('target');
 		const tab = params.get('tab');
 		if (t) target = t;

@@ -5,7 +5,7 @@
 	import '$lib/styles/a11y.css';
 	import '$lib/styles/global.css';
 	import { tick } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { afterNavigate, goto } from '$app/navigation';
 	// OLD CODE: import { getCaptureMode, getCaptureHealth } from '$api/capture'; (NET-225: the chip reads the shared store)
 	import { getCaptureHealth } from '$api/capture';
@@ -74,7 +74,7 @@
 	// }
 	// OLD CODE END
 
-	let bare = $derived(isBare($page.url.pathname));
+	let bare = $derived(isBare(page.url.pathname));
 
 	// OLD CODE START — NET-225: the chip's own request, read once; refreshCaptureMode() never reached it.
 	// pollShell asks the shared store now, so a failed startup request is asked again every 30 s.
@@ -119,7 +119,7 @@
 		if (redirecting) return;
 		redirecting = true;
 		try {
-			await goto(`/login?next=${encodeURIComponent($page.url.pathname + $page.url.search)}`);
+			await goto(`/login?next=${encodeURIComponent(page.url.pathname + page.url.search)}`);
 		} catch (err) {
 			console.error('Could not open the sign-in page:', err);
 		} finally {
@@ -258,7 +258,7 @@
 		<a class="skip btn" href="#main">Skip to content</a>
 		<div class="shell">
 			<Sidebar
-				path={$page.url.pathname}
+				path={page.url.pathname}
 				{capture}
 				{alertCount}
 				{alertCountFailed}
@@ -270,7 +270,7 @@
 			<main class="main" id="main" tabindex="-1">
 				<div class="m-top">
 					<a class="brand" href="/" aria-label="NetTap home"><BrandMark /></a>
-					<span class="m-title">{pageTitle($page.url.pathname)}</span>
+					<span class="m-title">{pageTitle(page.url.pathname)}</span>
 					<button
 						class="icon-btn"
 						type="button"

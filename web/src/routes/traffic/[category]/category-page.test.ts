@@ -6,9 +6,10 @@ import CategoryPage from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 import { SETTLE_MS } from '$lib/utils/window-trend';
 
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: readable({ url: new URL('http://localhost/traffic/streaming'), params: { category: 'streaming' } }),
-}));
+})));
 
 // #96: a failed category request read as "No traffic data for Streaming", and a failed network
 // total read as "0.0%" of the network.

@@ -97,7 +97,7 @@ describe('Settings hub — tabs from the URL', () => {
 		render(Page);
 		await openTab('Capture');
 
-		expect(goto).toHaveBeenCalledWith('?tab=capture', { keepFocus: true, noScroll: true });
+		expect(goto).toHaveBeenCalledWith('?tab=capture', { reset: false });
 		expect(historyState()).toEqual({ entries: ['/settings', '/settings?tab=capture'], index: 1 });
 		expect(panel()).toHaveAttribute('id', 'settings-panel-capture');
 		expect(tab('Capture')).toHaveAttribute('aria-selected', 'true');
@@ -236,7 +236,7 @@ describe('Settings hub — unsaved edits', () => {
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Discard and continue' }));
 		await flush();
-		expect(goto).toHaveBeenLastCalledWith(expect.any(URL), { keepFocus: true, noScroll: true });
+		expect(goto).toHaveBeenLastCalledWith(expect.any(URL), { reset: false });
 		expect(timeRange()).toHaveValue('');
 		expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
 

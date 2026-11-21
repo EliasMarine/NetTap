@@ -13,13 +13,14 @@ import { windowWords } from '$lib/utils/drilldown';
 
 const { IP } = vi.hoisted(() => ({ IP: '192.168.1.10' }));
 const nav = vi.hoisted(() => ({ set: (_query: string) => {} }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable } = await import('svelte/store');
 	const at = (query: string) => ({ url: new URL(`http://localhost/devices/${IP}${query}`), params: { ip: IP } });
 	const page = writable(at(''));
 	nav.set = (query) => page.set(at(query));
 	return { page };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}) }));
 vi.mock('$lib/stores/captureMode', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/stores/captureMode')>()),

@@ -13,7 +13,7 @@
 	 */
 
 	import { onDestroy, onMount, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	// OLD CODE START — NET-160 slice 2b-3: Total devices and Online now came from separate count requests
 	// import { getDevices, getDeviceCount } from '$api/devices';
@@ -121,7 +121,7 @@
 	// ] as const;
 	// OLD CODE END
 	const RANGES = DRILL_RANGES;
-	const params = $derived($page.url.searchParams);
+	const params = $derived(page.url.searchParams);
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	// OLD CODE: ?? RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	// OLD CODE: … ?? RANGES.find((r) => r.value === '24h')!); (NET-195: a link's window or range, else Settings › Display's default)
@@ -391,7 +391,7 @@
 		if (value === 'custom') return;
 		const q = new URLSearchParams({ range: value });
 		// OLD CODE: if (urlView) q.set('view', urlView); (NET-296: no tabs)
-		void goto(`${$page.url.pathname}?${q}`, { replaceState: true, keepFocus: true, noScroll: true });
+		void goto(`${page.url.pathname}?${q}`, { replace: true, reset: false });
 	}
 
 	const refresh = registerPageRefresh(load);

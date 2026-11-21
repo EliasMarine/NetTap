@@ -6,7 +6,7 @@
 	 */
 
 	import { onDestroy } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { goto } from '$app/navigation';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -15,7 +15,7 @@
 	import { ipHref, isLan } from '$lib/stores/lan';
 	import type { DnsResult } from '$lib/api/lookup';
 
-	let ip = $derived($page.params.ip);
+	let ip = $derived(page.params.ip);
 	// OLD CODE: let result = $state<{ ip: string; hostname: string | null; aliases: string[]; addresses: string[]; error: string | null } | null>(null); (NET-192 PR 3: + timed_out)
 	let result = $state<DnsResult | null>(null);
 	let loading = $state(true);

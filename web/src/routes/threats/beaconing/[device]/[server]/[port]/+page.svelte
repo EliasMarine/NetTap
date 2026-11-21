@@ -6,7 +6,7 @@
 	 * context only, so their failure never blanks the page.
 	 */
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	import { getBeaconPair, type BeaconPair } from '$lib/api/threats';
 	import { lookupGeoIP, type GeoIPResult } from '$lib/api/geoip';
@@ -30,12 +30,12 @@
 
 	const STATUS_WORDS = { irregular: 'not steady enough to list', too_few: 'too few calls to judge', capped: "couldn't be timed" } as const;
 
-	const params = $derived($page.params as Record<string, string>);
+	const params = $derived(page.params as Record<string, string>);
 	const device = $derived(params.device ?? '');
 	const server = $derived(params.server ?? '');
 	/** The port from the path, or null when it isn't one (no request is sent; the daemon checks again). */
 	const port = $derived(/^\d{1,5}$/.test(params.port ?? '') && Number(params.port) <= 65535 ? Number(params.port) : null);
-	const range = $derived<DrillRange>(DRILL_RANGES.find((r) => r.value === $page.url.searchParams.get('range')) ?? DRILL_RANGES.find((r) => r.value === startRange('24h'))!);
+	const range = $derived<DrillRange>(DRILL_RANGES.find((r) => r.value === page.url.searchParams.get('range')) ?? DRILL_RANGES.find((r) => r.value === startRange('24h'))!);
 	const view = $derived(`${device}|${server}|${port}|${range.value}`);
 
 	let loaded = $state<{ data: BeaconPair; range: DrillRange } | null>(null);
@@ -92,7 +92,7 @@
 	}
 
 	function pickRange(value: string) {
-		void goto(`${$page.url.pathname}?range=${value}`, { replaceState: true, keepFocus: true, noScroll: true });
+		void goto(`${page.url.pathname}?range=${value}`, { replace: true, reset: false });
 	}
 
 	// --- Figures ---

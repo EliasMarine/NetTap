@@ -10,7 +10,7 @@
 	 */
 
 	import { onDestroy } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { goto } from '$app/navigation';
 	import { lookupGeoIP, geoEstimate } from '$api/geoip';
 	import { getVersions, type ComponentVersion } from '$api/updates';
@@ -23,7 +23,7 @@
 	import DotMap from '$lib/components/ui/charts/DotMap.svelte';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 
-	let ip = $derived($page.params.ip);
+	let ip = $derived(page.params.ip);
 	let result = $state<GeoIPResult | null>(null);
 	let loading = $state(true);
 	let error = $state('');

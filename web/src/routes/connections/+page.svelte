@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { goto } from '$app/navigation';
 	import {
 		getConnections,
@@ -928,16 +928,17 @@
 	/** The ?ip= last applied; null before the first load. */
 	let appliedIp: string | null = null;
 	/** The navigation it came from: a new URL object is a new navigation, even to the same address */
-	let appliedUrl: URL | null = null;
+	// OLD CODE: let appliedUrl: URL | null = null; (kit 3: page.url is a read-only URL; NET-315)
+	let appliedUrl: typeof page.url | null = null;
 
 	// NET-160: ?ip= is read whenever the URL changes, so a link to another address from this page
 	// (an IP's menu) filters for it. Declared before onMount, so the first load already has it.
 	$effect(() => {
 		// OLD CODE START — compared only the address, so a link to the one already applied did nothing
 		// after the user had edited the box
-		// const urlIp = $page.url.searchParams.get('ip') ?? '';
+		// const urlIp = page.url.searchParams.get('ip') ?? '';
 		// OLD CODE END
-		const url = $page.url;
+		const url = page.url;
 		const urlIp = url.searchParams.get('ip') ?? '';
 		untrack(() => {
 			// OLD CODE START: if (urlIp === appliedIp) return; OLD CODE END
@@ -958,10 +959,10 @@
 
 	onMount(() => {
 		// OLD CODE START — NET-160: read once, so navigating to ?ip= for another address changed nothing
-		// const urlIp = $page.url.searchParams.get('ip');
+		// const urlIp = page.url.searchParams.get('ip');
 		// if (urlIp) ipFilter = urlIp;
 		// OLD CODE END
-		const urlProtocol = $page.url.searchParams.get('protocol');
+		const urlProtocol = page.url.searchParams.get('protocol');
 		// OLD CODE: if (urlProtocol) protocolFilter = urlProtocol; (NET-348: the choice is lowercase)
 		if (urlProtocol) protocolFilter = urlProtocol.toLowerCase();
 

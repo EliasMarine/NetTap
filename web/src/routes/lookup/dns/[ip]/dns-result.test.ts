@@ -4,10 +4,11 @@ import DnsResultPage from './+page.svelte';
 
 // NET-192 PR 3: the daemon gives the resolver 6 s, then answers 200 with timed_out and no name
 
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { readable } = await import('svelte/store');
 	return { page: readable({ url: new URL('http://localhost/lookup/dns/8.8.8.8'), params: { ip: '8.8.8.8' } }) };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 function answer(body: Record<string, unknown>): void {

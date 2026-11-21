@@ -5,9 +5,10 @@ import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: readable({ url: new URL('http://localhost/geoip/8.8.8.8'), params: { ip: '8.8.8.8' } }),
-}));
+})));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 describe('GeoIP Lookup Page', () => {

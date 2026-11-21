@@ -8,7 +8,7 @@
 	// import { onDestroy, onMount, tick } from 'svelte';
 	// OLD CODE END
 	import { onDestroy, tick, untrack } from 'svelte';
-	import { page as pageStore } from '$app/stores';
+	import { page as pageStore } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import {
 		getCertificateOverview,
 		type CertDevice,
@@ -95,7 +95,7 @@
 
 	// ?site=&server=&from=&to= from the address and domain pages, read whenever the URL changes
 	$effect(() => {
-		const params = $pageStore.url.searchParams;
+		const params = pageStore.url.searchParams;
 		const key = JSON.stringify(['site', 'server', 'from', 'to'].map((k) => params.get(k)));
 		untrack(() => {
 			if (key === appliedUrl) return;

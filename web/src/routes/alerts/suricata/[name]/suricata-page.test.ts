@@ -13,11 +13,12 @@ import { windowWords } from '$lib/utils/drilldown';
 // over the response's own window, and says when a list is not the whole set
 
 const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable: w } = await import('svelte/store');
 	pageStore.value = w({ url: new URL('http://localhost/alerts/suricata/Misc%20activity'), params: { name: 'Misc activity' } });
 	return { page: pageStore.value };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 const { default: Page } = await import('./+page.svelte');
@@ -98,7 +99,7 @@ describe('Suricata category page', () => {
 		// OLD CODE: …toEqual({ suricata_category: NAME, from: WIN.from, to: WIN.to, range: '6h' }) (section D: each link carries the figure it opens)
 		expect(query(kpi('Alerts').getAttribute('href'))).toEqual({ suricata_category: NAME, from: WIN.from, to: WIN.to, range: '6h', count: '1240' });
 		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
-		expect(goto).toHaveBeenCalledWith('/alerts/suricata/Misc%20activity?range=30d', { replaceState: true, keepFocus: true, noScroll: true });
+		expect(goto).toHaveBeenCalledWith('/alerts/suricata/Misc%20activity?range=30d', { replace: true, reset: false });
 	});
 
 	it("links the total and each severity to the list with this category over the response's own window", async () => {

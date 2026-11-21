@@ -14,16 +14,20 @@ import { nothingFound } from '$api/system';
 import type { HealthCheck } from '$lib/utils/read-health';
 import { fmt } from '$lib/utils/drilldown';
 
-export const POSTURE_SLUGS = [
-	'encryption',
-	'dns-security',
-	'network-segmentation',
-	'patch-currency',
-	'alert-response',
-	'monitoring-coverage',
-] as const;
-export type PostureSlug = (typeof POSTURE_SLUGS)[number];
-export const isPostureSlug = (value: string): value is PostureSlug => (POSTURE_SLUGS as readonly string[]).includes(value);
+// OLD CODE START — moved unchanged to ./slugs, which src/params.ts can load without aliases (NET-315)
+// export const POSTURE_SLUGS = [
+// 	'encryption',
+// 	'dns-security',
+// 	'network-segmentation',
+// 	'patch-currency',
+// 	'alert-response',
+// 	'monitoring-coverage',
+// ] as const;
+// export type PostureSlug = (typeof POSTURE_SLUGS)[number];
+// export const isPostureSlug = (value: string): value is PostureSlug => (POSTURE_SLUGS as readonly string[]).includes(value);
+// OLD CODE END
+import { POSTURE_SLUGS, isPostureSlug, type PostureSlug } from './slugs';
+export { POSTURE_SLUGS, isPostureSlug, type PostureSlug };
 
 // OLD CODE START — NET-308: investigation stats (all time) gave way to alert follow-up, plus isolation
 // /** The page's five requests; a category built on one that failed has no score. */

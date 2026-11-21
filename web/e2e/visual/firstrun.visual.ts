@@ -128,7 +128,9 @@ test('the wizard\'s four /api/setup calls work with the setup code typed and not
 	// SvelteKit sends a trailing slash to the canonical address (308) before the hook runs, so it is judged there
 	const redirect = await page.request.get('/api/setup/storage/', { maxRedirects: 0 });
 	expect(redirect.status()).toBe(308);
-	expect(new URL(redirect.headers()['location'], FIRSTRUN_URL).pathname).toBe('/api/setup/storage');
+	// OLD CODE: expect(new URL(redirect.headers()['location'], FIRSTRUN_URL).pathname).toBe('/api/setup/storage'); (kit 3 sends a relative Location, `../storage`; NET-315)
+	// A relative Location is resolved against the URL that was asked for, as a browser does
+	expect(new URL(redirect.headers()['location'], `${FIRSTRUN_URL}/api/setup/storage/`).pathname).toBe('/api/setup/storage');
 	expect((await page.request.get('/api/setup/storage/')).status()).toBe(200);
 });
 
