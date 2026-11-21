@@ -46,6 +46,8 @@ const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 	// A9: restoring a capture mode restarts the capture containers, and Suricata's restart can wait
 	// on the rules lock; the same allowance as setup configure (RULE_UPDATE_TIMEOUT_MS)
 	'/api/backup/import': 290_000,
+	// NET-344: the daemon builds and fits a backup of up to 16 MB off the loop
+	'/api/backup/export': 60_000,
 	// NET-264: the local service browser runs in the drill-down slots, inside the same 25 s budget
 	'/api/local-services': 30_000,
 	// The Threats page's beaconing pair runs in the drill-down slots, inside the same budget
@@ -171,10 +173,28 @@ async function proxyToDaemon({ url, request, params }: CatchAllEvent, method: st
 		return new Response(res.body, { status: res.status, headers });
 	}
 
+	// NET-344: a backup is saved byte for byte, so parsing and re-encoding it here could change its size
+	if (method === 'GET' && path === '/api/backup/export' && res.status === 200) {
+		const headers = new Headers();
+		for (const name of ['content-type', 'content-disposition', 'cache-control']) {
+			const value = res.headers.get(name);
+			if (value) headers.set(name, value);
+		}
+		return new Response(res.body, { status: 200, headers });
+	}
+
 	const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
 	// OLD CODE: return json(data, { status: res.status }); (NET-200: a picture's 404 no-store must reach the browser, or a stale miss is cached)
-	const cacheControl = res.headers.get('cache-control');
-	return json(data, { status: res.status, headers: cacheControl ? { 'Cache-Control': cacheControl } : undefined });
+	// OLD CODE START — NET-344: the export's busy 503 must keep its Retry-After
+	// const cacheControl = res.headers.get('cache-control');
+	// return json(data, { status: res.status, headers: cacheControl ? { 'Cache-Control': cacheControl } : undefined });
+	// OLD CODE END
+	const headers = new Headers();
+	for (const name of ['cache-control', 'retry-after']) {
+		const value = res.headers.get(name);
+		if (value) headers.set(name, value);
+	}
+	return json(data, { status: res.status, headers });
 }
 
 // OLD CODE START — NET-290 review: the handlers took the default RequestEvent, whose params are all optional

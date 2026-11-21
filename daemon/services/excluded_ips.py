@@ -16,12 +16,16 @@ import json
 import logging
 import os
 
+from services.capture_config import write_file_atomic
 from storage.all_buckets import all_buckets
 from storage.exact_terms import PartialResultsError
 
 logger = logging.getLogger("nettap.services.excluded_ips")
 
 DEFAULT_EXCLUDED_IPS_FILE = "/opt/nettap/data/excluded_ips.json"
+# NET-344: well under OpenSearch's 65,536 terms per clause, about 0.4 MB in a backup, and a list
+# Settings can still render; a home network excludes a handful
+EXCLUDED_IPS_MAX = 10_000
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
@@ -41,7 +45,13 @@ def load_excluded_ips(file_path: str | None = None) -> list[str]:
             with open(path, "r") as f:
                 data = json.load(f)
                 if isinstance(data, list):
-                    return [ip for ip in data if isinstance(ip, str) and ip.strip()]
+                    # OLD CODE: return [ip for ip in data if isinstance(ip, str) and ip.strip()]
+                    # (NET-344: an older restore wrote duplicates, and Settings keys its rows by IP)
+                    return list(
+                        dict.fromkeys(
+                            ip for ip in data if isinstance(ip, str) and ip.strip()
+                        )
+                    )
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to load excluded IPs from %s: %s", path, exc)
     return []
@@ -58,8 +68,11 @@ def save_excluded_ips(ips: list[str], file_path: str | None = None) -> None:
     """Persist the excluded IP list to disk."""
     path = file_path or _get_file_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(ips, f, indent=2)
+    # OLD CODE START — NET-344: a failed write left half a file, which loads as no exclusions
+    # with open(path, "w") as f:
+    #     json.dump(ips, f, indent=2)
+    # OLD CODE END
+    write_file_atomic(path, json.dumps(ips, indent=2))
     logger.info("Saved %d excluded IPs to %s", len(ips), path)
 
 

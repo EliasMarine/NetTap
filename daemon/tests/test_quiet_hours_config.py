@@ -277,6 +277,8 @@ def test_export_is_a_setting_this_version_accepts_with_the_zone(
 ):
     data = {"channels": {}, "rules": {}}
     config.write_text(json.dumps(data if saved is None else {**data, "quiet": saved}))
+    # NET-344: the export reads the running hub, which loads the file when it starts
+    backup._notification_hub._load_config()
 
     section = backup.export_config()["sections"]["notification_quiet"]
 

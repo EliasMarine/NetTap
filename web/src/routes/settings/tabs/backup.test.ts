@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-	exportConfig,
+	// OLD CODE: exportConfig, (NET-344: retired; downloadConfigFile is covered in $lib/api/backup.test.ts)
 	validateConfig,
 	importConfig,
 	readConfigFile,
@@ -27,23 +27,25 @@ describe('backup/restore page integration', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('exports configuration', async () => {
-		mockFetchSuccess({
-			metadata: {
-				nettap_version: '0.4.0',
-				schema_version: 1,
-				exported_at: '2026-03-08T00:00:00Z',
-			},
-			sections: {
-				excluded_ips: ['1.2.3.4'],
-				bandwidth_cap: { monthly_cap_gb: 1000 },
-			},
-		});
-
-		const result = await exportConfig();
-		expect(result.metadata.nettap_version).toBe('0.4.0');
-		expect(result.sections.excluded_ips).toEqual(['1.2.3.4']);
-	});
+	// OLD CODE START — NET-344: exportConfig is retired; downloadConfigFile is covered in $lib/api/backup.test.ts
+	// it('exports configuration', async () => {
+	// 	mockFetchSuccess({
+	// 		metadata: {
+	// 			nettap_version: '0.4.0',
+	// 			schema_version: 1,
+	// 			exported_at: '2026-03-08T00:00:00Z',
+	// 		},
+	// 		sections: {
+	// 			excluded_ips: ['1.2.3.4'],
+	// 			bandwidth_cap: { monthly_cap_gb: 1000 },
+	// 		},
+	// 	});
+	//
+	// 	const result = await exportConfig();
+	// 	expect(result.metadata.nettap_version).toBe('0.4.0');
+	// 	expect(result.sections.excluded_ips).toEqual(['1.2.3.4']);
+	// });
+	// OLD CODE END
 
 	it('validates import data', async () => {
 		mockFetchSuccess({
@@ -53,7 +55,7 @@ describe('backup/restore page integration', () => {
 			preview: { excluded_ips: { type: 'list', size: 1 } },
 		});
 
-		const result = await validateConfig({ metadata: {}, sections: {} });
+		const result = await validateConfig('{"metadata":{},"sections":{}}');
 		expect(result.is_valid).toBe(true);
 		expect(result.preview).toHaveProperty('excluded_ips');
 	});
@@ -66,7 +68,7 @@ describe('backup/restore page integration', () => {
 			warnings: [],
 		});
 
-		const result = await importConfig({ metadata: {}, sections: {} });
+		const result = await importConfig('{"metadata":{},"sections":{}}');
 		expect(result.success).toBe(true);
 		expect(result.applied).toContain('excluded_ips');
 	});
@@ -76,7 +78,8 @@ describe('backup/restore page integration', () => {
 		const file = new File([content], 'config.json', { type: 'application/json' });
 
 		const result = await readConfigFile(file);
-		expect(result).toEqual({ test: 'data' });
+		// OLD CODE: expect(result).toEqual({ test: 'data' }); (NET-344: the text is kept for the upload)
+		expect(result).toEqual({ text: content, data: { test: 'data' } });
 	});
 
 	it('rejects invalid JSON file', async () => {

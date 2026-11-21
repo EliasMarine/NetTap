@@ -12,38 +12,100 @@ Endpoints:
 A9: the capture mode and the retention settings go through the same paths as the
 setup wizard and Settings › Retention, and the running daemon reloads what it
 keeps in memory, so a restore takes effect at once and says what it skipped.
+
+NET-344: the export answers the exact bytes it fitted under the restore limit
+(services.config_backup.fit), or a 413 / 422 / 503 saying why there is no file;
+validate and import share one preflight, run once and off the loop.
 """
 
 import json
 import logging
+import zoneinfo
+from datetime import datetime
 
 from aiohttp import web
 
 from api.dhcp_gateway import ensure_capture_lock
+from api.error_replies import public_json
 from api.offload import run_blocking
 from api.setup import _apply_configuration, _build_capture_config
 
 # OLD CODE: from dataclasses import replace; from services.capture_config import
 # capture_config_exists, load_capture_config (setup keeps the rotation size now)
 from services.capture_manager import CaptureMode
-from services.config_backup import ConfigBackup, capture_section
+from services import owner_tz
+from services.config_backup import (
+    BackupRefused,
+    BackupTooLarge,
+    ConfigBackup,
+    capture_section,
+)
 from services.excluded_ips import load_excluded_ips, with_appliance_ip
 
 logger = logging.getLogger("nettap.api.backup")
 
+EXPORT_BUSY = "A backup is already being made. Try again in a moment."
+FILE_TOO_LARGE = "This file is over the 16 MB restore limit."
+# NET-344: one export builds at a time and none waits (a waiting one could outlive its client)
+_exporting = False
 
+
+# OLD CODE START — NET-344: the web app re-encoded this reply, so the saved file wasn't the bytes
+# measured, and nothing kept it under the restore limit
+# async def handle_export(request: web.Request) -> web.Response:
+#     """GET /api/backup/export — Download config JSON."""
+#     backup: ConfigBackup = request.app["config_backup"]
+#
+#     try:
+#         # OLD CODE: config = backup.export_config() (NET-200: photos are read and hashed now, off the loop)
+#         config = await run_blocking(backup.export_config)
+#     except Exception as exc:
+#         logger.error("Error exporting config: %s", exc)
+#         return web.json_response({"error": f"Config export failed: {exc}"}, status=500)
+#
+#     return web.json_response(config)
+# OLD CODE END
 async def handle_export(request: web.Request) -> web.Response:
-    """GET /api/backup/export — Download config JSON."""
-    backup: ConfigBackup = request.app["config_backup"]
-
+    """GET /api/backup/export — the backup file, as the bytes a restore takes back."""
+    global _exporting
+    if _exporting:  # checked and set with no await between, so two can't both pass
+        return public_json(
+            {"error": EXPORT_BUSY}, status=503, headers={"Retry-After": "30"}
+        )
+    _exporting = True
     try:
-        # OLD CODE: config = backup.export_config() (NET-200: photos are read and hashed now, off the loop)
-        config = await run_blocking(backup.export_config)
+        return await _export(request.app["config_backup"])
+    finally:
+        _exporting = False
+
+
+def _export_file(backup: ConfigBackup) -> tuple[bytearray, str]:
+    """(body, file name dated in the owner's zone), off the loop; the body carries the count
+    of acknowledgements left out in its metadata."""
+    body, _left_out = backup.export_file()
+    today = datetime.now(zoneinfo.ZoneInfo(owner_tz.read()["tz"])).date()
+    return body, f"nettap-config-{today.isoformat()}.json"
+
+
+async def _export(backup: ConfigBackup) -> web.Response:
+    try:
+        body, name = await run_blocking(_export_file, backup)
+    # the page shows "error"; the deploy gates read "code" (every section's size is in the log)
+    except BackupTooLarge as exc:
+        return public_json({"error": str(exc), "code": "backup_too_large"}, status=413)
+    except BackupRefused as exc:
+        return public_json({"error": str(exc), "code": exc.code}, status=422)
     except Exception as exc:
         logger.error("Error exporting config: %s", exc)
         return web.json_response({"error": f"Config export failed: {exc}"}, status=500)
-
-    return web.json_response(config)
+    return web.Response(
+        body=body,
+        content_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 async def handle_import(request: web.Request) -> web.Response:
@@ -53,13 +115,17 @@ async def handle_import(request: web.Request) -> web.Response:
     """
     try:
         data = await request.json()
+    # NET-344: a body at the restore limit was answered "Invalid JSON body"
+    except web.HTTPRequestEntityTooLarge:
+        return public_json({"error": FILE_TOO_LARGE}, status=413)
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     backup: ConfigBackup = request.app["config_backup"]
 
     try:
-        # Validate first: nothing is saved, reloaded or restarted for a file that fails
+        # Validate first: nothing is saved, reloaded or restarted for a file that fails.
+        # NET-344: every section's content is checked here, once; import_config reuses it
         validation = await run_blocking(backup.validate_import, data)
         if not validation["is_valid"]:
             return web.json_response(
@@ -73,7 +139,8 @@ async def handle_import(request: web.Request) -> web.Response:
                 status=400,
             )
         # OLD CODE: result = backup.import_config(data) (NET-200: photo writes and fsyncs, off the loop)
-        result = await run_blocking(backup.import_config, data)
+        # OLD CODE: result = await run_blocking(backup.import_config, data) (NET-344: one preflight)
+        result = await run_blocking(backup.import_config, data, validation)
         # OLD CODE: if result.get("skipped") is not None:  # validated: the live sections follow
         # (a failed validation's reply has "skipped": [] too, so an invalid file restored retention
         # and the capture mode before the 400)
@@ -234,13 +301,18 @@ async def handle_validate(request: web.Request) -> web.Response:
     """
     try:
         data = await request.json()
+    # NET-344: a body at the restore limit was answered "Invalid JSON body"
+    except web.HTTPRequestEntityTooLarge:
+        return public_json({"error": FILE_TOO_LARGE}, status=413)
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     backup: ConfigBackup = request.app["config_backup"]
 
     try:
-        validation = backup.validate_import(data)
+        # OLD CODE: validation = backup.validate_import(data)
+        # (NET-344: decodes up to 16 MiB of pictures, so off the loop like the import)
+        validation = await run_blocking(backup.validate_import, data)
     except Exception as exc:
         logger.error("Error validating config: %s", exc)
         return web.json_response(

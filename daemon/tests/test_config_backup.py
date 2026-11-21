@@ -503,6 +503,8 @@ class TestA9Export:
         Path(config_paths["notification_config"]).write_text(
             json.dumps({"channels": SECRET_CHANNELS, "rules": {}})
         )
+        # NET-344: the export reads the running hub, which loads the file when it starts
+        backup._notification_hub._load_config()
         exported = backup.export_config()
         text = json.dumps(exported)
         # the values; only the names of what was left out go in the file
