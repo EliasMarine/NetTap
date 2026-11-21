@@ -1,17 +1,20 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import type { Writable } from 'svelte/store';
-import { page } from '$app/stores';
+// OLD CODE: import { page } from '$app/stores'; (kit 3 removed it; the mock below keeps the store in pageHolder; NET-315)
 import Page from './+page.svelte';
 
 // NET-200 (PR #214 review): moving from device A to device B, a save made before B has loaded
 // must not go to A under B's address; it is refused with a reason, and B then loads as usual.
 
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+const pageHolder = vi.hoisted(() => ({ store: null as unknown as Writable<unknown> }));
+vi.mock('$app/state', async () => (await import('../../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable } = await import('svelte/store');
 	const mac = 'D0:21:F9:5E:35:32';
-	return { page: writable({ url: new URL(`http://localhost/devices/mac/${mac}`), params: { mac } }) };
-});
+	pageHolder.store = writable({ url: new URL(`http://localhost/devices/mac/${mac}`), params: { mac } });
+	return { page: pageHolder.store as Writable<{ url: URL; params: Record<string, string> }> };
+}));
 
 // NET-205: the live bandwidth card polls its own endpoint; here it stays loading, out of this test's fetch
 const { getLiveBandwidth } = vi.hoisted(() => ({
@@ -48,7 +51,8 @@ describe('Device by MAC page — saving while another device loads', () => {
 		render(Page);
 		await vi.waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Phone A'));
 
-		(page as unknown as Writable<unknown>).set({ url: new URL(`http://localhost/devices/mac/${B}`), params: { mac: B } });
+		// OLD CODE: (page as unknown as Writable<unknown>).set(…); (kit 3: the store now lives in pageHolder; NET-315)
+		pageHolder.store.set({ url: new URL(`http://localhost/devices/mac/${B}`), params: { mac: B } });
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/devices/registry/${encodeURIComponent(B)}`));
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Rename' }));

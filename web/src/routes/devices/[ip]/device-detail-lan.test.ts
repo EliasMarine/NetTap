@@ -14,7 +14,8 @@ import Page from './+page.svelte';
 
 const view = vi.hoisted(() => ({ ip: '' }));
 
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { readable } = await import('svelte/store');
 	return {
 		page: {
@@ -22,7 +23,7 @@ vi.mock('$app/stores', async () => {
 				readable({ url: new URL(`http://localhost/devices/${view.ip}`), params: { ip: view.ip } }).subscribe(run),
 		},
 	};
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 // the policy is set by each test; the rest of the store module is real
 vi.mock('$lib/stores/lan', async (importOriginal) => {
@@ -79,7 +80,7 @@ describe('Device detail — an address off the LAN', () => {
 	it('replaces the URL with the address page when the policy loads and says it is not on the LAN', async () => {
 		await open('91.92.40.12');
 		policy.set(LAN_POLICY);
-		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith('/address/91.92.40.12', { replaceState: true }));
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith('/address/91.92.40.12', { replace: true }));
 	});
 
 	it('stays on the device page for a LAN address', async () => {

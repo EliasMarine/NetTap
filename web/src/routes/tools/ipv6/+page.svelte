@@ -4,7 +4,7 @@
 	 * The maths is $lib/utils/ipv6.ts. The maker of a candidate MAC comes from the daemon's
 	 * MAC lookup, debounced and guarded so a late reply never overwrites a newer one.
 	 */
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { replaceState } from '$app/navigation';
 	import { macLookup } from '$api/tools';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -45,7 +45,7 @@
 		anycast: { how: 'All zeros', why: 'The subnet-router anycast address: it reaches any router on this network.' },
 	};
 
-	let address = $state($page.url.searchParams.get('address') ?? '');
+	let address = $state(page.url.searchParams.get('address') ?? '');
 	let result = $derived(inspect(address));
 	let shown = $derived(result.ok ? result.compressed + (result.zone ? `%${result.zone}` : '') + (result.typedPrefix !== null ? `/${result.typedPrefix}` : '') : '');
 

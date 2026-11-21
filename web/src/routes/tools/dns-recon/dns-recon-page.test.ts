@@ -9,7 +9,8 @@ import Page from './+page.svelte';
 // }));
 // OLD CODE END
 const nav = vi.hoisted(() => ({ url: new URL('http://localhost/tools/dns-recon'), subs: new Set<(v: { url: URL; state?: object }) => void>() }));
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: {
 		subscribe: (fn: (v: { url: URL }) => void) => {
 			nav.subs.add(fn);
@@ -17,7 +18,7 @@ vi.mock('$app/stores', () => ({
 			return () => nav.subs.delete(fn);
 		},
 	},
-}));
+})));
 const emit = (v: { url: URL; state?: object }) => nav.subs.forEach((fn) => fn(v));
 
 const RESULT = {

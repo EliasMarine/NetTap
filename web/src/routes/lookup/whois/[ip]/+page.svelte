@@ -7,7 +7,7 @@
 	 */
 
 	import { onDestroy } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { goto } from '$app/navigation';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -15,7 +15,7 @@
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { ipHref, isLan } from '$lib/stores/lan';
 
-	let ip = $derived($page.params.ip);
+	let ip = $derived(page.params.ip);
 	let result = $state<{ ip: string; raw: string; parsed: Record<string, string>; error: string | null } | null>(null);
 	let loading = $state(true);
 	let error = $state('');

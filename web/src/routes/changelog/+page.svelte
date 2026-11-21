@@ -17,7 +17,7 @@
 
 	// OLD CODE: import { onDestroy, onMount } from 'svelte'; (NET-272: focus moves after the panel renders)
 	import { onDestroy, onMount, tick } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	// OLD CODE: import { getChangelogEvents, getEventTypes, type ChangelogEvent } from '$lib/api/changelog'; (NET-272: rows replace the raw events)
 	import { getChangelogEvents, getEventTypes } from '$lib/api/changelog';
@@ -96,7 +96,7 @@
 	// });
 	// OLD CODE END
 	onMount(() => {
-		const q = $page.url.searchParams;
+		const q = page.url.searchParams;
 		range = rangeOf(q.get('range'))?.value ?? range;
 		selectedType = q.get('type') ?? '';
 		pick = readPick(q.get('pickFrom'), q.get('pickTo'));
@@ -225,7 +225,7 @@
 			q.set('pickFrom', pick.from);
 			q.set('pickTo', pick.to);
 		}
-		return goto(`${$page.url.pathname}?${q.toString()}`, { replaceState: true, keepFocus: true, noScroll: true });
+		return goto(`${page.url.pathname}?${q.toString()}`, { replace: true, reset: false });
 	}
 
 	function handleFilter() {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
 import type { Writable } from 'svelte/store';
-import { page } from '$app/stores';
+// OLD CODE: import { page } from '$app/stores'; (kit 3 removed it; the mock below keeps the store in pageHolder; NET-315)
 import { goto } from '$app/navigation';
 import { SIGN_IN_FIRST } from '$lib/auth-errors';
 import * as captureApi from '$api/capture';
@@ -12,10 +12,20 @@ import { _configure, alertSnapshots } from '$lib/stores/alertSnapshot';
 import Layout from './+layout.svelte';
 import { captureMode as modeStore, initCaptureMode } from '$lib/stores/captureMode';
 
-vi.mock('$app/stores', async () => {
-	const { writable } = await import('svelte/store');
-	return { page: writable({ url: new URL('http://localhost/system') }) };
-});
+// OLD CODE START — kit 3: $app/stores → $app/state (NET-315)
+// vi.mock('$app/stores', async () => {
+// 	const { writable } = await import('svelte/store');
+// 	return { page: writable({ url: new URL('http://localhost/system') }) };
+// });
+// OLD CODE END
+const pageHolder = vi.hoisted(() => ({ store: null as unknown as Writable<{ url: URL }> }));
+vi.mock('$app/state', async () =>
+	(await import('../tests/app-navigation.svelte')).stateFromStores(async () => {
+		const { writable } = await import('svelte/store');
+		pageHolder.store = writable({ url: new URL('http://localhost/system') });
+		return { page: pageHolder.store };
+	}),
+);
 vi.mock('$app/navigation', () => ({ goto: vi.fn(), afterNavigate: vi.fn() }));
 vi.mock('$api/capture', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$api/capture')>()),
@@ -35,7 +45,9 @@ vi.mock('$lib/stores/captureMode', async () => {
 const children = createRawSnippet(() => ({ render: () => '<p>page body</p>' }));
 const never = <T,>() => new Promise<T>(() => {});
 const counts = (total: number) => ({ from: '', to: '', counts: { total, high: total, medium: 0, low: 0 } });
-const pageStore = page as unknown as Writable<{ url: URL }>;
+// OLD CODE: const pageStore = page as unknown as Writable<{ url: URL }>; (NET-315)
+// The Layout import above has already run the $app/state mock, so the store exists
+const pageStore = pageHolder.store;
 
 function health(status: string, iface = 'enp1s0'): captureApi.CaptureHealthResponse {
 	return { mode: 'bridge', status, capture_interface: iface, link_up: true, promisc_enabled: true, issues: [] };

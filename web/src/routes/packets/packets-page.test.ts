@@ -12,11 +12,12 @@ import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 // from a question, and shows the capture files and what a search would read.
 
 const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable: w } = await import('svelte/store');
 	pageStore.value = w({ url: new URL('http://localhost/packets') });
 	return { page: pageStore.value };
-});
+}));
 const goto = vi.hoisted(() => vi.fn());
 // OLD CODE: vi.mock('$app/navigation', () => ({ goto })); (NET-276: the page loads from afterNavigate)
 // SvelteKit runs afterNavigate once the page mounts; a test render is a full load. This stand-in never

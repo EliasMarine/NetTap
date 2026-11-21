@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import type { writable } from 'svelte/store';
-import type { NavigationType } from '@sveltejs/kit';
+// OLD CODE: import type { NavigationType } from '@sveltejs/kit'; (kit 3 moved the navigation types to $app/navigation; NET-315)
+import type { NavigationType } from '$app/navigation';
 import Page from './+page.svelte';
 import * as api from '$lib/api/packets';
 import type { PacketSearchResult } from '$lib/api/packets';
@@ -18,11 +19,12 @@ import { clockTime } from './packets-view';
 // partial, failed or changed read is never shown as complete.
 
 const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable: w } = await import('svelte/store');
 	pageStore.value = w({ url: new URL('http://localhost/packets') });
 	return { page: pageStore.value };
-});
+}));
 // OLD CODE: vi.mock('$app/navigation', () => ({ goto: vi.fn() })); (NET-276: the page loads from afterNavigate)
 // A stand-in for SvelteKit's router: afterNavigate callbacks register on mount and run once for the arrival
 // (`router.arrival`), then after each navigate(), which moves the page first, as the router does

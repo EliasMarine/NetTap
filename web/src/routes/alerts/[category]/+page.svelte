@@ -12,7 +12,7 @@
 	 *   7. Paginated, server-sorted alert table (pre-filtered to category) with the drawer column
 	 */
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	// OLD CODE START: import { ipHref, isLan } from '$lib/stores/lan'; — only the removed "Open device" link used them OLD CODE END
 	import { onDestroy, untrack } from 'svelte';
@@ -120,10 +120,10 @@
 	// State
 	// ---------------------------------------------------------------------------
 
-	let category = $derived(($page.params as Record<string, string>).category ?? '');
+	let category = $derived((page.params as Record<string, string>).category ?? '');
 	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	// OLD CODE: let selectedRange = $state<string>(startRange('24h')); (NET-185: the window comes from the URL, as on the Suricata category page)
-	const params = $derived($page.url.searchParams);
+	const params = $derived(page.url.searchParams);
 	/** The exact window a link brought (?from=&to=), shown as "Custom". */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The URL's standard range (without one, the saved default, else 24h): a Custom window's links carry it for their words. */
@@ -514,7 +514,7 @@
 
 	/** A range pill: a rolling window ending now, so the link's exact window (Custom) goes (NET-185). */
 	function pickRange(value: string) {
-		if (value !== 'custom') void goto(`${$page.url.pathname}?range=${value}`, { replaceState: true, keepFocus: true, noScroll: true });
+		if (value !== 'custom') void goto(`${page.url.pathname}?range=${value}`, { replace: true, reset: false });
 	}
 
 	/**
@@ -526,7 +526,7 @@
 		const win = pickWindow(chart, i, j);
 		subCatFilter = null;
 		if (custom && custom.from === win.from && custom.to === win.to) void fetchAlerts(1);
-		void narrowTo($page.url, custom, win, baseRange.value, 'count', pickedTotal(chart, i, j));
+		void narrowTo(page.url, custom, win, baseRange.value, 'count', pickedTotal(chart, i, j));
 	}
 
 	// Auto-refresh

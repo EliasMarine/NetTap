@@ -8,10 +8,11 @@ import type { MacLookupResult } from '$api/tools';
 const { pageUrl } = vi.hoisted(() => ({ pageUrl: { current: new URL('http://localhost/tools/ipv6') } }));
 
 vi.mock('$app/navigation', () => ({ replaceState: vi.fn() }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { readable } = await import('svelte/store');
 	return { page: readable({ get url() { return pageUrl.current; } }) };
-});
+}));
 vi.mock('$api/tools', () => ({ macLookup: vi.fn() }));
 
 const { replaceState } = await import('$app/navigation');

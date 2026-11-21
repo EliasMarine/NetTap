@@ -70,7 +70,8 @@ const nav = vi.hoisted(() => {
 		},
 	};
 });
-vi.mock('$app/stores', () => ({ page: { subscribe: nav.subscribe } }));
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(() => ({ page: { subscribe: nav.subscribe } })));
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn(async (href: string) => {
 		nav.url = new URL(href, nav.url);
@@ -990,7 +991,7 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		expect([q.get('severity'), q.get('signature'), q.get('ip'), q.get('from'), q.get('to'), q.get('range')]).toEqual([
 			'high', 'ET SCAN Nmap', '192.168.1.42', FROM, TO, '7d',
 		]);
-		expect(vi.mocked(goto).mock.calls.at(-1)![1]).toEqual({ replaceState: true, keepFocus: true, noScroll: true });
+		expect(vi.mocked(goto).mock.calls.at(-1)![1]).toEqual({ replace: true, reset: false });
 		expect(listCalls().at(-1)).toMatchObject({ severity: 1, signature: 'ET SCAN Nmap', ip: '192.168.1.42', from: FROM, to: TO });
 	});
 

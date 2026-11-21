@@ -70,7 +70,8 @@ export const SETTINGS_TABS: readonly (SettingsTab & { group: string })[] = SETTI
 const DEFAULT_TAB: TabId = 'notifications';
 
 /** The tab a URL asks for (`?tab=`); a missing or unknown one opens Notifications. */
-export function tabFrom(url: URL): TabId {
+// OLD CODE: export function tabFrom(url: URL): TabId { (kit 3: page.url is a read-only URL; NET-315)
+export function tabFrom(url: { searchParams: Pick<URLSearchParams, 'get'> }): TabId {
 	const wanted = url.searchParams.get('tab');
 	return SETTINGS_TABS.find((t) => t.id === wanted)?.id ?? DEFAULT_TAB;
 }

@@ -11,8 +11,10 @@
  * `afterNavigate` callbacks run after a navigation that went ahead.
  */
 import { onDestroy } from 'svelte';
+import { fromStore, type Readable } from 'svelte/store';
 import { vi } from 'vitest';
-import type { BeforeNavigate, NavigationType } from '@sveltejs/kit';
+// OLD CODE: import type { BeforeNavigate, NavigationType } from '@sveltejs/kit'; (kit 3 moved the navigation types to $app/navigation; NET-315)
+import type { BeforeNavigate, NavigationType } from '$app/navigation';
 
 type Callback = (navigation: BeforeNavigate) => void;
 
@@ -101,3 +103,30 @@ export const afterNavigate = vi.fn((callback: () => void) => {
 	afterCallbacks.add(callback);
 	onDestroy(() => afterCallbacks.delete(callback));
 });
+
+/** What the store-backed `$app/state` page below exposes: all the pages read. */
+type PageLike = { url: URL; params?: Record<string, string> };
+// Test stores are typed loosely (unknown values, hand-written subscribe); the pages read only url and params
+type StoresModule = { page: Readable<unknown> };
+
+/**
+ * kit 3 (NET-315) removed `$app/stores`. Page tests written against a `$app/stores` mock keep that
+ * mock's store, and its driver code, and hand it here for the `$app/state` mock:
+ *
+ *   vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(() => ({ page: readable(…) })));
+ *
+ * `page.url` and `page.params` follow the store, reactively.
+ */
+export async function stateFromStores(factory: () => StoresModule | Promise<StoresModule>): Promise<{ page: Required<PageLike> }> {
+	const store = fromStore((await factory()).page as Readable<PageLike>);
+	return {
+		page: {
+			get url() {
+				return store.current.url;
+			},
+			get params() {
+				return store.current.params ?? {};
+			},
+		},
+	};
+}

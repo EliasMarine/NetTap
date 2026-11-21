@@ -4,7 +4,7 @@
 	 *   - Lookup: a form card (domain and record types), then one card per record type with a DataTable
 	 *   - Compare resolvers (NET-262): one question to several resolvers (CompareResolvers.svelte)
 	 */
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { dnsRecon } from '$api/tools';
 	import type { DnsReconResult, DnsReconRecord } from '$api/tools';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -54,15 +54,16 @@
 	];
 
 	// NET-160: the domain page's "Look it up now" fills the domain in; the lookup waits for the user
-	// OLD CODE START — reran on every $page emission, so it could overwrite what the user had typed
+	// OLD CODE START — reran on every page emission, so it could overwrite what the user had typed
 	// $effect(() => {
-	// 	const d = $page.url.searchParams.get('domain');
+	// 	const d = page.url.searchParams.get('domain');
 	// 	if (d) domain = d;
 	// });
 	// OLD CODE END
-	let appliedUrl: URL | null = null;
+	// OLD CODE: let appliedUrl: URL | null = null; (kit 3: page.url is a read-only URL; NET-315)
+	let appliedUrl: typeof page.url | null = null;
 	$effect(() => {
-		const url = $page.url;
+		const url = page.url;
 		if (url === appliedUrl) return; // the same navigation emitted again
 		appliedUrl = url;
 		const d = url.searchParams.get('domain');

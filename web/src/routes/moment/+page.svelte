@@ -7,7 +7,7 @@
 	 * (down, up, local), the page says where its own totals differ (NET-183).
 	 */
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { goto } from '$app/navigation';
 	import Card from '$components/ui/Card.svelte';
 	import CardState from '$components/ui/CardState.svelte';
@@ -42,7 +42,7 @@
 		"The total matches the chart. Some IPv6 traffic is split between downloaded and uploaded differently over this shorter window, because NetTap saw your router's traffic elsewhere on the chart.";
 	const CHECK_DAEMON = 'Check that the daemon is running on the System page, then try again.';
 
-	const params = $derived($page.url.searchParams);
+	const params = $derived(page.url.searchParams);
 	const win = $derived(customRange(params.get('from'), params.get('to')));
 	const windowKey = $derived(win ? `${win.from}|${win.to}` : '');
 	const fromMs = $derived(win ? Date.parse(win.from) : 0);

@@ -5,7 +5,7 @@
 	 * from $lib/utils/dns-anomaly and say only what was read.
 	 */
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	import { getFailedLookups, type FailedLookups } from '$lib/api/threats';
 	import { getRegistryDevices } from '$lib/api/devices-registry';
@@ -25,8 +25,8 @@
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 
-	const ip = $derived(($page.params as Record<string, string>).ip ?? '');
-	const range = $derived<DrillRange>(DRILL_RANGES.find((r) => r.value === $page.url.searchParams.get('range')) ?? DRILL_RANGES.find((r) => r.value === startRange('24h'))!);
+	const ip = $derived((page.params as Record<string, string>).ip ?? '');
+	const range = $derived<DrillRange>(DRILL_RANGES.find((r) => r.value === page.url.searchParams.get('range')) ?? DRILL_RANGES.find((r) => r.value === startRange('24h'))!);
 	const view = $derived(`${ip}|${range.value}`);
 
 	let loaded = $state<{ data: FailedLookups; range: DrillRange } | null>(null);
@@ -73,7 +73,7 @@
 	}
 
 	function pickRange(value: string) {
-		void goto(`${$page.url.pathname}?range=${value}`, { replaceState: true, keepFocus: true, noScroll: true });
+		void goto(`${page.url.pathname}?range=${value}`, { replace: true, reset: false });
 	}
 
 	// --- Figures ---

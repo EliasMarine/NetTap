@@ -6,7 +6,7 @@
 	 * they mean on DNS analytics (the same exclusions). A list too long to count withholds its KPI.
 	 */
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	import { getDomainSummary, type DomainAnswer, type DomainAsker, type DomainSummary } from '$lib/api/drilldown';
 	import { getRegistryDevices } from '$lib/api/devices-registry';
@@ -43,18 +43,18 @@
 
 	/** The name as the daemon matches it: one trailing dot dropped, lower case. */
 	// OLD CODE START — SvelteKit has already decoded the param; decoding again threw on a stray "%"
-	// const name = $derived(decodeURIComponent(($page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase());
+	// const name = $derived(decodeURIComponent((page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase());
 	// OLD CODE END
-	// OLD CODE START: const name = $derived((($page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase()); OLD CODE END
-	const name = $derived(canonicalName(($page.params as Record<string, string>).name ?? ''));
+	// OLD CODE START: const name = $derived(((page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase()); OLD CODE END
+	const name = $derived(canonicalName((page.params as Record<string, string>).name ?? ''));
 
 	// OLD CODE: let rangeValue = $state<DrillRangeValue>('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	// OLD CODE: let rangeValue = $state<DrillRangeValue>(startRange('24h')); (a Threats link's ?range= is where it starts)
-	let rangeValue = $state<DrillRangeValue>(DRILL_RANGES.find((r) => r.value === $page.url.searchParams.get('range'))?.value ?? startRange('24h'));
+	let rangeValue = $state<DrillRangeValue>(DRILL_RANGES.find((r) => r.value === page.url.searchParams.get('range'))?.value ?? startRange('24h'));
 	// OLD CODE: ?? DRILL_RANGES[0]); (NET-192 PR 4: 1h and 6h added, 24h is index 2)
 	// OLD CODE: ?? DRILL_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES.find((r) => r.value === '24h')!);
-	const params = $derived($page.url.searchParams);
+	const params = $derived(page.url.searchParams);
 	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every figure follows it */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The lookups the pick carried, compared with the narrowed chart's own total */
@@ -107,7 +107,7 @@
 	function pickRange(value: string) {
 		if (value === 'custom') return;
 		rangeValue = value as DrillRangeValue;
-		if (custom) void goto(withoutWindow($page.url), { keepFocus: true, noScroll: true });
+		if (custom) void goto(withoutWindow(page.url), { reset: false });
 	}
 
 	async function load(guard: LoadGuard): Promise<LoadResult> {
@@ -171,7 +171,7 @@
 	const countLine = $derived(pickedLine(picked, failure ? null : chart, { lead: 'This window now shows', one: 'lookup', many: 'lookups' }));
 	/** A pick on the chart (NET-249): this page over the picked slots, with the lookups they counted */
 	function pick(i: number, j: number) {
-		if (chart) void narrowTo($page.url, custom, pickWindow(chart, i, j), rangeValue, 'count', pickedTotal(chart, i, j));
+		if (chart) void narrowTo(page.url, custom, pickWindow(chart, i, j), rangeValue, 'count', pickedTotal(chart, i, j));
 	}
 	const chartLabel = $derived(
 		busiest >= 0 ? `Busiest at ${chartTime(timeline[busiest].t)}, with ${fmt(timeline[busiest].n)} lookups` : 'No lookups in this window',

@@ -1,5 +1,6 @@
 {
-	"extends": "./.svelte-kit/tsconfig.json",
+	// OLD CODE: "extends": "./.svelte-kit/tsconfig.json", (kit 3 writes its base config to node_modules/$app/tsconfig.json instead; NET-315)
+	"extends": "$app/tsconfig",
 	"compilerOptions": {
 		"rewriteRelativeImportExtensions": true,
 		"allowJs": true,
@@ -11,10 +12,10 @@
 		"sourceMap": true,
 		"strict": true,
 		"moduleResolution": "bundler"
-	}
-	// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
-	// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
-	//
-	// To make changes to top-level options such as include and exclude, we recommend extending
-	// the generated config; see https://svelte.dev/docs/kit/configuration#typescript
+	},
+	// The same files the kit 2 generated config covered (src and the Vite config); e2e/ has its own tsconfig
+	"include": ["src", "vite.config.ts"],
+	"exclude": ["src/service-worker"]
+	// Path aliases are handled by the `alias` option of sveltekit() in vite.config.ts
+	// (kit 3 dropped svelte.config.js and $lib; see https://svelte.dev/docs/kit/$lib)
 }

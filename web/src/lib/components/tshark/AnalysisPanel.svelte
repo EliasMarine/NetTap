@@ -28,7 +28,7 @@
 		type TSharkStatus,
 		type PcapFile,
 	} from '$api/tshark';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { formatTime } from '$lib/utils/time';
 
 	// ---- State ----
@@ -62,10 +62,10 @@
 	let autoAnalyzeDone = false;
 
 	$effect(() => {
-		const urlFilter = $page.url.searchParams.get('filter');
-		const urlPcap = $page.url.searchParams.get('pcap');
-		const autoRun = $page.url.searchParams.get('auto') === '1';
-		const connTs = $page.url.searchParams.get('ts');
+		const urlFilter = page.url.searchParams.get('filter');
+		const urlPcap = page.url.searchParams.get('pcap');
+		const autoRun = page.url.searchParams.get('auto') === '1';
+		const connTs = page.url.searchParams.get('ts');
 
 		if (urlFilter && !displayFilter) displayFilter = urlFilter;
 		if (urlPcap && !pcapPath) pcapPath = urlPcap;
