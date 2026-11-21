@@ -101,11 +101,23 @@
 		if (problem.kind === 'refused') return "TShark couldn't run this search";
 		return "Couldn't search the saved captures";
 	});
+	// OLD CODE START — NET-349: a refusal for size sent you to the filter, which keeps the same window
+	// const problemHint = $derived(
+	// 	problem?.kind === 'memory'
+	// 		? ' Try a shorter stretch of time or a narrower filter.'
+	// 		: problem?.kind === 'refused'
+	// 			? ' Edit the filter above and search again.'
+	// 			: '',
+	// );
+	// OLD CODE END
 	const problemHint = $derived(
 		problem?.kind === 'memory'
 			? ' Try a shorter stretch of time or a narrower filter.'
 			: problem?.kind === 'refused'
-				? ' Edit the filter above and search again.'
+				? // packet_search._check_budget: "…NetTap reads at most 64 files or 3 GB at once; pick a shorter window."
+					/pick a shorter window/i.test(problem.message)
+					? ' Choose New search above to pick a shorter stretch of time.'
+					: ' Edit the filter above and search again.'
 				: '',
 	);
 

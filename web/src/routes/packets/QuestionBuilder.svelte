@@ -20,7 +20,9 @@
 	import { KINDS, LIBRARY } from '$lib/utils/packet-library';
 	import { formatBytes } from '$lib/api/logs';
 	import { MAX_WINDOW_SECONDS, windowFor, type PacketQuestion, type PacketUrlState, type WhenPreset } from '$lib/utils/packet-query';
-	import { clockTime, LIMIT_OPTIONS, planFiles, plural, ROUTER_FILTER } from './packets-view';
+	// OLD CODE: import { clockTime, LIMIT_OPTIONS, planFiles, plural, ROUTER_FILTER } from './packets-view'; (NET-349: the limit check moved to plan-check)
+	import { clockTime, LIMIT_OPTIONS, plural, ROUTER_FILTER } from './packets-view';
+	import { planCheck } from './plan-check';
 
 	interface Props {
 		question: PacketQuestion;
@@ -31,17 +33,24 @@
 		written: { filter: string; problem: string };
 		devices: readonly DeviceOption[];
 		captures: CapturesResponse | null;
+		/** NET-349: epoch ms when `captures` arrived, the "now" of a "last N minutes" window */
+		capturesAt: number | null;
+		/** NET-349: loads the capture list again; Find packets calls it when the list is over a minute old */
+		reloadCaptures: () => Promise<unknown>;
 		onsearch: (state: PacketUrlState) => void;
 		onwriteown: () => void;
 	}
 
-	let { question = $bindable(), override = $bindable(), router = $bindable(), written, devices, captures, onsearch, onwriteown }: Props = $props();
+	// OLD CODE: let { question = $bindable(), override = $bindable(), router = $bindable(), written, devices, captures, onsearch, onwriteown }: Props = $props(); (NET-349: + capturesAt, reloadCaptures)
+	let { question = $bindable(), override = $bindable(), router = $bindable(), written, devices, captures, capturesAt, reloadCaptures, onsearch, onwriteown }: Props = $props();
 
 	const uid = $props.id();
 	let rangeFrom = $state('');
 	let rangeTo = $state('');
 	let portText = $state(untrack(() => (question.port === null ? '' : String(question.port))));
 	let error = $state('');
+	/** NET-349: the last Find packets was refused for size; shown only while the search is still over */
+	let refusedForSize = $state(false);
 
 	// A common question or a library filter sets the port from outside: show it
 	$effect(() => {
@@ -65,6 +74,7 @@
 		question = { ...question, ...next };
 		override = null;
 		error = '';
+		refusedForSize = false;
 	}
 
 	function toggleKind(id: string) {
@@ -113,21 +123,73 @@
 		return '';
 	});
 
-	// The window as it stands now; a "last 15 minutes" search takes its own "now" when it runs
-	const preview = $derived(windowProblem ? null : windowFor(question.when, Date.now()));
-	const plan = $derived(preview && captures ? planFiles(captures.files, preview.from, preview.to) : null);
-	const overLimit = $derived(
-		plan && captures ? plan.read.length > captures.limits.max_files || plan.bytes > captures.limits.max_bytes : false,
+	// OLD CODE START — NET-349: the preview took "now" from the clock but the files from an older capture list, and the search took a later "now" again
+	// // The window as it stands now; a "last 15 minutes" search takes its own "now" when it runs
+	// const preview = $derived(windowProblem ? null : windowFor(question.when, Date.now()));
+	// const plan = $derived(preview && captures ? planFiles(captures.files, preview.from, preview.to) : null);
+	// const overLimit = $derived(
+	// 	plan && captures ? plan.read.length > captures.limits.max_files || plan.bytes > captures.limits.max_bytes : false,
+	// );
+	// OLD CODE END
+	// A "last N minutes" window ends when the capture list arrived, so the files shown, the limit
+	// check and the search all describe that one moment; with no list yet, it ends now
+	const preview = $derived(windowProblem ? null : windowFor(question.when, capturesAt ?? Date.now()));
+	const checked = $derived(preview && captures ? planCheck(captures, preview.from, preview.to) : null);
+	const plan = $derived(checked?.plan ?? null);
+	const overLimit = $derived(checked?.overLimit ?? false);
+	const limitWarning = $derived(
+		captures
+			? `That's more than one search reads (${captures.limits.max_files} files or ${formatBytes(captures.limits.max_bytes)}). Pick a shorter stretch of time. This estimate is from when the page last loaded its list of capture files.`
+			: '',
 	);
+	// OLD CODE START — NET-349 review: a list up to a minute old ended the window before what you just did
+	// const STALE_MS = 60_000;
+	// const stale = () => capturesAt === null || Date.now() - capturesAt > STALE_MS;
+	// OLD CODE END
 
-	/** Run the search with the choices as they stand; "Write your own filter" calls it too. */
-	export function search() {
-		if (problem || windowProblem) {
-			error = problem || windowProblem;
-			return;
+	/** The over-limit warning while the search is over the limit, for the editor card's own button. */
+	export const blockedBy = (): string => (overLimit ? limitWarning : '');
+
+	/** Says why the question can't run as it stands (and returns true), or clears the last reason. */
+	function refuse(): boolean {
+		error = problem || windowProblem;
+		refusedForSize = !error && overLimit;
+		return error !== '' || refusedForSize;
+	}
+
+	// OLD CODE START — NET-349: ran a search over the limit, and took a later "now" than the preview showed
+	// /** Run the search with the choices as they stand; "Write your own filter" calls it too. */
+	// export function search() {
+	// 	if (problem || windowProblem) {
+	// 		error = problem || windowProblem;
+	// 		return;
+	// 	}
+	// 	const { from, to } = windowFor(question.when, Date.now());
+	// 	onsearch({ filter, from, to, limit: question.limit, device: question.device, conn: null });
+	// }
+	// OLD CODE END
+	/**
+	 * Run the search with the choices as they stand, over exactly the window shown; "Write your own
+	 * filter" calls it too. A "last N minutes" window loads the list first, so it ends at the press.
+	 */
+	/** A reload is in flight: a second press waits for it instead of reading the list mid-reload */
+	let reloading: Promise<unknown> | null = null;
+
+	export async function search() {
+		if (refuse()) return;
+		if (question.when.kind === 'last') {
+			const before = capturesAt;
+			reloading ??= reloadCaptures().finally(() => (reloading = null));
+			await reloading;
+			// a list that didn't arrive leaves the old time, and the window would end there
+			if (capturesAt === null || capturesAt === before) {
+				error = "NetTap couldn't load its list of capture files again, so nothing was searched. Try again in a moment.";
+				return;
+			}
+			if (refuse()) return;
 		}
-		const { from, to } = windowFor(question.when, Date.now());
-		onsearch({ filter, from, to, limit: question.limit, device: question.device, conn: null });
+		if (!preview) return;
+		onsearch({ filter, from: preview.from, to: preview.to, limit: question.limit, device: question.device, conn: null });
 	}
 </script>
 
@@ -270,16 +332,24 @@
 			{#if plan?.failed.length}
 				<p class="notice is-warn"><Icon name="warn" />{plural(plan.failed.length, 'capture file')} can't be read, so any search is incomplete: it may hold packets from this window.</p>
 			{/if}
+			<!-- OLD CODE START — NET-349: the warning didn't say how old its estimate was, and nothing pointed at it
 			{#if overLimit && captures}
 				<p class="notice is-warn"><Icon name="warn" />That's more than one search reads ({captures.limits.max_files} files or {formatBytes(captures.limits.max_bytes)}). Pick a shorter stretch of time.</p>
 			{/if}
+			OLD CODE END -->
+			{#if overLimit}
+				<p class="notice is-warn" id="{uid}-limit"><Icon name="warn" />{limitWarning}</p>
+			{/if}
 		{/if}
-		{#if error && !(problem || windowProblem)}<p class="field-error" role="alert">{error}</p>{/if}
+		<!-- OLD CODE: {#if error && !(problem || windowProblem)}<p class="field-error" role="alert">{error}</p>{/if} (NET-349: + a refusal for size, until a choice or a new capture list fits) -->
+		{#if error && !(problem || windowProblem)}<p class="field-error" role="alert">{error}</p>
+		{:else if refusedForSize && overLimit}<p class="field-error" role="alert">{limitWarning}</p>{/if}
 	</div>
 
 	<div class="form-actions">
 		<button class="btn" type="button" onclick={onwriteown}>Write my own filter</button>
-		<button class="btn primary" type="button" onclick={search}><Icon name="search" />Find packets</button>
+		<!-- OLD CODE: <button class="btn primary" type="button" onclick={search}><Icon name="search" />Find packets</button> (NET-349: offered a search the daemon refuses) -->
+		<button class="btn primary" type="button" disabled={overLimit} aria-describedby={overLimit ? `${uid}-limit` : undefined} onclick={search}><Icon name="search" />Find packets</button>
 	</div>
 </Card>
 

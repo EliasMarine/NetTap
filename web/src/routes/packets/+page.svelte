@@ -40,6 +40,8 @@
 
 	// ---- What the page loads ----
 	let captures = $state<CapturesResponse | null>(null);
+	/** NET-349: when `captures` arrived (epoch ms); the question builder's "last N minutes" ends then */
+	let capturesAt = $state<number | null>(null);
 	let capturesError = $state<string | null>(null);
 	let capture = $state<CaptureStatus | null>(null);
 	let captureFailed = $state(false);
@@ -66,14 +68,18 @@
 		other: { kind: 'anyone' },
 		port: null,
 		kinds: ['all'],
-		when: { kind: 'last', seconds: 900 },
+		// OLD CODE: when: { kind: 'last', seconds: 900 }, (NET-349: 15 minutes of a busy link is over the 64-file or 3 GB limit one search reads)
+		when: { kind: 'last', seconds: 300 },
 		limit: 100,
 	});
 	let override = $state<string | null>(null);
 	/** The router's address, for "Lookups that skip your router" */
 	let router = $state('');
 	let showEditor = $state(false);
-	let builder = $state<{ search: () => void }>();
+	// OLD CODE: let builder = $state<{ search: () => void }>(); (NET-349: + the over-limit warning for the editor card)
+	let builder = $state<{ search: () => Promise<void>; blockedBy: () => string }>();
+	/** NET-349: the editor card's Find packets runs the builder's search, so the builder's limit stops it too */
+	const editorBlocked = $derived(builder?.blockedBy() ?? '');
 	const written = $derived(writtenFilter(question, $lanPolicy, router));
 
 	const refresh = registerPageRefresh(load);
@@ -126,7 +132,8 @@
 		const tasks: Promise<unknown>[] = [
 			getCaptures().then(
 				(c) => {
-					if (live()) [captures, capturesError] = [c, null];
+					// OLD CODE: if (live()) [captures, capturesError] = [c, null]; (NET-349: + the time it arrived)
+					if (live()) [captures, capturesError, capturesAt] = [c, null, Date.now()];
 				},
 				(err) => {
 					if (live()) capturesError = message(err);
@@ -293,6 +300,8 @@
 				{written}
 				devices={deviceOptions}
 				{captures}
+				{capturesAt}
+				reloadCaptures={() => refresh.run()}
 				onsearch={search}
 				onwriteown={writeOwn}
 			/>
@@ -303,8 +312,10 @@
 				<Card title="Write your own filter" sub="Wireshark display filter syntax · suggestions come from TShark's own field list">
 					{#snippet actions()}<button class="btn" type="button" onclick={() => (showEditor = false)}>Hide</button>{/snippet}
 					<FilterEditor bind:value={() => override ?? written.filter, (v) => (override = v)} onsubmit={() => builder?.search()} />
+					{#if editorBlocked}<p class="notice is-warn limit" id="packet-editor-limit"><Icon name="warn" />{editorBlocked}</p>{/if}
 					<div class="form-actions">
-						<button class="btn primary" type="button" onclick={() => builder?.search()}><Icon name="search" />Find packets</button>
+						<!-- OLD CODE: <button class="btn primary" type="button" onclick={() => builder?.search()}><Icon name="search" />Find packets</button> (NET-349: offered a search the daemon refuses) -->
+						<button class="btn primary" type="button" disabled={!!editorBlocked} aria-describedby={editorBlocked ? 'packet-editor-limit' : undefined} onclick={() => builder?.search()}><Icon name="search" />Find packets</button>
 					</div>
 				</Card>
 			</div>
@@ -317,4 +328,5 @@
 	/* Layout glue: a card wrapped for its scroll anchor keeps the grid span */
 	.anchor { display: flex; flex-direction: column; min-width: 0; scroll-margin-top: var(--sp-4); }
 	.anchor > :global(.card) { flex: 1; }
+	.limit { margin: var(--sp-3) 0 0; }
 </style>

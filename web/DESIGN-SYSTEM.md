@@ -54,7 +54,9 @@ The old names (`--bg-tertiary`, `--text-primary`, `--cyan`, `--red`, `--space-md
 <!-- OLD CODE: - **Sidebar:** 20 links in 4 groups (`nav.ts`; Packet analysis joined Investigate in NET-188), the Alerts count from the shared alert snapshot, the capture chip and storage meter, and Sign out (a `POST /api/auth/logout` form). (NET-264: Local services joined Devices) -->
 - **Sidebar:** 21 links in 4 groups (`nav.ts`; Packet analysis joined Investigate in NET-188, Local services joined Devices in NET-264), the Alerts count from the shared alert snapshot, the capture chip and storage meter, and Sign out (a `POST /api/auth/logout` form).
 - **TopBar:** search combobox (Ctrl-K), Refresh (runs the page's registered loader), the "Updated" time and the notification bell. **Pages have no Refresh button or "Updated" text of their own.**
-- **Phone (≤ 760 px app width):** a top bar with a menu button opens the sidebar as a drawer: focus moves in, Tab is trapped, and Escape, the scrim or a link closes it.
+<!-- OLD CODE: - **Phone (≤ 760 px app width):** a top bar with a menu button opens the sidebar as a drawer: focus moves in, Tab is trapped, and Escape, the scrim or a link closes it. (NET-349: + the TopBar and the inert page) -->
+- **Phone (≤ 760 px app width):** a top bar with a menu button opens the sidebar as a drawer: focus moves in, Tab is trapped, `main` is inert while it's open, and Escape, the scrim or a link closes it. The TopBar shows under it (correction 10), so search and the notification inbox stay on phones.
+- **Detail drawer** (`components/DetailDrawer.svelte`, every page's slide-out panel): a native modal `<dialog>` opened with `showModal()` (NET-349). The page behind is inert, focus moves to Close and Tab wraps inside, and focus returns to whatever opened it. Escape, Close or a press-and-release on the backdrop closes it. A failure from an action inside it must show inside it too: the page behind can't be reached.
 - `/login` and `/setup` render bare (no shell).
 
 ## Page recipe
@@ -155,6 +157,7 @@ From the system README: sentence case everywhere (titles, buttons, labels), UK s
 7. On phones the head actions are capped at the page head's width, so a long range-pill group (six with Custom on Alerts and Log Explorer) scrolls inside its track instead of scrolling the page sideways.
 8. At 1100 px and below, the last half-width card of a run of one, three or five (like the side card of a c-8 hero row) takes the full row, instead of sitting alone on half a row.
 9. In a `col` card the donut stacks above its legend and grows into the card's free height.
+10. On phones the TopBar shows again under the menu bar (system.css hides it), so search and the notification inbox stay reachable. Search shares its row with Refresh and the bell; warning chips wrap, and the "Updated" text and the ⌘K hint give way.
 
 Every `<button>` sets an explicit text colour (the browser default is black). Focus rings use `--focus`.
 

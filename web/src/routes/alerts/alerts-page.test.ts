@@ -661,6 +661,25 @@ describe('Alerts — drawer', () => {
 		expect(within(drawer).getByRole('link', { name: 'ET MALWARE CnC Checkin' })).toHaveAttribute('href', '/alerts/rule/ET%20MALWARE%20CnC%20Checkin');
 	});
 
+	// NET-349: the owner's audit had to open Raw JSON to see what a DNS alert looked up
+	it('shows the name a DNS alert looked up among the facts, with Raw JSON still closed', async () => {
+		const dnsAlert = alert('d1', {
+			signature: 'IPFire DBL [Phishing] Blocked DNS Query',
+			plain_description: 'A device looked up a blocked name.',
+			proto: 'udp',
+			suricata: { dns: { version: 3, type: 'request', queries: [{ rrtype: 'AAAA', rrname: 'ntp2.aliyun.com' }] } },
+		});
+		succeedAll([dnsAlert]);
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: /A device looked up a blocked name/ }));
+		const drawer = screen.getByRole('complementary', { name: 'Alert details' });
+		expect(within(drawer).getByText('DNS name')).toBeInTheDocument();
+		expect(within(drawer).getByText('ntp2.aliyun.com')).toBeInTheDocument();
+		// Raw JSON is collapsed (DrawerSection renders its body only when open), so the name above is the facts' own
+		expect(within(drawer).queryByText(/"rrname"/)).not.toBeInTheDocument();
+	});
+
 	it('says there is no advice instead of inventing one, and titles by category without a description', async () => {
 		succeedAll([alert('bare', { category: 'Misc activity', signature: 'ET INFO Bare' })]);
 		render(Page);

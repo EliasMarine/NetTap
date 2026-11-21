@@ -3,10 +3,12 @@ import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import type { writable } from 'svelte/store';
 import Page from './+page.svelte';
 import * as api from '$lib/api/packets';
+import { refreshPage } from '$lib/stores/pageRefresh';
 import { epochNs, readUrlState } from '$lib/utils/packet-query';
 import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
 import { CAPTURES, CAPTURES_EMPTY, FIELDS, TV } from '../../../e2e/visual/fixtures/packets';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+import { clockTime } from './packets-view';
 
 // NET-188: the first visit. Packet analysis reads its search from the URL; with none it starts
 // from a question, and shows the capture files and what a search would read.
@@ -62,6 +64,7 @@ function stubOthers(replies: Record<string, unknown> = {}): void {
 
 const kpi = (label: string) => screen.getAllByText(label).map((e) => e.closest('.kpi')).find(Boolean) as HTMLElement;
 const builder = () => screen.getByRole('heading', { name: 'What do you want to see?' }).closest('.card') as HTMLElement;
+const editor = () => screen.getByRole('heading', { name: 'Write your own filter' }).closest('.card') as HTMLElement;
 
 describe('Packet analysis: first visit', () => {
 	beforeEach(() => {
@@ -160,6 +163,8 @@ describe('Packet analysis: first visit', () => {
 
 	it('writes the filter from the choices and shows the files it will read before searching', async () => {
 		render(Page);
+		// NET-349: the first visit asks for the last 5 minutes, which no finished fixture file reaches
+		await fireEvent.click(within(builder()).getByRole('button', { name: 'Last 15 min' }));
 		// Only the indexed file that overlaps the last 15 minutes is counted; the one being written is "up to"
 		await vi.waitFor(() =>
 			expect(within(builder()).getByText(/NetTap will read/)).toHaveTextContent(
@@ -180,7 +185,7 @@ describe('Packet analysis: first visit', () => {
 		expect(builder().querySelector('code.filter')).toHaveTextContent(`ip.addr == ${TV} && dns && dns.flags.response == 0`);
 
 		await fireEvent.click(within(builder()).getByRole('button', { name: 'Find packets' }));
-		expect(goto).toHaveBeenCalledTimes(1);
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledTimes(1));
 		const state = readUrlState(new URL(goto.mock.calls[0][0], 'http://localhost').searchParams)!;
 		expect(state).toMatchObject({ filter: `ip.addr == ${TV} && dns && dns.flags.response == 0`, limit: 100, device: TV, conn: null });
 		expect(Number(state.to) - Number(state.from)).toBe(900);
@@ -192,6 +197,7 @@ describe('Packet analysis: first visit', () => {
 		await fireEvent.input(within(builder()).getByLabelText('Port'), { target: { value: '99999' } });
 		expect(within(builder()).getByText('A port is a whole number from 1 to 65535.')).toBeInTheDocument();
 		await fireEvent.click(within(builder()).getByRole('button', { name: 'Find packets' }));
+		await new Promise((r) => setTimeout(r, 0));
 		expect(goto).not.toHaveBeenCalled();
 	});
 
@@ -228,11 +234,13 @@ describe('Packet analysis: first visit', () => {
 		expect(within(builder()).getByText(/Enter your router's address/)).toBeInTheDocument();
 		expect(builder().querySelector('code.filter')).toBeNull();
 		await fireEvent.click(within(builder()).getByRole('button', { name: 'Find packets' }));
+		await new Promise((r) => setTimeout(r, 0));
 		expect(goto).not.toHaveBeenCalled();
 
 		await fireEvent.input(within(builder()).getByLabelText("Your router's address"), { target: { value: '10.0.0.1' } });
 		expect(builder().querySelector('code.filter')).toHaveTextContent('dns && !(ip.addr == 10.0.0.1)');
 		await fireEvent.click(within(builder()).getByRole('button', { name: 'Find packets' }));
+		await vi.waitFor(() => expect(goto).toHaveBeenCalled());
 		expect(readUrlState(new URL(goto.mock.calls[0][0], 'http://localhost').searchParams)!.filter).toBe('dns && !(ip.addr == 10.0.0.1)');
 
 		// A stream number only means something inside one search, so it comes from a packet's drawer
@@ -290,6 +298,123 @@ describe('Packet analysis: first visit', () => {
 		await vi.waitFor(() => expect(signals).toHaveLength(1), { timeout: 2000 });
 		await fireEvent.input(input, { target: { value: 'dns.qr' } });
 		expect(signals[0].aborted).toBe(true);
+	});
+
+	describe('NET-349: one search reads at most 64 files or 3 GB', () => {
+		/** 268 MB in the last 15 minutes is over a 1-byte limit; the last 5 minutes read no finished file */
+		const OVER = { ...CAPTURES, limits: { ...CAPTURES.limits, max_bytes: 1 } };
+		const WARNING = /That's more than one search reads \(64 files or .*\)\. Pick a shorter stretch of time\. This estimate is from when the page last loaded its list of capture files\./;
+		const findIn = (card: HTMLElement) => within(card).getByRole('button', { name: 'Find packets' });
+
+		async function overLimit(): Promise<void> {
+			vi.mocked(api.getCaptures).mockResolvedValue(OVER);
+			render(Page);
+			await fireEvent.click(within(builder()).getByRole('button', { name: 'Last 15 min' }));
+			await fireEvent.click(screen.getByRole('button', { name: 'Write my own filter' }));
+			await vi.waitFor(() => expect(findIn(builder())).toBeDisabled());
+		}
+
+		it('asks for the last 5 minutes on a first visit', async () => {
+			render(Page);
+			await vi.waitFor(() => expect(within(builder()).getByText(/NetTap will read/)).toHaveTextContent(/not indexed yet/));
+			expect(within(builder()).getByRole('button', { name: 'Last 5 min' })).toHaveAttribute('aria-pressed', 'true');
+			await fireEvent.click(findIn(builder()));
+			await vi.waitFor(() => expect(goto).toHaveBeenCalled());
+			const state = readUrlState(new URL(goto.mock.calls[0][0], 'http://localhost').searchParams)!;
+			expect(Number(state.to) - Number(state.from)).toBe(300);
+		});
+
+		it('turns off both Find packets buttons while over the limit, each pointing at the warning', async () => {
+			await overLimit();
+			expect(findIn(builder())).toHaveAccessibleDescription(WARNING);
+			expect(findIn(editor())).toBeDisabled();
+			expect(findIn(editor())).toHaveAccessibleDescription(WARNING);
+			expect(within(editor()).getByText(WARNING)).toBeInTheDocument();
+
+			await fireEvent.click(within(builder()).getByRole('button', { name: 'Last 5 min' }));
+			expect(findIn(builder())).toBeEnabled();
+			expect(findIn(editor())).toBeEnabled();
+			expect(findIn(builder())).not.toHaveAccessibleDescription();
+			expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
+			await fireEvent.click(findIn(editor()));
+			await vi.waitFor(() => expect(goto).toHaveBeenCalledTimes(1));
+			const state = readUrlState(new URL(goto.mock.calls[0][0], 'http://localhost').searchParams)!;
+			expect(Number(state.to) - Number(state.from)).toBe(300);
+		});
+
+		it('searches nothing on Enter in the editor while over the limit, and says why', async () => {
+			await overLimit();
+			await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Display filter' }), { key: 'Enter' });
+			expect(goto).not.toHaveBeenCalled();
+			expect(within(builder()).getByRole('alert')).toHaveTextContent(WARNING);
+		});
+
+		it('checks again against a new capture list', async () => {
+			await overLimit();
+			await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Display filter' }), { key: 'Enter' });
+			vi.mocked(api.getCaptures).mockResolvedValue(CAPTURES);
+			await refreshPage();
+			await vi.waitFor(() => expect(findIn(builder())).toBeEnabled());
+			expect(findIn(editor())).toBeEnabled();
+			expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
+			// The refusal for size goes with it: the new list fits
+			expect(within(builder()).queryByRole('alert')).not.toBeInTheDocument();
+
+			vi.mocked(api.getCaptures).mockResolvedValue(OVER);
+			await refreshPage();
+			await vi.waitFor(() => expect(findIn(builder())).toBeDisabled());
+		});
+
+		// NET-349 review: a list loaded at 12:00:00 ended a 12:00:45 search at 12:00:00, missing what was just done
+		it('loads the capture list again even seconds after the page did, so the window ends at the press', async () => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			try {
+				render(Page);
+				await vi.waitFor(() => expect(within(builder()).getByText(/NetTap will read/)).toHaveTextContent(/not indexed yet/));
+				vi.setSystemTime(Date.now() + 45_000);
+				const pressed = BigInt(Date.now()) * 1_000_000n;
+				await fireEvent.click(findIn(builder()));
+				await vi.waitFor(() => expect(goto).toHaveBeenCalledTimes(1));
+				expect(api.getCaptures).toHaveBeenCalledTimes(2);
+				const state = readUrlState(new URL(goto.mock.calls[0][0], 'http://localhost').searchParams)!;
+				expect(epochNs(state.to)! >= pressed).toBe(true);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('says nothing was searched when the capture list fails to load again', async () => {
+			render(Page);
+			await vi.waitFor(() => expect(within(builder()).getByText(/NetTap will read/)).toHaveTextContent(/not indexed yet/));
+			vi.mocked(api.getCaptures).mockRejectedValue(new api.PacketApiError('The capture index is unreadable.', 500));
+			await fireEvent.click(findIn(builder()));
+			await vi.waitFor(() => expect(within(builder()).getByRole('alert')).toHaveTextContent(/nothing was searched/));
+			expect(goto).not.toHaveBeenCalled();
+		});
+
+		it('loads a capture list over a minute old again, then searches exactly the window it shows', async () => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			try {
+				render(Page);
+				await vi.waitFor(() => expect(within(builder()).getByText(/NetTap will read/)).toHaveTextContent(/not indexed yet/));
+				expect(api.getCaptures).toHaveBeenCalledTimes(1);
+				vi.setSystemTime(Date.now() + 10 * 60_000);
+				const later = BigInt(Date.now()) * 1_000_000n;
+
+				await fireEvent.click(within(builder()).getByRole('button', { name: 'Name lookups' }));
+				await fireEvent.click(findIn(builder()));
+				await vi.waitFor(() => expect(goto).toHaveBeenCalledTimes(1));
+				expect(api.getCaptures).toHaveBeenCalledTimes(2);
+				const state = readUrlState(new URL(goto.mock.calls[0][0], 'http://localhost').searchParams)!;
+				expect(state.filter).toBe('dns && dns.flags.response == 0');
+				// The window ends when the new list arrived (vi.waitFor moves the faked clock on), not 10 minutes earlier
+				expect(epochNs(state.to)! >= later).toBe(true);
+				expect(Number(state.to) - Number(state.from)).toBe(300);
+				expect(within(builder()).getByText(/NetTap will read/)).toHaveTextContent(`(${clockTime(state.from, false)} to ${clockTime(state.to, false)}`);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
 	});
 
 	it("says when a link's search can't be read, and searches nothing", async () => {

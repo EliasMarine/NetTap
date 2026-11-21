@@ -140,7 +140,7 @@ describe('IoT page — layout', () => {
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
 		await flush();
-		await fireEvent.click(within(screen.getByRole('complementary', { name: 'Detail panel' })).getByRole('button', { name: 'Privacy' }));
+		await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Privacy' }));
 		expect(screen.getByText(/^N\/A: only local traffic/)).toBeInTheDocument();
 		expect(screen.queryByRole('img', { name: /encrypted/ })).not.toBeInTheDocument();
 	});
@@ -186,7 +186,7 @@ describe('IoT page — only measured figures', () => {
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
 		await flush();
-		const panel = screen.getByRole('complementary', { name: 'Detail panel' });
+		const panel = screen.getByRole('dialog');
 		const drawerRows = Array.from(panel.querySelectorAll('.score-rows li'), (li) => li.textContent?.trim());
 		expect(drawerRows).toEqual(['Privacy80', 'Security80', 'BehaviourNot measured']);
 	});
@@ -248,7 +248,7 @@ describe('IoT page — only measured figures', () => {
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
 		await flush();
-		const panel = screen.getByRole('complementary', { name: 'Detail panel' });
+		const panel = screen.getByRole('dialog');
 		// OLD CODE: expect(panel).toHaveTextContent('from 5 of 11 checks (55 of 100 points)'); (NET-171)
 		expect(panel).toHaveTextContent('from 5 of 9 checks');
 		expect(panel).not.toHaveTextContent('of 100 points');
@@ -267,7 +267,7 @@ describe('IoT page — only measured figures', () => {
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
 		await flush();
-		const panel = screen.getByRole('complementary', { name: 'Detail panel' });
+		const panel = screen.getByRole('dialog');
 		await fireEvent.click(within(panel).getByRole('button', { name: 'Comm map' }));
 		expect(panel).toHaveTextContent('New destinations not checked: this device has no baseline yet.');
 		expect(within(panel).queryByText(/· new$/)).not.toBeInTheDocument();
@@ -285,7 +285,7 @@ describe('IoT page — only measured figures', () => {
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
 		await flush();
-		const panel = screen.getByRole('complementary', { name: 'Detail panel' });
+		const panel = screen.getByRole('dialog');
 		await fireEvent.click(within(panel).getByRole('button', { name: 'Comm map' }));
 		expect(within(panel).getByText('1.0 GB')).toBeInTheDocument();
 		expect(within(panel).getByText('1.0 KB')).toBeInTheDocument();

@@ -172,7 +172,7 @@ describe('Connections — address filter', () => {
 		expect(container.querySelector('a.bar-label[href="/address/203.0.113.9"]')).not.toBeNull();
 
 		await fireEvent.click(screen.getByRole('button', { name: /^Open connection from 192.168.1.20/ }));
-		const dialog = await screen.findByRole('complementary', { name: 'Detail panel' });
+		const dialog = await screen.findByRole('dialog');
 		expect(within(dialog).getByRole('link', { name: 'Open source device' })).toHaveAttribute('href', '/devices/192.168.1.20');
 		expect(within(dialog).getByRole('link', { name: 'Open destination address' })).toHaveAttribute('href', '/address/203.0.113.9');
 		// NET-188: this record has no ports, so its packets link is all traffic between the two addresses, labelled inexact

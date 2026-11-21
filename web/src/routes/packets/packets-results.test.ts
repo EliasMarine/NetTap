@@ -176,6 +176,18 @@ describe('Packet analysis: a search', () => {
 		expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
 	});
 
+	// NET-349: the daemon's refusal for size keeps its window in the filter editor, so it points to New search
+	it.each([
+		['This window covers 80 capture files (4.1 GB). NetTap reads at most 64 files or 3 GB at once; pick a shorter window.', 'Choose New search above to pick a shorter stretch of time.'],
+		['"tls.handshake.extensions_s" is neither a field nor a protocol name.', 'Edit the filter above and search again.'],
+	])('points a refused search at what fixes it: %s', async (message, hint) => {
+		vi.mocked(api.searchPackets).mockRejectedValue(new api.PacketApiError(message, 400));
+		render(Page);
+		await screen.findByText("TShark couldn't run this search");
+		expect(screen.getByText(`${message} ${hint}`)).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'New search' })).toHaveAttribute('href', '/packets');
+	});
+
 	it('lists the packets with who sent them, by device name or the site the connection asked for', async () => {
 		render(Page);
 		const table = await screen.findByRole('table', { name: 'Packets' });
