@@ -63,7 +63,8 @@ const storage = (over: Partial<StorageStatus> = {}): StorageStatus => ({
 
 describe('storage foot', () => {
 	it('states use, free space and retention', () => {
-		expect(storageFoot(storage())).toEqual({ percent: 41, used: '41% used', detail: '549.0 GB free · 90-day retention' });
+		// OLD CODE: … detail: '549.0 GB free · 90-day retention' }); (NET-348: says what is kept that long)
+		expect(storageFoot(storage())).toEqual({ percent: 41, used: '41% used', detail: '549.0 GB free · 90-day log and alert retention' });
 	});
 
 	it('leaves out retention the daemon does not report, rather than assuming one', () => {

@@ -230,7 +230,8 @@
 				? {
 						key: 'drive',
 						label: 'Drive',
-						status: smartHealth.healthy ? 'ok' : 'failing',
+						// OLD CODE: status: smartHealth.healthy ? 'ok' : 'failing', (NET-348: a warning read "Healthy" beside the Warnings chip)
+						status: !smartHealth.healthy ? 'failing' : warnings ? 'warn' : 'ok',
 						detail: !smartHealth.healthy ? 'SMART reports a problem' : warnings ? `SMART checks pass · ${warnings} warning${warnings === 1 ? '' : 's'}` : 'SMART checks pass',
 					}
 				: smartHealth && !failed.smart

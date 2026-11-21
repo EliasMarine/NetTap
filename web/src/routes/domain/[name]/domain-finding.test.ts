@@ -5,6 +5,7 @@ import type { DomainSummary } from '$lib/api/drilldown';
 import { DOMAIN, LAN_POLICY } from '../../../../e2e/visual/fixtures/drilldown';
 import { DOMAIN_FINDING } from '../../../../e2e/visual/fixtures/threats';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
+import { windowWords } from '$lib/utils/drilldown';
 
 // A Threats DNS row opens the domain page with ?finding=<the raw name the check read>: the page
 // shows the check's own evidence, counts every device as the check does, and never mixes the
@@ -89,7 +90,8 @@ describe('Domain page in finding mode', () => {
 		await vi.waitFor(() => expect(screen.getByRole('heading', { name: WHY })).toBeInTheDocument());
 		expect(domainCalls()[0].searchParams.get('from')).toBe(from);
 		expect(domainCalls()[0].searchParams.get('to')).toBe(to);
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(from, to) })).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	it('refetches when it moves between ordinary and finding mode, and never shows the other mode', async () => {

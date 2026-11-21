@@ -68,10 +68,19 @@
 	{/each}
 
 	<div class="side-foot">
+		<!-- OLD CODE START — NET-348: the storage foot led nowhere; it opens the retention settings
 		{#if storage}
 			<div class="foot-row"><span class="dim">Storage</span><span>{storage.used}</span></div>
 			<Meter value={storage.percent} label="Disk used" />
 			{#if storage.detail}<div class="dim">{storage.detail}</div>{/if}
+		{/if}
+		OLD CODE END -->
+		{#if storage}
+			<a class="foot-link" href="/settings?tab=retention" onclick={onnavigate}>
+				<div class="foot-row"><span class="dim">Storage</span><span>{storage.used}</span></div>
+				<Meter value={storage.percent} label="Disk used" />
+				{#if storage.detail}<div class="dim">{storage.detail}</div>{/if}
+			</a>
 		{/if}
 		<div class="user">
 			{#if username}
@@ -103,5 +112,17 @@
 
 	.user form {
 		margin-left: auto;
+	}
+	/* The storage block as one link to the retention settings, laid out as .side-foot lays its rows */
+	.foot-link {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-2);
+		color: inherit;
+		text-decoration: none;
+		border-radius: var(--r-sm);
+	}
+	.foot-link:hover {
+		text-decoration: underline;
 	}
 </style>

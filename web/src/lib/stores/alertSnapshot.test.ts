@@ -108,4 +108,33 @@ describe('alert snapshot', () => {
 		expect(snap.status).toBe('error');
 		expect(snap.data!.counts.total).toBe(37);
 	});
+
+	it("keeps the kept counts' own window and load time through a failed refresh a minute later (NET-348)", async () => {
+		let fail = false;
+		_configure({
+			fetcher: async () => {
+				if (fail) throw new Error('503');
+				return counts(37);
+			},
+			now: () => clock,
+		});
+		const good = await loadAlertSnapshot(24);
+		expect(good).toMatchObject({ status: 'ok', to: '2026-11-03T21:05:00.000Z', at: clock });
+		const loadedAt = clock;
+		fail = true;
+		clock += 2 * 60_000;
+		const [snap] = await refreshAlertSnapshots();
+		expect(snap).toMatchObject({ status: 'error', from: good.from, to: good.to, at: loadedAt });
+		expect(snap.data!.counts.total).toBe(37);
+	});
+
+	it('a failure with nothing kept has no load time', async () => {
+		_configure({
+			fetcher: async () => {
+				throw new Error('503');
+			},
+			now: () => clock,
+		});
+		expect((await loadAlertSnapshot(24)).at).toBeUndefined();
+	});
 });

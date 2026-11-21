@@ -5,6 +5,7 @@ import { getDeviceCategories, getDeviceConnections, getDeviceDetail, getDevicePo
 import { getSmartAlerts } from '$api/alerts';
 import { DEVICE_IPV6_NOTE } from '$lib/utils/narrow-page';
 import Page from './+page.svelte';
+import { windowWords } from '$lib/utils/drilldown';
 
 // NET-249 slice 2 (T12, plan §1a): the device's bandwidth chart asks for the owner's buckets
 // through the new `interval`, a pick narrows this page to the picked window (Custom) with the
@@ -129,7 +130,8 @@ describe('Device detail — a Custom window from the URL (NET-249 §1a)', () => 
 		const smart = vi.mocked(getSmartAlerts).mock.calls.at(-1)![0] as { from: string; to: string };
 		expect([smart.from, smart.to]).toEqual([F, T]);
 		expect(detailCalls().at(-1)!.interval).toBe('1m');
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(F, T) })).toHaveAttribute('aria-pressed', 'true');
 		expect(screen.getByText(/^Bytes per minute · window /)).toBeInTheDocument();
 		expect(screen.getByText('Traffic').closest('.kpi')).toHaveTextContent(/Window /);
 	});
@@ -144,7 +146,8 @@ describe('Device detail — a Custom window from the URL (NET-249 §1a)', () => 
 		await vi.waitFor(() => expect(detailCalls().at(-1)!.interval).toBe('1h'));
 		const q = detailCalls().at(-1)!;
 		expect((Date.parse(q.to!) - Date.parse(q.from!)) / 86_400_000).toBeCloseTo(7);
-		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
+		expect(screen.queryByRole('button', { name: windowWords(F, T) })).not.toBeInTheDocument();
 	});
 
 	it('an invalid window falls back to the default range', async () => {

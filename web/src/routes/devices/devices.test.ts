@@ -3,8 +3,10 @@ import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { get, type Writable } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
-import { customRange } from '$lib/utils/drilldown';
+import { customRange, windowWords } from '$lib/utils/drilldown';
 import Page from './+page.svelte';
+/** Any range pill named by a carried window (`windowWords`): none should show here (NET-348). */
+const NO_WINDOW_PILL = /^(\d\d:\d\d(:\d\d)? to |\d{1,2} \w{3}, \d\d:\d\d to |at \d\d:\d\d:\d\d, )/;
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 // NET-160 slice 2b-3: the page reads its window and tab from the URL
@@ -713,7 +715,8 @@ describe('Devices — the URL window and one reading', () => {
 		await vi.waitFor(() => expect(kpiValue('Total devices')).toBe('1'));
 		expect(listCalls[0].searchParams.get('from')).toBe(FROM);
 		expect(listCalls[0].searchParams.get('to')).toBe(TO);
-		expect(pressed('Custom')).toBe('true');
+		// OLD CODE: expect(pressed('Custom')).toBe('true'); (NET-348: the pill is named by its window)
+		expect(pressed(windowWords(FROM, TO))).toBe('true');
 		const words = customRange(FROM, TO)!.words;
 		expect(note('Total devices')).toBe(words.charAt(0).toUpperCase() + words.slice(1));
 		expect(screen.getByText(`Busiest first · traffic in the ${words}`)).toBeInTheDocument();
@@ -726,7 +729,8 @@ describe('Devices — the URL window and one reading', () => {
 		render(Page);
 		await vi.waitFor(() => expect(kpiValue('Total devices')).toBe('1'));
 		expect([listCalls[0].searchParams.get('from'), listCalls[0].searchParams.get('to')]).toEqual([TO, TO]);
-		expect(pressed('Custom')).toBe('true');
+		// OLD CODE: expect(pressed('Custom')).toBe('true'); (NET-348: the pill is named by its window)
+		expect(pressed(windowWords(TO, TO))).toBe('true');
 	});
 
 	it('reads an unknown range as 24 hours, with no Custom pill', async () => {
@@ -736,7 +740,8 @@ describe('Devices — the URL window and one reading', () => {
 		await vi.waitFor(() => expect(kpiValue('Total devices')).toBe('1'));
 		expect(hoursAsked(listCalls[0])).toBe(24);
 		expect(pressed('24h')).toBe('true');
-		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
+		expect(screen.queryByRole('button', { name: NO_WINDOW_PILL })).not.toBeInTheDocument();
 		expect(note('Total devices')).toBe('Last 24 hours');
 	});
 

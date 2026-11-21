@@ -434,8 +434,11 @@ describe('layout sidebar', () => {
 		} as systemApi.StorageStatus);
 		renderLayout();
 		expect(await screen.findByText('41% used')).toBeInTheDocument();
-		expect(screen.getByText(/90-day retention/)).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText(/90-day retention/)).toBeInTheDocument(); (NET-348)
+		expect(screen.getByText(/90-day log and alert retention/)).toBeInTheDocument();
 		expect(screen.getByRole('meter', { name: 'Disk used' })).toHaveAttribute('aria-valuenow', '41');
+		// NET-348: the storage block opens the retention settings
+		expect(screen.getByText('41% used').closest('a')).toHaveAttribute('href', '/settings?tab=retention');
 	});
 
 	it('hides storage when its request fails', async () => {

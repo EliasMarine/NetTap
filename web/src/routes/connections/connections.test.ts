@@ -4,6 +4,7 @@ import { readable } from 'svelte/store';
 import { getConnections, getConnectionStats, getConnectionSankey, getConnectionTimeline } from '$api/traffic';
 import { getLiveDashboard } from '$api/live';
 import Page from './+page.svelte';
+import { serviceLogsHref, TLS_QUERY } from '$lib/utils/drilldown';
 
 vi.mock('$app/stores', () => ({
 	page: readable({ url: new URL('http://localhost/connections') }),
@@ -450,5 +451,110 @@ describe('Connections — the range set', () => {
 			expect(vi.mocked(getConnectionTimeline).mock.calls[0][0]!.interval).toBe('1h');
 			expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
 		});
+	});
+});
+
+// NET-348: one protocol choice drives the pills, the flow chart's highlight and the query. UDP picked on
+// the chart plus TCP in the pills used to send two bare words and list no connections.
+describe('Connections — one protocol choice (NET-348)', () => {
+	const SANKEY = {
+		from: '', to: '',
+		nodes: {
+			sources: [{ id: '10.0.0.5', label: '10.0.0.5', value: 300 }],
+			protocols: [
+				{ id: 'tcp', label: 'TCP', value: 150 },
+				{ id: 'udp', label: 'UDP', value: 100 },
+				{ id: 'ipv6-icmp', label: 'IPV6-ICMP', value: 50 },
+			],
+			destinations: [{ id: 'AS15169 Google LLC', label: 'AS15169 Google LLC', value: 300 }],
+		},
+		links: [
+			{ source: '10.0.0.5', target: 'tcp', value: 150 },
+			{ source: '10.0.0.5', target: 'udp', value: 100 },
+			{ source: '10.0.0.5', target: 'ipv6-icmp', value: 50 },
+			{ source: 'tcp', target: 'AS15169 Google LLC', value: 150 },
+			{ source: 'udp', target: 'AS15169 Google LLC', value: 100 },
+			{ source: 'ipv6-icmp', target: 'AS15169 Google LLC', value: 50 },
+		],
+	};
+
+	beforeEach(() => {
+		vi.mocked(getConnections).mockImplementation(async (opts = {}) => connectionsPage(opts.page ?? 1));
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
+		vi.mocked(getConnectionSankey).mockResolvedValue(SANKEY);
+	});
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(getConnectionSankey).mockRejectedValue(new Error('not under test'));
+	});
+
+	const lastQ = () => vi.mocked(getConnections).mock.lastCall![0]!.q;
+	const pill = (name: string) => within(screen.getByRole('group', { name: 'Protocol' })).queryByRole('button', { name });
+	/** A protocol row's button in the flow chart's table view (jsdom has no width, so the table shows) */
+	async function chartProtocol(name: string) {
+		await fireEvent.click(screen.getByRole('tab', { name: 'Protocols' }));
+		return within(screen.getByRole('tabpanel')).getByRole('button', { name });
+	}
+	async function renderFlow() {
+		render(Page);
+		await flush();
+	}
+
+	it('UDP on the chart, then TCP in the pills, asks for TCP alone; the pills and the chart agree', async () => {
+		await renderFlow();
+		await fireEvent.click(await chartProtocol('UDP'));
+		await flush();
+		expect(lastQ()).toBe('network.transport:"udp"');
+		expect(pill('UDP')).toHaveAttribute('aria-pressed', 'true');
+		expect(await chartProtocol('UDP')).toHaveAttribute('aria-pressed', 'true');
+
+		await fireEvent.click(pill('TCP')!);
+		await flush();
+		expect(lastQ()).toBe('network.transport:"tcp"');
+		expect(pill('UDP')).toHaveAttribute('aria-pressed', 'false');
+		expect(await chartProtocol('UDP')).toHaveAttribute('aria-pressed', 'false');
+		expect(await chartProtocol('TCP')).toHaveAttribute('aria-pressed', 'true');
+
+		// the chart's TCP again goes back to All
+		await fireEvent.click(await chartProtocol('TCP'));
+		await flush();
+		expect(lastQ()).toBeUndefined();
+		expect(pill('All')).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('a transport with no pill gets one while picked, and All clears it', async () => {
+		await renderFlow();
+		expect(pill('IPV6-ICMP')).toBeNull();
+		await fireEvent.click(await chartProtocol('IPV6-ICMP'));
+		await flush();
+		expect(lastQ()).toBe('network.transport:"ipv6-icmp"');
+		expect(pill('IPV6-ICMP')).toHaveAttribute('aria-pressed', 'true');
+
+		await fireEvent.click(pill('All')!);
+		await flush();
+		expect(lastQ()).toBeUndefined();
+		expect(pill('IPV6-ICMP')).toBeNull();
+		expect(await chartProtocol('IPV6-ICMP')).toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('TLS asks with the protocols endpoint’s predicate, QUIC left out, and highlights no transport', async () => {
+		await renderFlow();
+		await fireEvent.click(pill('TLS')!);
+		await flush();
+		expect(lastQ()).toBe(`(${TLS_QUERY})`);
+		expect(TLS_QUERY).toBe('network.protocol:"ssl" AND NOT network.protocol:"quic"');
+		// the same predicate Home's protocol bars open in Log Explorer
+		expect(new URL(serviceLogsHref('ssl', { from: 'a', to: 'b' }, []), 'http://x').searchParams.get('query')).toBe(TLS_QUERY);
+		for (const name of ['TCP', 'UDP', 'IPV6-ICMP']) expect(await chartProtocol(name)).toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('a destination on the chart is ANDed with the protocol choice', async () => {
+		await renderFlow();
+		await fireEvent.click(pill('UDP')!);
+		await fireEvent.click(screen.getByRole('tab', { name: 'Destinations' }));
+		await fireEvent.click(within(screen.getByRole('tabpanel')).getByRole('button', { name: 'AS15169 Google LLC' }));
+		await flush();
+		expect(lastQ()).toBe('network.transport:"udp" destination.as.full:"AS15169 Google LLC"');
+		expect(pill('UDP')).toHaveAttribute('aria-pressed', 'true');
 	});
 });

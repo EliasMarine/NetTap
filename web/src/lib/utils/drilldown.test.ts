@@ -160,8 +160,11 @@ describe('exact-window links', () => {
 		expect([p.get('range'), p.get('from'), p.get('to')]).toEqual(['7d', win.from, win.to]);
 	});
 
-	it('reads a link window back as Custom, exactly', () => {
-		expect(customRange(win.from, win.to)).toMatchObject({ value: 'custom', label: 'Custom', hours: 24, ...win });
+	// OLD CODE: it('reads a link window back as Custom, exactly', () => { expect(customRange(win.from, win.to)).toMatchObject({ value: 'custom', label: 'Custom', hours: 24, ...win }); (NET-348)
+	it('reads a link window back exactly, its pill named by the window', () => {
+		expect(customRange(win.from, win.to)).toMatchObject({ value: 'custom', label: windowWords(win.from, win.to), hours: 24, ...win });
+		// "Custom" said nothing about the window it carried
+		expect(customRange(win.from, win.to)!.label).toMatch(/^\d{1,2} \w{3}, \d\d:\d\d to \d{1,2} \w{3}, \d\d:\d\d$/);
 		expect(customRange(win.to, win.from)).toBeNull();
 	});
 });

@@ -6,6 +6,7 @@ import { goto } from '$app/navigation';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+import { windowWords } from '$lib/utils/drilldown';
 
 // OLD CODE START — a fixed URL; the page now follows URL changes, so the tests move it
 // vi.mock('$app/stores', () => ({
@@ -455,7 +456,8 @@ describe('Log Explorer — exact windows', () => {
 		goTo(`/logs?query=dns&range=24h&from=${FROM}&to=${TO}`);
 		render(Page);
 		const more = await screen.findByRole('button', { name: 'Load more' });
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(FROM, TO) })).toHaveAttribute('aria-pressed', 'true');
 		// OLD CODE: … is 4h, bucketed by 15 minutes; /^Log events per 15 minutes · window / and '15m' (NET-249: the owner's table)
 		// 90 minutes: the smallest standard range that covers it is 6h, bucketed by 5 minutes
 		expect(screen.getByText(/^Log events per 5 minutes · window /)).toBeInTheDocument();
@@ -489,7 +491,8 @@ describe('Log Explorer — exact windows', () => {
 		goTo(`/logs?type=zeek.conn&from=${TO}&to=${TO}&range=1h`);
 		render(Page);
 		await vi.waitFor(() => expect(requestsTo('/api/logs/search')).toHaveLength(1));
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(TO, TO) })).toHaveAttribute('aria-pressed', 'true');
 		for (const u of [...requestsTo('/api/logs/search'), ...DASHBOARD_PATHS.flatMap(requestsTo)]) expect(bounds(u)).toEqual([TO, TO]);
 	});
 

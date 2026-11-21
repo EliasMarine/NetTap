@@ -246,3 +246,107 @@ describe('Home — page refresh contract', () => {
 		expect(recorded.runs).toHaveLength(afterToggle);
 	});
 });
+
+// NET-348: every Home card keeps its last figures on a failed refresh of the same range and says when
+// they loaded; a failure with nothing kept for this range shows the card's error state instead.
+describe('Home — kept figures on a failed refresh (NET-348)', () => {
+	const GROUP = {
+		signature_id: 7, signature: 'ET SCAN Nmap probe', suricata_category: 'Attempted Information Leak', severity: 2,
+		severity_label: 'medium', category: 'scan', category_label: 'Scanning', source_ip: '192.168.1.5',
+		destination_ip: '203.0.113.9', count: 3, first_seen: '', last_seen: '', trend: 'stable', assessment: '',
+		key: { rule_name: 'ET SCAN Nmap probe', source_ip: '192.168.1.5', destination_ip: '203.0.113.9' },
+	};
+	/** Replies with the alert group in the review list; every other path as `body`. */
+	const replyWithGroup = (batch: Call[]) =>
+		batch.forEach((c) => (c.path === '/api/alerts/smart' ? c.reply({ ...(body(c.url) as object), alerts: [GROUP], total: 1 }) : c.reply()));
+	const kpiLink = (label: string) => screen.getByText(label, { selector: '.kpi-top > span' }).closest('a')!;
+	const linkParam = (a: Element, key: string) => new URL(a.getAttribute('href')!, 'http://x').searchParams.get(key);
+	/** Every request one load makes, once they have all started. */
+	async function nextBatch(start: number): Promise<Call[]> {
+		await vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(start + REQUESTS - 1));
+		await new Promise((r) => setTimeout(r, 0));
+		return calls.slice(start);
+	}
+
+	beforeEach(() => {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		recorded.runs = [];
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date(2026, 10, 20, 20, 41, 30));
+		_configure({ now: () => Date.now() }); // the store's clock follows the faked one
+		stubDaemon();
+	});
+
+	afterEach(() => {
+		_configure({ now: Date.now });
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it('a first load that fails shows each error state and never a kept-figures note', async () => {
+		(await firstLoad()).forEach((c) => c.fail());
+		expect(await recorded.runs[0]).toBe('failed');
+		expect(await screen.findByText("Couldn't load bandwidth over time: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load traffic totals: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the alert count: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the severity summary: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the alert summary: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText(/showing figures from|showing the last figures/)).not.toBeInTheDocument();
+	});
+
+	it('1h then 1h again a minute later: every card keeps its figures, says when they loaded, and links their own window', async () => {
+		replyAll(await firstLoad());
+		await recorded.runs[0];
+		await fireEvent.click(screen.getByRole('button', { name: '1h' }));
+		const hour = await nextBatch(REQUESTS);
+		replyWithGroup(hour);
+		expect(await recorded.runs[1]).toBe('ok');
+		const summaryAsked = summaryCall(hour).url.searchParams;
+		const countAsked = hour.find((c) => c.path === '/api/alerts/count')!.url.searchParams;
+		expect(await screen.findByText('ET SCAN Nmap probe')).toBeInTheDocument();
+
+		vi.setSystemTime(new Date(2026, 10, 20, 20, 42, 10));
+		const start = calls.length;
+		const again = refreshPage();
+		const failing = await nextBatch(start);
+		// the refresh asked for the new minute's window
+		expect(summaryCall(failing).url.searchParams.get('to')).not.toBe(summaryAsked.get('to'));
+		failing.forEach((c) => c.fail());
+		expect(await again).toBe('failed');
+
+		for (const what of ['traffic totals', 'connection totals', 'the alert count', 'the device count', 'bandwidth over time', 'network protocols', 'traffic categories', 'the severity summary', 'the alert groups']) {
+			expect(await screen.findByText(`Couldn't refresh ${what}; showing figures from 20:41.`)).toBeInTheDocument();
+		}
+		expect(connections()).toBe('1');
+		expect(screen.getByText('Streaming')).toBeInTheDocument();
+		expect(screen.getByText('ET SCAN Nmap probe')).toBeInTheDocument();
+		// links keep the window their figures were counted over, not the failed attempt's
+		expect(linkParam(kpiLink('Connections'), 'to')).toBe(summaryAsked.get('to'));
+		expect(linkParam(kpiLink('Alerts'), 'from')).toBe(countAsked.get('from'));
+		expect(linkParam(kpiLink('Alerts'), 'to')).toBe(countAsked.get('to'));
+	});
+
+	it("1h then 24h failing: nothing from 1h stands in, each card shows its error state", async () => {
+		(await firstLoad()).forEach((c) => c.fail()); // nothing kept for 24 hours
+		await recorded.runs[0];
+		await fireEvent.click(screen.getByRole('button', { name: '1h' }));
+		replyWithGroup(await nextBatch(REQUESTS));
+		expect(await recorded.runs[1]).toBe('ok');
+		expect(await screen.findByText('ET SCAN Nmap probe')).toBeInTheDocument();
+
+		const start = calls.length;
+		await fireEvent.click(screen.getByRole('button', { name: '24h' }));
+		(await nextBatch(start)).forEach((c) => c.fail());
+		expect(await recorded.runs[2]).toBe('failed');
+
+		expect(await screen.findByText("Couldn't load traffic categories: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load traffic totals: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the device count: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the alert summary: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the severity summary: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText(/showing figures from|showing the last figures/)).not.toBeInTheDocument();
+		expect(screen.queryByText('ET SCAN Nmap probe')).not.toBeInTheDocument();
+		expect(screen.queryByText('Streaming')).not.toBeInTheDocument();
+		expect(connections()).toBe('—');
+	});
+});

@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { goto } from '$app/navigation';
 import DnsPage from './+page.svelte';
+import { windowWords } from '$lib/utils/drilldown';
+/** Any range pill named by a carried window (`windowWords`): none should show here (NET-348). */
+const NO_WINDOW_PILL = /^(\d\d:\d\d(:\d\d)? to |\d{1,2} \w{3}, \d\d:\d\d to |at \d\d:\d\d:\d\d, )/;
 
 // NET-249 slice 2 (T5, plan §1a): the DNS timeline asks for the owner's buckets, a pick narrows
 // this page to the picked window (Custom), every card follows it, and the page says when its own
@@ -141,7 +144,8 @@ describe('DNS page — a Custom window from the URL (NET-249 §1a)', () => {
 		}
 		// five minutes: the 1h range's minute slots (bucketFor)
 		expect(lastTimeline().searchParams.get('interval')).toBe('1m');
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(F, T) })).toHaveAttribute('aria-pressed', 'true');
 		expect(screen.getByText(/^Queries per minute · window /)).toBeInTheDocument();
 		await fireEvent.input(screen.getByLabelText('Device IP'), { target: { value: '10.0.0.5' } });
 		await fireEvent.click(screen.getByRole('button', { name: 'Lookup' }));
@@ -160,7 +164,8 @@ describe('DNS page — a Custom window from the URL (NET-249 §1a)', () => {
 		await vi.waitFor(() => expect(lastTimeline().searchParams.get('interval')).toBe('5m'));
 		const u = lastTimeline();
 		expect((Date.parse(u.searchParams.get('to')!) - Date.parse(u.searchParams.get('from')!)) / 3_600_000).toBeCloseTo(6);
-		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
+		expect(screen.queryByRole('button', { name: windowWords(F, T) })).not.toBeInTheDocument();
 		expect(screen.getByRole('button', { name: '6h' })).toHaveAttribute('aria-pressed', 'true');
 	});
 
@@ -170,7 +175,8 @@ describe('DNS page — a Custom window from the URL (NET-249 §1a)', () => {
 		await settle();
 		const u = lastTimeline();
 		expect((Date.parse(u.searchParams.get('to')!) - Date.parse(u.searchParams.get('from')!)) / 3_600_000).toBeCloseTo(24);
-		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
+		expect(screen.queryByRole('button', { name: NO_WINDOW_PILL })).not.toBeInTheDocument();
 		expect(screen.getByRole('button', { name: '24h' })).toHaveAttribute('aria-pressed', 'true');
 		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
 	});

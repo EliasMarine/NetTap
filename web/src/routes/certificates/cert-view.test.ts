@@ -193,7 +193,9 @@ describe('window notices', () => {
 describe('customRange', () => {
 	it('reads a link window as Custom, in words', () => {
 		const r = customRange('2026-11-01T08:00:00Z', '2026-11-02T08:00:00.000Z')!;
-		expect(r).toMatchObject({ value: 'custom', label: 'Custom', hours: 24, from: '2026-11-01T08:00:00.000Z', to: '2026-11-02T08:00:00.000Z' });
+		// OLD CODE: expect(r).toMatchObject({ value: 'custom', label: 'Custom', hours: 24, … }); (NET-348: the pill is named by its window)
+		expect(r).toMatchObject({ value: 'custom', hours: 24, from: '2026-11-01T08:00:00.000Z', to: '2026-11-02T08:00:00.000Z' });
+		expect(r.label).toMatch(/^1 Nov, \d\d:\d\d to 2 Nov, \d\d:\d\d$/);
 		expect(r.words).toMatch(/^window 1 Nov, \d\d:\d\d to 2 Nov, \d\d:\d\d$/);
 	});
 

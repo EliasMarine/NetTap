@@ -33,6 +33,7 @@ import { goto } from '$app/navigation';
 import Page from './+page.svelte';
 import { captureMode } from '$lib/stores/captureMode';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+import { windowWords } from '$lib/utils/drilldown';
 
 /** NET-160: the daemon's LAN policy, so LAN addresses link to their device page. */
 const LAN_POLICY = { version: 'v1', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' };
@@ -930,7 +931,8 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		render(Page);
 		await flush();
 		expect(listCalls()).toEqual([expect.objectContaining({ severity: 1, page: 1, from: FROM, to: TO })]);
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(FROM, TO) })).toHaveAttribute('aria-pressed', 'true');
 		expect(severityPill('High')).toHaveAttribute('aria-pressed', 'true');
 		// Custom counts are this page's own, over the same bounds, and the card shows them
 		// OLD CODE: expect(getAlertCount).toHaveBeenCalledTimes(1); (NET-191: the page also counts the activity alerts)
@@ -951,7 +953,8 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		expect(listCalls()).toEqual([expect.objectContaining({ page: 1, from: TO, to: TO })]);
 		expect(countedCalls()).toEqual([[{ from: TO, to: TO }]]);
 		expect(vi.mocked(getAlertTimeline).mock.calls[0][0]).toMatchObject({ from: TO, to: TO });
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(TO, TO) })).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	it('High to Low on the same bounds sends exactly one page-1 list request', async () => {
@@ -1027,7 +1030,8 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
 		await flush();
 		expect(nav.url.search).toBe('?range=7d');
-		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
+		expect(screen.queryByRole('button', { name: windowWords(FROM, TO) })).not.toBeInTheDocument();
 		expect(spanHours(listCalls().at(-1)!)).toBe(168);
 	});
 
@@ -1081,7 +1085,8 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		vi.mocked(getAlertCount).mockRejectedValueOnce(new Error('HTTP 502'));
 		await refreshPage();
 		await flush();
-		expect(get(alertSnapshots)[24]).toMatchObject({ status: 'error', to: '2026-11-06T12:10:00.000Z', data: older });
+		// OLD CODE: expect(get(alertSnapshots)[24]).toMatchObject({ status: 'error', to: '2026-11-06T12:10:00.000Z', data: older }); (NET-348: kept counts keep their own window)
+		expect(get(alertSnapshots)[24]).toMatchObject({ status: 'error', from: older.from, to: '2026-11-06T12:00:00.000Z', data: older });
 		await fireEvent.click(screen.getByRole('button', { name: 'Show high alerts (3)' }));
 		await flush();
 		expect(listCalls().at(-1)).toMatchObject({ severity: 1, from: older.from, to: older.to });

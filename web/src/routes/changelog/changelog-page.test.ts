@@ -4,6 +4,7 @@ import { goto } from '$app/navigation';
 import Page from './+page.svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+import { windowWords } from '$lib/utils/drilldown';
 
 // NET-272: the page reads range, type and the pick from the URL, and writes them back with goto
 const nav = vi.hoisted(() => ({ set: (_query: string) => {} }));
@@ -322,8 +323,13 @@ describe('Changelog v2 (NET-272)', () => {
 
 		const from = encodeURIComponent(win.get('from')!);
 		const to = encodeURIComponent(win.get('to')!);
-		expect(screen.getByRole('link', { name: 'This device in this range' })).toHaveAttribute('href', `/devices/192.168.1.20?from=${from}&to=${to}`);
-		const logs = screen.getByRole('link', { name: 'Its records in this range' }).getAttribute('href')!;
+		// OLD CODE START — NET-348: the links name the address they search and the window
+		// expect(screen.getByRole('link', { name: 'This device in this range' })).toHaveAttribute('href', `/devices/192.168.1.20?from=${from}&to=${to}`);
+		// const logs = screen.getByRole('link', { name: 'Its records in this range' }).getAttribute('href')!;
+		// OLD CODE END
+		const words = windowWords(win.get('from')!, win.get('to')!);
+		expect(screen.getByRole('link', { name: `192.168.1.20 in this range, ${words}` })).toHaveAttribute('href', `/devices/192.168.1.20?from=${from}&to=${to}`);
+		const logs = screen.getByRole('link', { name: `Records for 192.168.1.20, ${words}` }).getAttribute('href')!;
 		expect(logs).toContain('source.ip%3A%22192.168.1.20%22');
 		expect(logs).toContain(`&from=${from}&to=${to}`);
 		expect(screen.getByRole('link', { name: /Device overview/ })).toHaveAttribute('href', `/devices/mac/${encodeURIComponent(MAC_A)}`);

@@ -151,3 +151,51 @@ describe('Pills nav mode', () => {
 		expect(screen.getByRole('link', { name: 'All alerts' })).not.toHaveAttribute('aria-current');
 	});
 });
+
+// NET-348: on a phone the pill track scrolls sideways with its scrollbar hidden (a11y.css 5)
+describe('Pills: the selected pill scrolls into view inside its track', () => {
+	const WIDE = [...RANGES, { value: 'custom', label: '19:02 to 20:02, 20 Nov' }, { value: 'later', label: 'Later' }];
+	/** Each pill 100 px wide in a 200 px track, moved left by the track's scroll; jsdom has no layout. */
+	function layOut() {
+		return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+			if (this.classList.contains('pills')) return new DOMRect(0, 0, 200, 30);
+			const track = this.parentElement!;
+			const i = [...track.children].indexOf(this);
+			return new DOMRect(i * 100 - track.scrollLeft, 0, 100, 30);
+		});
+	}
+
+	it('brings a trailing selected pill into view on mount, then a leading one, without moving focus or the page', async () => {
+		const rects = layOut();
+		const original = Element.prototype.scrollIntoView;
+		const scrollIntoView = vi.fn();
+		Element.prototype.scrollIntoView = scrollIntoView;
+		try {
+			const { rerender } = render(Pills, { options: WIDE, value: 'custom', ariaLabel: 'Time range' });
+			const track = screen.getByRole('group', { name: 'Time range' });
+			// pill 4 spans 400–500 px: the track scrolls just far enough to show its right edge
+			expect(track.scrollLeft).toBe(300);
+			await rerender({ value: '1h' });
+			expect(track.scrollLeft).toBe(0);
+			await rerender({ value: '24h' }); // already in view: no scroll
+			expect(track.scrollLeft).toBe(0);
+			expect(document.activeElement).toBe(document.body);
+			expect(scrollIntoView).not.toHaveBeenCalled();
+		} finally {
+			rects.mockRestore();
+			Element.prototype.scrollIntoView = original;
+		}
+	});
+
+	it('scrolls the track in tabs and nav mode too', () => {
+		const rects = layOut();
+		try {
+			render(Pills, { options: WIDE, value: 'later', ariaLabel: 'Views', mode: 'tabs' });
+			expect(screen.getByRole('tablist', { name: 'Views' }).scrollLeft).toBe(400);
+			render(Pills, { options: WIDE.map((o) => ({ ...o, href: `/x/${o.value}` })), value: 'later', ariaLabel: 'Sections', mode: 'nav' });
+			expect(screen.getByRole('navigation', { name: 'Sections' }).scrollLeft).toBe(400);
+		} finally {
+			rects.mockRestore();
+		}
+	});
+});

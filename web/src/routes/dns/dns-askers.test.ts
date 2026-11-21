@@ -246,3 +246,57 @@ describe('DNS page — the devices that looked a domain up', () => {
 		expect(windowOf(lastDomain())).not.toEqual(windowOf(first));
 	});
 });
+
+// NET-348: the 50 ms scroll after a pick was never cleared, so a test that ended first saw it run after
+// jsdom's teardown ("ReferenceError: document is not defined", PR #345's Vitest job).
+describe('DNS page — the scroll after a pick', () => {
+	const original = Element.prototype.scrollIntoView;
+	let scrollIntoView = vi.fn();
+
+	beforeEach(() => {
+		urls = [];
+		over = {};
+		nav.set('');
+		stubDaemon();
+		scrollIntoView = vi.fn();
+		Element.prototype.scrollIntoView = scrollIntoView;
+	});
+	afterEach(() => {
+		Element.prototype.scrollIntoView = original;
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it('scrolls to the askers 50 ms after a pick', async () => {
+		render(DnsPage);
+		await settle();
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		await fireEvent.click(bar('a.example'));
+		vi.advanceTimersByTime(50);
+		expect(scrollIntoView).toHaveBeenCalledOnce();
+	});
+
+	it('closing the page clears a scroll still waiting, so nothing runs after teardown', async () => {
+		const { unmount } = render(DnsPage);
+		await settle();
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		await fireEvent.click(bar('a.example'));
+		unmount();
+		// the element is gone either way; what must not happen is the timer reaching for `document`
+		const byId = vi.spyOn(document, 'getElementById');
+		vi.advanceTimersByTime(50);
+		expect(byId).not.toHaveBeenCalledWith('domain-askers');
+		expect(scrollIntoView).not.toHaveBeenCalled();
+		byId.mockRestore();
+	});
+
+	it('a second pick within 50 ms replaces the waiting scroll', async () => {
+		render(DnsPage);
+		await settle();
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		await fireEvent.click(bar('a.example'));
+		await fireEvent.click(bar('b.example'));
+		vi.advanceTimersByTime(50);
+		expect(scrollIntoView).toHaveBeenCalledOnce();
+	});
+});

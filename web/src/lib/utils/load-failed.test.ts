@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { stripIgnored } from '../../../scripts/check-colors.mjs';
@@ -12,11 +12,30 @@ describe('loadFailed', () => {
 	it('says older figures are still on screen when stale', () => {
 		expect(loadFailed('traffic totals', true)).toBe("Couldn't refresh traffic totals; showing the last figures loaded.");
 	});
+
+	it("says when the kept figures loaded: the time today, the day and time before today (NET-348)", () => {
+		const now = new Date(2026, 10, 20, 21, 5);
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(now);
+		try {
+			expect(loadFailed('traffic totals', true, new Date(2026, 10, 20, 20, 41, 30).getTime())).toBe(
+				"Couldn't refresh traffic totals; showing figures from 20:41.",
+			);
+			expect(loadFailed('traffic totals', true, new Date(2026, 10, 19, 23, 58).getTime())).toBe(
+				"Couldn't refresh traffic totals; showing figures from 19 Nov, 23:58.",
+			);
+			// a failure with nothing kept never names a time
+			expect(loadFailed('traffic totals', false, now.getTime())).toBe("Couldn't load traffic totals: the request failed.");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
 
 // NET-192 PR 4: a stale note is the amber status notice everywhere, never a grey line or a red alert box.
 describe('stale notes in markup', () => {
-	const STALE = /\{loadFailed\([^)]*,\s*true\)\}|feedback\(loadFailed\(/;
+	// OLD CODE: const STALE = /\{loadFailed\([^)]*,\s*true\)\}|feedback\(loadFailed\(/; (NET-348: a stale note may pass when its figures loaded)
+	const STALE = /\{loadFailed\([^)]*,\s*true(?:,[^)]*)?\)\}|feedback\(loadFailed\(/;
 	const AMBER = /<(?:p|div) class="notice is-warn[^"]*" role="status"><Icon name="warn" \/>(?:<span>)?\{loadFailed\(/;
 
 	function svelteFiles(dir: string): string[] {
@@ -41,5 +60,6 @@ describe('stale notes in markup', () => {
 		expect(flagged(`{@render feedback(loadFailed('the storage status', true), true)}`)).toBe(true);
 		expect(flagged(`<p class="notice is-warn" role="status">{loadFailed('the capture files', true)}</p>`)).toBe(true);
 		expect(flagged(`<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('ports', true)}</span></p>`)).toBe(false);
+		expect(flagged(`<p class="note">{loadFailed('ports', true, loadedAt.ports)}</p>`)).toBe(true);
 	});
 });

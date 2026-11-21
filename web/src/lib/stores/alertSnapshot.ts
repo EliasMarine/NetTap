@@ -16,6 +16,8 @@ export interface AlertSnapshot {
 	to: string;
 	/** On 'error', the last good counts for this range (stale, #96), or null if none loaded yet. */
 	data: AlertCountResponse | null;
+	/** When `data` landed (ms). On 'error' with kept counts, `from`, `to` and `at` stay theirs (NET-348). */
+	at?: number;
 }
 
 type Fetcher = (params: { from: string; to: string }) => Promise<AlertCountResponse>;
@@ -65,9 +67,17 @@ export function loadAlertSnapshot(hours: number): Promise<AlertSnapshot> {
 	// Keep showing the previous numbers while the next generation loads.
 	if (!existing) state.update((s) => ({ ...s, [hours]: { status: 'loading', hours, ...range, data: null } }));
 
+	// OLD CODE START — NET-348: kept counts took the failed attempt's window, so they named minutes they never counted
+	// const promise = fetcher(range)
+	// 	.then((data): AlertSnapshot => ({ status: 'ok', hours, ...range, data }))
+	// 	.catch((): AlertSnapshot => ({ status: 'error', hours, ...range, data: get(state)[hours]?.data ?? null }))
+	// OLD CODE END
 	const promise = fetcher(range)
-		.then((data): AlertSnapshot => ({ status: 'ok', hours, ...range, data }))
-		.catch((): AlertSnapshot => ({ status: 'error', hours, ...range, data: get(state)[hours]?.data ?? null }))
+		.then((data): AlertSnapshot => ({ status: 'ok', hours, ...range, data, at: clock() }))
+		.catch((): AlertSnapshot => {
+			const kept = get(state)[hours];
+			return kept?.data ? { ...kept, status: 'error' } : { status: 'error', hours, ...range, data: null };
+		})
 		.then((snap) => {
 			if (myGeneration === generation) state.update((s) => ({ ...s, [hours]: snap }));
 			if (inFlight.get(hours)?.promise === promise) inFlight.delete(hours);

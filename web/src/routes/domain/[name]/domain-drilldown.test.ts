@@ -4,6 +4,7 @@ import { goto } from '$app/navigation';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import type { DomainSummary } from '$lib/api/drilldown';
 import { DOMAIN } from '../../../../e2e/visual/fixtures/drilldown';
+import { windowWords } from '$lib/utils/drilldown';
 
 // NET-249 slice 2 (T8, plan §1a): the domain chart asks for the owner's buckets through the new
 // `interval`, a pick narrows this page to the picked window (Custom), and the page says when its
@@ -115,7 +116,8 @@ describe('Domain page — a Custom window from the URL (NET-249 §1a)', () => {
 		await loaded();
 		const [u] = domainCalls();
 		expect([u.searchParams.get('from'), u.searchParams.get('to'), u.searchParams.get('interval')]).toEqual([F, T, '1m']);
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(F, T) })).toHaveAttribute('aria-pressed', 'true');
 		expect(screen.getByText(/^DNS lookups per minute · window /)).toBeInTheDocument();
 		for (const link of [/Open alerts/, /Search Log Explorer for/, /Certificates seen for this name/]) {
 			expect([href(link).searchParams.get('from'), href(link).searchParams.get('to')], String(link)).toEqual([F, T]);
@@ -132,7 +134,8 @@ describe('Domain page — a Custom window from the URL (NET-249 §1a)', () => {
 		await vi.waitFor(() => expect(domainCalls().at(-1)!.searchParams.get('interval')).toBe('1h'));
 		const u = domainCalls().at(-1)!;
 		expect((Date.parse(u.searchParams.get('to')!) - Date.parse(u.searchParams.get('from')!)) / 86_400_000).toBeCloseTo(7);
-		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
+		expect(screen.queryByRole('button', { name: windowWords(F, T) })).not.toBeInTheDocument();
 	});
 
 	it('an invalid window falls back to the default range', async () => {
