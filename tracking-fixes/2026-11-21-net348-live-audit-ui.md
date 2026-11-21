@@ -43,7 +43,10 @@ Each was a display gap:
   - Connections: UDP → TCP, unmapped → All, and the TLS query.
   - Changelog: a two-address row names the address searched.
   - DNS: two teardown cases.
-- Device: see the deploy output (added after the run).
+- Device (G11, 2026-11-21, `main` @ `ba4a3178`, via `deploy-live-audit-fixes.sh`): both containers healthy, `/login` 200, `/api/auth/me` 401 without a session.
+  - The served build carries the new copy: "log and alert retention", "showing figures from", "Records for" and the `settings?tab=retention` link each appear in the web image's `/app/build`.
+  - The drive finding's condition is live: SMART reports `healthy: true` at 73 °C with "Drive temperature 73C exceeds warning threshold 70C", the case System now shows amber.
+  - Not checked in a browser on the device: the G11's self-signed certificate stops automated Chrome, so the six screens rest on the visual suite (391 passed on `a78fe1e2`).
 
 ## Lessons
 - A count's link should say which window and address it searches, not only that it is "this range".

@@ -1,6 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-16 (Chain 37: on a fresh Ubuntu 22.04 box the installer stopped twice at needrestart's "Daemons using outdated libraries" dialog; apt now runs unattended (NET-297, #303, verified on a fresh 22.04 droplet).)
+> **Last updated:** 2026-11-21 (Chain 38: NET-347's PCAP search fixes verified on the G11 with `deploy-live-audit-fixes.sh`, deployed with NET-348's UI fixes and SvelteKit 3 (NET-315).)
+<!-- previous: **Last updated:** 2026-11-16 (Chain 37: on a fresh Ubuntu 22.04 box the installer stopped twice at needrestart's "Daemons using outdated libraries" dialog; apt now runs unattended (NET-297, #303, verified on a fresh 22.04 droplet).) -->
 <!-- previous: **Last updated:** 2026-11-14 (Chain 36: any `br0` was treated as NetTap's; setup, teardown and bypass now refuse a bridge NetTap didn't make (NET-287, #296, verified on the G11). Chain 35, third round: the first-run allow-list became exact requests (NET-280, NET-290), update component names are checked before use (NET-291), the dead compose update path is gone (NET-288), count charts get whole-number ticks (NET-286), three small UI fixes (NET-283-285).) -->
 <!-- previous: **Last updated:** 2026-11-14 (Chain 35: the 2026-11-14 bug triage. A fresh install's first daily index could get a replica a single node can't place (NET-252); validate-hardware.sh run on its own stopped at the first warning (NET-253). Same day, outside the install path: another site could start /api work with the owner's cookie (NET-257), the MAC device page had no bandwidth series (NET-260), DNS Lookup read "ns" as a type (NET-268). Second round: extreme years gave a 500 (NET-275), Go Live opened before the first admin (NET-277), Packets ran a URL search on open (NET-276).) -->
 <!-- previous: **Last updated:** 2026-11-13 (Chain 34: malcolm-config.sh's generate_auth put the admin password on htpasswd's and python3's command lines and in run's verbose log, and a quote in it broke the python fallback; it now goes on stdin. NET-251, install-time only.) -->
@@ -2144,8 +2145,8 @@ The first-run Go Live path can't be shown on a box with an admin; CI's first-run
 
 | Field | Value |
 |---|---|
-| **PR** | `fix/pcap-search-reliability` |
-| **Status** | Fixed in code; G11 deploy via `scripts/remote/deploy-live-audit-fixes.sh` |
+| **PR** | `fix/pcap-search-reliability`, PR #346 → `16326171` |
+| **Status** | Fixed and verified on the G11 2026-11-21 (`deploy-live-audit-fixes.sh` on `main` @ `ba4a3178`) |
 | **Severity** | High |
 | **Date** | 2026-11-20 |
 
@@ -2156,6 +2157,8 @@ The first-run Go Live path can't be shown on a box with an admin; CI's first-run
 **Fix:** a new search first compiles the filter (`check_filter`: the PCAP rules, then the existing CHECK_JOB, holding one reader slot); TShark's refusal is a 400 and installs nothing. Starts run one at a time under `_start_lock` with a 45 s deadline (`SearchStartExpired` → 503). A replaced job is never cancelled: it stops before its next file, and every job shares `_count_lock`, so background search runs one TShark read at a time and the other slot stays free for previews and checks. `_count_file` (`nice -n 19 tshark -l`) reads both pipes as they fill, holds its slot until the docker exec ends, and classifies each file: timed out, out of memory, truncated, full, failed, keeping the matches it saw. The page names the searched filter, says what was covered ("Fully searched 7 of 318 files. Results are incomplete.") and marks stopped reads "at least N". New `POST /api/pcap/check-filter` gates Download filtered.
 
 **Verification:** `deploy-live-audit-fixes.sh` runs `verify_pcap_search.py` inside the daemon: the refused filter answers 400 on both routes, and a known-answer search over a closed 60 s window must read every file in full and match TShark's own per-file counts.
+
+**Device result (2026-11-21):** the refused filter answered 400 on both routes. The known-answer search covered 5 closed files (314,573 UDP frames): 5 of 5 read in full, 0 failed, 0 timed out, per-file counts equal to TShark's. `nettap-tshark` had 0 zombies. Deployed together with NET-348 (#347) and SvelteKit 3 (NET-315, #348); `rollback-live-audit.sh` was not needed.
 
 **Key insight:** cancelling an asyncio wait on `docker exec` does not stop the process in the container. Hold the slot until the exec has ended.
 

@@ -45,7 +45,10 @@
   - svelte-check 0 errors.
   - Colour gate clean.
   - Mutation check: removing the stale-preview guard fails its test.
-- Device: see the deploy output (added after the run).
+- Device (G11, 2026-11-21, `main` @ `ba4a3178` with #345, #346 and #348, via `deploy-live-audit-fixes.sh`): every check passed.
+  - The refused filter answered 400 on both the filter check and the search, and nothing started.
+  - A known-answer search over a closed 60 s window (5 of 4,682 closed files, 314,573 UDP frames) read 5 of 5 files in full, with 0 failed and 0 timed out, and its per-file counts equalled TShark's own.
+  - `nettap-tshark` had 0 zombies.
 
 ## Reviews (PR #346)
 - `/deep-review`: no findings.
