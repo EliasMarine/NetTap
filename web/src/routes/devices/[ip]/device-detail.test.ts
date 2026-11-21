@@ -12,9 +12,10 @@ import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 
 const { IP } = vi.hoisted(() => ({ IP: '192.168.1.10' }));
 
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: readable({ url: new URL(`http://localhost/devices/${IP}`), params: { ip: IP } }),
-}));
+})));
 // NET-225: the page asks the shared store at load; these tests set the mode on it directly
 vi.mock('$lib/stores/captureMode', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/stores/captureMode')>()),

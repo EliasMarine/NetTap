@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack, type Snippet } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import IPAddress from '$components/IPAddress.svelte';
 	// OLD CODE: import { isIpAddress } from '$lib/stores/lan'; (slice 2a: domain cells and the drawer's source link)
 	import { domainHref, ipHref, isIpAddress } from '$lib/stores/lan';
@@ -782,7 +782,8 @@
 	// OLD CODE END
 	function pickTimeline(chart: TimeChart, i: number, j: number) {
 		const href = withCount(`/logs?${windowQuery(pickWindow(chart, i, j), intervalRange)}`, pickedTotal(chart, i, j));
-		const target = new URL(href, $page.url).searchParams;
+		// OLD CODE: const target = new URL(href, page.url).searchParams; (kit 3: page.url is a read-only URL; NET-315)
+		const target = new URL(href, page.url.href).searchParams;
 		const count = linkedCount(target.get('count'));
 		const unchanged = handOffSearch(target) === appliedSearch && count === appliedCount;
 		// What the hand-off clears, cleared here too: an unchanged URL runs none
@@ -1098,9 +1099,9 @@
 	// on /logs (goto('/logs?ip=…') or goto('/logs?query=…')) did nothing
 	// onMount(() => {
 	// 	// Read URL params for deep-linking from other pages (e.g., /logs?filter=1.2.3.4)
-	// 	const urlFilter = $page.url.searchParams.get('filter');
-	// 	const urlIp = $page.url.searchParams.get('ip');
-	// 	const urlQuery = $page.url.searchParams.get('query');
+	// 	const urlFilter = page.url.searchParams.get('filter');
+	// 	const urlIp = page.url.searchParams.get('ip');
+	// 	const urlQuery = page.url.searchParams.get('query');
 	// 	if (urlFilter) {
 	// 		activeIpFilter = urlFilter;
 	// 	} else if (urlIp) {
@@ -1124,7 +1125,7 @@
 	// let appliedSearch: string | null = null;
 	// $effect(() => {
 	// 	// Deep links from other pages (e.g., /logs?filter=1.2.3.4) and the top-bar search hand-off
-	// 	const params = $page.url.searchParams;
+	// 	const params = page.url.searchParams;
 	// 	const urlFilter = params.get('filter');
 	// 	const urlIp = params.get('ip');
 	// 	const urlQuery = params.get('query');
@@ -1153,7 +1154,8 @@
 	// OLD CODE END
 	const HAND_OFF_KEYS = ['filter', 'ip', 'query', 'range', 'from', 'to', 'type', 'exclude_src'] as const;
 	/** A URL's hand-off key: its filters and window, without the count */
-	const handOffSearch = (params: URLSearchParams) => JSON.stringify(HAND_OFF_KEYS.map((k) => params.get(k)));
+	// OLD CODE: const handOffSearch = (params: URLSearchParams) => …; (kit 3: page.url is a read-only URL; NET-315)
+	const handOffSearch = (params: Pick<URLSearchParams, 'get'>) => JSON.stringify(HAND_OFF_KEYS.map((k) => params.get(k)));
 	/** The ?filter= / ?ip= / ?query= / ?range= / ?from= / ?to= / ?type= / ?exclude_src= last applied; null before the first load. */
 	let appliedSearch: string | null = null;
 	/** The ?count= last applied, kept out of the search key: it changes no window and no filter (NET-160 section D). */
@@ -1161,7 +1163,7 @@
 
 	$effect(() => {
 		// Deep links from other pages (e.g., /logs?filter=1.2.3.4) and the top-bar search hand-off
-		const params = $page.url.searchParams;
+		const params = page.url.searchParams;
 		// OLD CODE START — slice 2b-1: no log type or excluded sources (Home's Connections link)
 		// const keys = ['filter', 'ip', 'query', 'range', 'from', 'to'] as const;
 		// const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo] = keys.map((k) => params.get(k));

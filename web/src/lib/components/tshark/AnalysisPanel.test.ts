@@ -5,9 +5,10 @@ import AnalysisPanel from './AnalysisPanel.svelte';
 
 // tests can point the page at another URL (auto-analyze reads ?filter=&auto=1)
 const nav = vi.hoisted(() => ({ url: 'http://localhost/tools/tshark' }));
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: { subscribe: (fn: (v: { url: URL }) => void) => readable({ url: new URL(nav.url) }).subscribe(fn) },
-}));
+})));
 
 /** Answer each URL prefix with its body, or HTTP 500 when it has none. */
 function stubFetch(replies: Record<string, unknown>) {

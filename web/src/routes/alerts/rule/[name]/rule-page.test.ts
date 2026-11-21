@@ -13,11 +13,12 @@ import { windowWords } from '$lib/utils/drilldown';
 // on the page's list, over the response's own window), and the explanation links only out to https
 
 const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable: w } = await import('svelte/store');
 	pageStore.value = w({ url: new URL('http://localhost/alerts/rule/x'), params: { name: 'x' } });
 	return { page: pageStore.value };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 const { default: Page } = await import('./+page.svelte');
@@ -125,7 +126,7 @@ describe('Suricata rule page', () => {
 		// the links carry the URL's range for their words, beside the response's bounds
 		expect(query(kpi('Alerts').getAttribute('href'))).toEqual({ signature: RULE_NAME, ...WIN, range: '6h', count: '180' });
 		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
-		expect(goto).toHaveBeenCalledWith(`/alerts/rule/${encodeURIComponent(RULE_NAME)}?range=30d`, { replaceState: true, keepFocus: true, noScroll: true });
+		expect(goto).toHaveBeenCalledWith(`/alerts/rule/${encodeURIComponent(RULE_NAME)}?range=30d`, { replace: true, reset: false });
 	});
 
 	it("links each SID's category to its page, except from the activity list", async () => {
@@ -191,7 +192,7 @@ describe('Suricata rule page', () => {
 		render(Page);
 		await loaded();
 		await fireEvent.click(screen.getByRole('button', { name: 'Activity · 12' }));
-		expect(goto).toHaveBeenCalledWith(`/alerts/rule/${encodeURIComponent(RULE_NAME)}?range=7d&activity=true`, { replaceState: true, keepFocus: true, noScroll: true });
+		expect(goto).toHaveBeenCalledWith(`/alerts/rule/${encodeURIComponent(RULE_NAME)}?range=7d&activity=true`, { replace: true, reset: false });
 		goTo(RULE_NAME, '?range=7d&activity=true');
 		stubDaemon({ ...SURICATA_RULE, activity: true, total: 12, severity: { high: 0, medium: 0, low: 12, info: 0 }, timeline: [{ t: SURICATA_RULE.from, n: 12 }], rules: [{ ...SURICATA_RULE.rules[0], alerts: 12 }] });
 		await refreshPage();

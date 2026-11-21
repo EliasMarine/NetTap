@@ -9,7 +9,7 @@
 	import { onDestroy, tick } from 'svelte';
 	// OLD CODE: import { goto } from '$app/navigation'; (NET-276)
 	import { afterNavigate, goto } from '$app/navigation';
-	import { page as pageStore } from '$app/stores';
+	import { page as pageStore } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { getCaptures, searchPackets, type CaptureFile, type CapturesResponse, type PacketSearchResult } from '$lib/api/packets';
 	import { fetchCaptureStatus, type CaptureStatus } from '$lib/api/capture';
 	import { getTSharkStatus, type TSharkStatus } from '$lib/api/tshark';
@@ -32,10 +32,11 @@
 	const message = (err: unknown) => (err instanceof Error && err.message ? err.message : 'The request failed.');
 
 	// ---- The URL ----
-	const urlState = $derived(readUrlState($pageStore.url.searchParams));
+	// OLD CODE: const urlState = $derived(readUrlState(pageStore.url.searchParams)); (kit 3: page.url is a read-only URL; NET-315)
+	const urlState = $derived(readUrlState(new URLSearchParams(pageStore.url.search)));
 	const urlKey = $derived(urlState ? packetsUrl(urlState) : null);
 	/** A link with search parameters that don't make a valid search: say so, never guess. */
-	const badLink = $derived(!urlState && $pageStore.url.searchParams.size > 0);
+	const badLink = $derived(!urlState && pageStore.url.searchParams.size > 0);
 
 	// ---- What the page loads ----
 	let captures = $state<CapturesResponse | null>(null);
@@ -84,7 +85,7 @@
 	let appliedUrl: string | null = null;
 	// OLD CODE START — NET-276: loaded on any URL change, so a full load from another site's link searched at once
 	// $effect(() => {
-	// 	const key = $pageStore.url.search;
+	// 	const key = pageStore.url.search;
 	// 	untrack(() => {
 	// 		if (key === appliedUrl) return;
 	// 		appliedUrl = key;
@@ -95,7 +96,7 @@
 	// Runs on mount and after every navigation to a URL; 'enter' is a full load (a bookmark, a pasted link,
 	// another site, a new tab), every other type is a navigation inside NetTap (a link, goto, Back or Forward)
 	afterNavigate(({ type }) => {
-		const key = $pageStore.url.search;
+		const key = pageStore.url.search;
 		if (key === appliedUrl) return;
 		appliedUrl = key;
 		held = type === 'enter';
@@ -199,7 +200,7 @@
 
 	function search(state: PacketUrlState) {
 		const href = packetsUrl(state);
-		if (href === `${$pageStore.url.pathname}${$pageStore.url.search}`) {
+		if (href === `${pageStore.url.pathname}${pageStore.url.search}`) {
 			rerun();
 			return;
 		}

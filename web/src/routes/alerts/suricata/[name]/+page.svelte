@@ -6,7 +6,7 @@
 	 * to the Alerts list built from the same filters over the response's own window.
 	 */
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	import { getSuricataCategory, type SuricataAddressRow, type SuricataCategoryFigures, type SuricataRuleRow, type SuricataTopList } from '$lib/api/drilldown';
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
@@ -48,8 +48,8 @@
 	// OLD CODE: type Level = 'high' | 'medium' | 'low' | 'info'; const LEVELS: readonly Level[] = [...]; (one copy, in the rule page's view)
 
 	/** The stored value, as given: SvelteKit has decoded the path segment once. */
-	const name = $derived(($page.params as Record<string, string>).name ?? '');
-	const params = $derived($page.url.searchParams);
+	const name = $derived((page.params as Record<string, string>).name ?? '');
+	const params = $derived(page.url.searchParams);
 	/** The exact window a link brought (?from=&to=), shown as "Custom". */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The URL's standard range (without one, the saved default, else 24h): a Custom window's links carry it for their words. */
@@ -111,7 +111,7 @@
 
 	/** A range pill: a rolling window ending now, so the link's exact window (Custom) goes. */
 	function pickRange(value: string) {
-		if (value !== 'custom') void goto(`${$page.url.pathname}?range=${value}`, { replaceState: true, keepFocus: true, noScroll: true });
+		if (value !== 'custom') void goto(`${page.url.pathname}?range=${value}`, { replace: true, reset: false });
 	}
 
 	// OLD CODE START (section D: the link carries the figure it opens, so the list can say if it differs)

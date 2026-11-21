@@ -31,14 +31,14 @@ describe('narrowTo (NET-249)', () => {
 		const url = target();
 		expect(url.pathname).toBe('/dns');
 		expect(Object.fromEntries(url.searchParams)).toEqual({ domain: 'a.example', from: WIN.from, to: WIN.to, range: '24h', count: '12' });
-		expect(vi.mocked(goto).mock.calls[0][1]).toMatchObject({ replaceState: false });
+		expect(vi.mocked(goto).mock.calls[0][1]).toMatchObject({ replace: false });
 	});
 
 	it("keeps the URL's own range, and replaces the history entry for the window already on screen", async () => {
 		await narrowTo(new URL(`http://x/dns?from=${WIN.from}&to=${WIN.to}&range=7d&count=3`), WIN, WIN, '24h', 'count', 4);
 		expect(target().searchParams.get('range')).toBe('7d');
 		expect(target().searchParams.get('count')).toBe('4');
-		expect(vi.mocked(goto).mock.calls[0][1]).toMatchObject({ replaceState: true });
+		expect(vi.mocked(goto).mock.calls[0][1]).toMatchObject({ replace: true });
 	});
 
 	it('replaces a range that is not one of ours', async () => {

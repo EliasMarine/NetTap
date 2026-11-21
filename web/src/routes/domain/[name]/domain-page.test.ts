@@ -10,11 +10,12 @@ import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 // KPI, and the alert count is labelled for what it is, with its coverage
 
 const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable: w } = await import('svelte/store');
 	pageStore.value = w({ url: new URL('http://localhost/domain/stream.example.net'), params: { name: 'stream.example.net' } });
 	return { page: pageStore.value };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 const { default: Page } = await import('./+page.svelte');

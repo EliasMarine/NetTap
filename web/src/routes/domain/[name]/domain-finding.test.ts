@@ -13,11 +13,12 @@ import { windowWords } from '$lib/utils/drilldown';
 
 const NAME = DOMAIN_FINDING.name;
 const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable: w } = await import('svelte/store');
 	pageStore.value = w({ url: new URL('http://localhost/domain/x'), params: { name: 'x' } });
 	return { page: pageStore.value };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 const goTo = (query: string) => pageStore.value.set({ url: new URL(`http://localhost/domain/${NAME}${query}`), params: { name: NAME } });

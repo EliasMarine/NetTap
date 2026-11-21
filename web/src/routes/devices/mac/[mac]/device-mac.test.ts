@@ -10,9 +10,10 @@ import { expectNoNestedInteractive } from '../../../../tests/nested-interactive'
 // missing from the traffic reply too, so they would have read 0.
 
 const { MAC } = vi.hoisted(() => ({ MAC: 'D0:21:F9:5E:35:32' }));
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: readable({ url: new URL(`http://localhost/devices/mac/${MAC}`), params: { mac: MAC } }),
-}));
+})));
 // NET-205: the live bandwidth card polls its own endpoint; here it stays loading, and the tests read its key
 const { getLiveBandwidth } = vi.hoisted(() => ({
 	getLiveBandwidth: vi.fn((_key: { mac: string } | { ip: string }, _signal?: AbortSignal) => new Promise<never>(() => {})),

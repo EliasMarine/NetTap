@@ -6,7 +6,7 @@
 	 * was observed (dhcp-summary.ts), never an order of events.
 	 */
 	import { onDestroy, onMount, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	import { getDhcpTimeline, type DhcpTimeline, type DhcpTransaction } from '$lib/api/dhcp-timeline';
 	import { HttpError } from '$lib/api/drilldown';
@@ -25,7 +25,7 @@
 
 	const CHECK_DAEMON = 'Check that NetTap is running on the System page, then try again.';
 
-	const params = $derived($page.url.searchParams);
+	const params = $derived(page.url.searchParams);
 	const mac = $derived(params.get('mac')?.trim() ?? '');
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	const baseRange = $derived(DRILL_RANGES.find((r) => r.value === params.get('range')) ?? DRILL_RANGES.find((r) => r.value === startRange('24h'))!);
@@ -107,17 +107,17 @@
 			q.set('from', custom.from);
 			q.set('to', custom.to);
 		}
-		return `${$page.url.pathname}?${q.toString()}`;
+		return `${page.url.pathname}?${q.toString()}`;
 	}
 	function pickRange(value: string) {
-		if (value !== 'custom') void goto(urlFor({ range: value }), { replaceState: true, keepFocus: true, noScroll: true });
+		if (value !== 'custom') void goto(urlFor({ range: value }), { replace: true, reset: false });
 	}
 	function show(e: SubmitEvent) {
 		e.preventDefault();
 		const picked = pickedMac(typed, devices);
 		// the same device again: the URL can't change, so load it again here
 		if (picked === mac) void refresh.run();
-		else if (picked) void goto(urlFor({ mac: picked }), { keepFocus: true, noScroll: true });
+		else if (picked) void goto(urlFor({ mac: picked }), { reset: false });
 	}
 
 	type Row = DhcpTransaction & { key: number };

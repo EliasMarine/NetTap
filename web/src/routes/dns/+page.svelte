@@ -11,7 +11,7 @@
 		getDeviceDns,
 		ENCRYPTED_DNS_NOTE,
 	} from '$lib/api/dns';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import { loadFailed } from '$lib/utils/load-failed';
@@ -107,7 +107,7 @@
 
 	// OLD CODE: let selectedTimeRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	let selectedTimeRange = $state<string>(startRange('24h'));
-	const params = $derived($page.url.searchParams);
+	const params = $derived(page.url.searchParams);
 	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every card follows it */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The queries the pick carried, compared with the narrowed chart's own total */
@@ -624,7 +624,7 @@
 	function handleTimeRangeChange(value: string) {
 		if (value === 'custom') return;
 		selectedTimeRange = value;
-		if (custom) void goto(withoutWindow($page.url), { keepFocus: true, noScroll: true });
+		if (custom) void goto(withoutWindow(page.url), { reset: false });
 	}
 
 	/** #96: another window's figures must not stand in for this one's if its load fails */
@@ -658,7 +658,7 @@
 
 	/** A pick on the timeline (NET-249): this page over the picked slots, with the queries they counted */
 	function pick(i: number, j: number) {
-		if (timelineChart) void narrowTo($page.url, custom, pickWindow(timelineChart, i, j), selectedTimeRange, 'count', pickedTotal(timelineChart, i, j));
+		if (timelineChart) void narrowTo(page.url, custom, pickWindow(timelineChart, i, j), selectedTimeRange, 'count', pickedTotal(timelineChart, i, j));
 	}
 	const countLine = $derived(pickedLine(picked, timelineFailed ? null : timelineChart, { lead: 'This window now shows', one: 'query', many: 'queries' }));
 
@@ -705,8 +705,8 @@
 
 	onMount(() => {
 		// Apply query params from URL
-		const urlDomain = $page.url.searchParams.get('domain') || '';
-		const urlType = $page.url.searchParams.get('type') || '';
+		const urlDomain = page.url.searchParams.get('domain') || '';
+		const urlType = page.url.searchParams.get('type') || '';
 		if (urlDomain) {
 			domainSearch = urlDomain;
 		}

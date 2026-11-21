@@ -6,7 +6,7 @@
 	 * total missing some measurements is "at least", a list too long to count withholds its KPI.
 	 */
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { getAddressSummary, type AddressPeer, type AddressPort, type AddressSummary, type TlsName } from '$lib/api/drilldown';
 	import { getDeviceConnections, type DeviceConnection, type DeviceConnectionSort } from '$lib/api/devices';
 	import { getRegistryDevices } from '$lib/api/devices-registry';
@@ -42,9 +42,9 @@
 	const CONN_REACH = 10_000;
 
 	// OLD CODE START — SvelteKit has already decoded the param; decoding again threw on a zone id's "%" (fe80::1%eth0)
-	// const ip = $derived(decodeURIComponent(($page.params as Record<string, string>).ip ?? ''));
+	// const ip = $derived(decodeURIComponent((page.params as Record<string, string>).ip ?? ''));
 	// OLD CODE END
-	const ip = $derived(($page.params as Record<string, string>).ip ?? '');
+	const ip = $derived((page.params as Record<string, string>).ip ?? '');
 
 	// OLD CODE: let rangeValue = $state<DrillRangeValue>('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	let rangeValue = $state<DrillRangeValue>(startRange('24h'));

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import type { Writable } from 'svelte/store';
-import { page } from '$app/stores';
+// OLD CODE: import { page } from '$app/stores'; (kit 3 removed it; the mock below keeps the store in pageHolder; NET-315)
 import { goto } from '$app/navigation';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
@@ -13,13 +13,18 @@ import { windowWords } from '$lib/utils/drilldown';
 // 	page: readable({ url: new URL('http://localhost/logs') }),
 // }));
 // OLD CODE END
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+const pageHolder = vi.hoisted(() => ({ store: null as unknown as Writable<{ url: URL }> }));
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable } = await import('svelte/store');
-	return { page: writable({ url: new URL('http://localhost/logs') }) };
-});
+	pageHolder.store = writable({ url: new URL('http://localhost/logs') });
+	return { page: pageHolder.store };
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
-const pageStore = page as unknown as Writable<{ url: URL }>;
+// OLD CODE: const pageStore = page as unknown as Writable<{ url: URL }>; (NET-315)
+// The Page import above has already run the $app/state mock, so the store exists
+const pageStore = pageHolder.store;
 const goTo = (path: string) => pageStore.set({ url: new URL(path, 'http://localhost') });
 beforeEach(() => goTo('/logs'));
 

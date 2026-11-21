@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 
 /**
@@ -13,7 +13,18 @@ describe('vite.config', () => {
 
 	it('imports sveltekit plugin', () => {
 		expect(content).toContain("from '@sveltejs/kit/vite'");
-		expect(content).toContain('sveltekit()');
+		// OLD CODE: expect(content).toContain('sveltekit()'); (kit 3: the SvelteKit config is now the plugin's argument; NET-315)
+		expect(content).toContain('sveltekit({');
+	});
+
+	// kit 3 refuses to build while svelte.config.js exists, so its options live here (NET-315)
+	it('configures adapter-node and the import aliases on the sveltekit plugin', () => {
+		expect(content).toContain("from '@sveltejs/adapter-node'");
+		expect(content).toMatch(/adapter: adapter\(\{\s*out: 'build',\s*precompress: true,/);
+		expect(content).toContain("$lib: 'src/lib'");
+		expect(content).toContain("$components: 'src/lib/components'");
+		expect(content).toContain("$api: 'src/lib/api'");
+		expect(existsSync(resolve(__dirname, '../svelte.config.js'))).toBe(false);
 	});
 
 	it('configures vitest test settings', () => {

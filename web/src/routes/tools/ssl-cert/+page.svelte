@@ -7,7 +7,7 @@
 	 * the subject alternative names and the chain. Reads ?host=X on load.
 	 */
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { sslCertInspect } from '$api/tools';
 	import type { SslCertResult } from '$api/tools';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -30,7 +30,7 @@
 	// ---------------------------------------------------------------------------
 
 	$effect(() => {
-		const params = $page.url.searchParams;
+		const params = page.url.searchParams;
 		const h = params.get('host');
 		if (h) host = h;
 	});

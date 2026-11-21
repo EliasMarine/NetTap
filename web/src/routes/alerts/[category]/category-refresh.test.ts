@@ -31,12 +31,13 @@ const LAN_POLICY = { version: 'v1', subnets: ['192.168.1.0/24'], source: 'env', 
 // vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 // OLD CODE END
 const nav = vi.hoisted(() => ({ set: (_href: string) => {} }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable } = await import('svelte/store');
 	const page = writable({ url: new URL('http://localhost/alerts/scan'), params: { category: 'scan' } });
 	nav.set = (href) => page.set({ url: new URL(href, 'http://localhost'), params: { category: 'scan' } });
 	return { page };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn(async (href: string) => nav.set(href)) }));
 vi.mock('$api/alerts', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$api/alerts')>()),

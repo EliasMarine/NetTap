@@ -12,9 +12,10 @@ import Page from './+page.svelte';
 
 const { IP } = vi.hoisted(() => ({ IP: '192.168.1.10' }));
 
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: readable({ url: new URL(`http://localhost/devices/${IP}`), params: { ip: IP } }),
-}));
+})));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$api/devices', () => ({
 	getDeviceDetail: vi.fn(),

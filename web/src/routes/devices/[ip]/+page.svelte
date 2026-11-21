@@ -11,7 +11,7 @@
 	 *   6. Recent connections (protocol filter, server-sorted, rows open a drawer)
 	 */
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { goto } from '$app/navigation';
 	import { onDestroy, tick, untrack } from 'svelte';
 	import IPAddress from '$components/IPAddress.svelte';
@@ -89,7 +89,7 @@
 	// State
 	// ---------------------------------------------------------------------------
 
-	let deviceIp = $derived(decodeURIComponent(($page.params as Record<string, string>).ip ?? ''));
+	let deviceIp = $derived(decodeURIComponent((page.params as Record<string, string>).ip ?? ''));
 
 	// Core data
 	let loading = $state(true);
@@ -260,7 +260,7 @@
 	const rangeOf = (key: RangeKey) => DRILL_RANGES.find((r) => r.value === key)!;
 	// OLD CODE: let range = $state<RangeKey>('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	let range = $state<RangeKey>(startRange('24h'));
-	const params = $derived($page.url.searchParams);
+	const params = $derived(page.url.searchParams);
 	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every card follows it */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The bytes the pick carried, compared with the narrowed chart's own total */
@@ -280,7 +280,7 @@
 	function pickRange(value: string) {
 		if (value === 'custom') return;
 		range = value as RangeKey;
-		if (custom) void goto(withoutWindow($page.url), { keepFocus: true, noScroll: true });
+		if (custom) void goto(withoutWindow(page.url), { reset: false });
 	}
 	// The window of the last fetch; connection pages reuse it so paging doesn't slide in time
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
@@ -341,7 +341,7 @@
 	const bytesLine = $derived(pickedLine(picked, deviceFailed ? null : bandwidthChart, 'bytes'));
 	/** A pick on the chart (NET-249): this page over the picked slots, with the bytes they drew */
 	function pick(i: number, j: number) {
-		if (bandwidthChart) void narrowTo($page.url, custom, pickWindow(bandwidthChart, i, j), range, 'bytes', pickedTotal(bandwidthChart, i, j));
+		if (bandwidthChart) void narrowTo(page.url, custom, pickWindow(bandwidthChart, i, j), range, 'bytes', pickedTotal(bandwidthChart, i, j));
 	}
 
 	// Dual-series chart data (DL/UL split)
@@ -576,7 +576,7 @@
 
 	// NET-209: the daemon has no device for an address off the LAN (404), so show its address page; null (policy not loaded) stays
 	$effect(() => {
-		if (lanStatus($lanPolicy, deviceIp) === false) void goto(`/address/${encodeURIComponent(deviceIp)}`, { replaceState: true });
+		if (lanStatus($lanPolicy, deviceIp) === false) void goto(`/address/${encodeURIComponent(deviceIp)}`, { replace: true });
 	});
 
 	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest

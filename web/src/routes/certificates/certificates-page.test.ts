@@ -13,11 +13,12 @@ const NO_WINDOW_PILL = /^(\d\d:\d\d(:\d\d)? to |\d{1,2} \w{3}, \d\d:\d\d to |at 
 
 // NET-160: the page reads ?site=&server=&from=&to= from the URL
 const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable: w } = await import('svelte/store');
 	pageStore.value = w({ url: new URL('http://localhost/certificates') });
 	return { page: pageStore.value };
-});
+}));
 const openUrl = (search: string) => pageStore.value.set({ url: new URL(`http://localhost/certificates${search}`) });
 
 // NET-154: one overview request; a failure never reads as "nothing needs a look", and figures

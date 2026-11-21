@@ -26,7 +26,7 @@
 	// OLD CODE END
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { compareHalves, trendWindow, withCoverage, type HalvesResult, type TrendWindow } from '$lib/utils/window-trend';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state; goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
 	import { onDestroy, untrack } from 'svelte';
 	import {
 		getCategoryDetail,
@@ -117,14 +117,14 @@
 	// State
 	// ---------------------------------------------------------------------------
 
-	let category = $derived(($page.params as Record<string, string>).category ?? 'other');
+	let category = $derived((page.params as Record<string, string>).category ?? 'other');
 	// OLD CODE START: let meta = $derived(CATEGORY_META[category] ?? CATEGORY_META['other']); OLD CODE END
 	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	let selectedRange = $state<string>(startRange('24h'));
 	// OLD CODE: let rangeText = $derived(TIME_RANGES.find((r) => r.value === selectedRange)?.text ?? selectedRange); (NET-196)
 	/** The window after "last" or "previous": "hour", "6 hours", "7 days". */
 	let rangeText = $derived(rangeOf(selectedRange).words.replace(/^last /, ''));
-	const params = $derived($page.url.searchParams);
+	const params = $derived(page.url.searchParams);
 	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every card follows it, and nothing is compared */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The bytes the pick carried, compared with the narrowed chart's own total */
@@ -598,12 +598,12 @@
 	function pickRange(value: string) {
 		if (value === 'custom') return;
 		selectedRange = value;
-		if (custom) void goto(withoutWindow($page.url), { keepFocus: true, noScroll: true });
+		if (custom) void goto(withoutWindow(page.url), { reset: false });
 	}
 
 	/** A pick on the chart (NET-249): this page over the picked slots, with the bytes they drew */
 	function pick(i: number, j: number) {
-		if (bandwidthChart) void narrowTo($page.url, custom, pickWindow(bandwidthChart, i, j), selectedRange, 'bytes', pickedTotal(bandwidthChart, i, j));
+		if (bandwidthChart) void narrowTo(page.url, custom, pickWindow(bandwidthChart, i, j), selectedRange, 'bytes', pickedTotal(bandwidthChart, i, j));
 	}
 	const bytesLine = $derived(pickedLine(picked, bandwidthFailed ? null : bandwidthChart, 'bytes'));
 

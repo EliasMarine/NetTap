@@ -15,12 +15,13 @@ const NO_WINDOW_PILL = /^(\d\d:\d\d(:\d\d)? to |\d{1,2} \w{3}, \d\d:\d\d to |at 
 // }));
 // OLD CODE END
 const nav = vi.hoisted(() => ({ set: (_query: string) => {} }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable } = await import('svelte/store');
 	const page = writable({ url: new URL('http://localhost/alerts/scan'), params: { category: 'scan' } });
 	nav.set = (query) => page.set({ url: new URL(`http://localhost/alerts/scan${query}`), params: { category: 'scan' } });
 	return { page };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 // #96: a failed request read as "No alerts in <category>" (the client returned zero stats, and
@@ -329,6 +330,6 @@ describe('Alert category page — the window in its URL', () => {
 		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
 		expect(screen.queryByRole('button', { name: NO_WINDOW_PILL })).not.toBeInTheDocument();
 		screen.getByRole('button', { name: '1h' }).click();
-		expect(goto).toHaveBeenCalledWith('/alerts/scan?range=1h', { replaceState: true, keepFocus: true, noScroll: true });
+		expect(goto).toHaveBeenCalledWith('/alerts/scan?range=1h', { replace: true, reset: false });
 	});
 });

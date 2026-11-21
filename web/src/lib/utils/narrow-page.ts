@@ -42,8 +42,9 @@ export function bucketWords(echoed: string | null | undefined, requested: string
  * earlier figure dropped) and `range`, the words a link falls back to: the URL's own when it has
  * one, else the page's. The history entry is replaced only when the window is already on screen.
  */
-export function narrowTo(url: URL, shown: DrillWindow | null, win: DrillWindow, range: string, key: PickedKey, figure: number): Promise<void> {
-	const q = new URLSearchParams(url.searchParams);
+// OLD CODE: export function narrowTo(url: URL, …) { const q = new URLSearchParams(url.searchParams); (kit 3: page.url is a read-only URL; NET-315)
+export function narrowTo(url: Pick<URL, 'pathname' | 'search'>, shown: DrillWindow | null, win: DrillWindow, range: string, key: PickedKey, figure: number): Promise<void> {
+	const q = new URLSearchParams(url.search);
 	q.delete('count');
 	q.delete('bytes');
 	q.set('from', win.from);
@@ -51,12 +52,14 @@ export function narrowTo(url: URL, shown: DrillWindow | null, win: DrillWindow, 
 	if (!DRILL_RANGES.some((r) => r.value === q.get('range'))) q.set('range', range);
 	q.set(key, String(figure));
 	const same = shown !== null && shown.from === win.from && shown.to === win.to;
-	return goto(`${url.pathname}?${q.toString()}`, { replaceState: same, keepFocus: true, noScroll: true });
+	// kit 3: goto keepFocus + noScroll → reset: false, replaceState → replace (NET-315)
+	return goto(`${url.pathname}?${q.toString()}`, { replace: same, reset: false });
 }
 
 /** This page's URL with its Custom window and picked figure dropped, for a range pill. */
-export function withoutWindow(url: URL): string {
-	const q = new URLSearchParams(url.searchParams);
+// OLD CODE: export function withoutWindow(url: URL): string { const q = new URLSearchParams(url.searchParams); (kit 3: page.url is a read-only URL; NET-315)
+export function withoutWindow(url: Pick<URL, 'pathname' | 'search'>): string {
+	const q = new URLSearchParams(url.search);
 	for (const key of ['from', 'to', 'range', 'count', 'bytes']) q.delete(key);
 	const rest = q.toString();
 	return rest ? `${url.pathname}?${rest}` : url.pathname;

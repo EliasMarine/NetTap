@@ -6,9 +6,10 @@ import { getLiveDashboard } from '$api/live';
 import Page from './+page.svelte';
 import { serviceLogsHref, TLS_QUERY } from '$lib/utils/drilldown';
 
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: readable({ url: new URL('http://localhost/connections') }),
-}));
+})));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$api/traffic', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$api/traffic')>()),

@@ -4,9 +4,10 @@ import { readable, get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 
-vi.mock('$app/stores', () => ({
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../../../tests/app-navigation.svelte')).stateFromStores(() => ({
 	page: readable({ url: new URL('http://localhost/lookup/dns/8.8.8.8'), params: { ip: '8.8.8.8' } }),
-}));
+})));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 const record = (hostname: string | null) => ({ ip: '8.8.8.8', hostname, aliases: [], addresses: ['8.8.8.8'], error: null });

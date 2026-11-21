@@ -14,10 +14,11 @@ import { WATCH_BRIDGE_NOTE } from '$api/devices-watched';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 // NET-160 slice 2b-3: the page reads its window from the URL; these tests use the default (24 hours)
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { readable } = await import('svelte/store');
 	return { page: readable({ url: new URL('http://localhost/devices') }) };
-});
+}));
 
 /** Replies by path; any path not listed answers 503. Returns the fetch mock. */
 function stubDaemon(replies: Record<string, unknown>): ReturnType<typeof vi.fn> {

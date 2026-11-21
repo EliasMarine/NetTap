@@ -9,9 +9,11 @@
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
+	// kit 3: goto keepFocus + noScroll → reset: false (NET-315)
 	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import type { NavigationType } from '@sveltejs/kit';
+	// OLD CODE: import type { NavigationType } from '@sveltejs/kit'; (kit 3 moved the navigation types to $app/navigation; NET-315)
+	import type { NavigationType } from '$app/navigation';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import SettingsNav from './SettingsNav.svelte';
 	import { SETTINGS_TABS, tabFrom, type TabId } from './settings-helpers';
@@ -124,7 +126,7 @@
 	let returnFocus: HTMLElement | null = null;
 
 	function select(id: TabId) {
-		void goto(`?tab=${id}`, { keepFocus: true, noScroll: true });
+		void goto(`?tab=${id}`, { reset: false });
 	}
 
 	beforeNavigate((nav) => {
@@ -147,7 +149,8 @@
 		// a second hold while the bar is open keeps the first place: the bar's own buttons go with it
 		if (!bar?.contains(focused))
 			returnFocus = focused instanceof HTMLElement && focused !== document.body && focused.getAttribute('role') !== 'tab' ? focused : null;
-		pending = { url: nav.to.url, type: nav.type, delta: nav.delta, willUnload: nav.willUnload };
+		// OLD CODE: pending = { url: nav.to.url, type: nav.type, delta: nav.delta, willUnload: nav.willUnload }; (kit 3 types delta on popstate navigations only; NET-315)
+		pending = { url: nav.to.url, type: nav.type, delta: nav.type === 'popstate' ? nav.delta : undefined, willUnload: nav.willUnload };
 		// The bar may be above the fold of a long tab: bring focus (and so the eye) to it
 		void tick().then(() => (bar?.querySelector<HTMLElement>('button') ?? bar)?.focus());
 	});
@@ -194,7 +197,7 @@
 		if (next.type === 'popstate' && next.delta) history.go(next.delta);
 		else if (next.willUnload) location.assign(next.url.href);
 		// OLD CODE: else void goto(next.url); (review L3: a tab switch keeps focus and scroll, as a tab click does)
-		else void goto(next.url, sameTab ? { keepFocus: true, noScroll: true } : undefined);
+		else void goto(next.url, sameTab ? { reset: false } : undefined);
 	}
 </script>
 

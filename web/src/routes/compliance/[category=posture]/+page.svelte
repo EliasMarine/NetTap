@@ -6,7 +6,7 @@
 	 * refresh of the same category keeps the last good one.
 	 */
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state'; // kit 3: $app/stores → $app/state (NET-315)
 	import { getProtocolDistribution } from '$api/traffic';
 	import { getAlertCount, getAlertTopSignatures } from '$api/alerts';
 	import { getDeviceCount } from '$api/devices';
@@ -71,7 +71,7 @@
 	const NAMES = Object.fromEntries(scoreCategories({ ...EMPTY_DATA, failed: [], health: HEALTH_CHECKING }).map((c) => [c.slug, c.name])) as Record<PostureSlug, string>;
 
 	/** The param matcher lets only the six slugs through */
-	const slug = $derived(($page.params as Record<string, string>).category as PostureSlug);
+	const slug = $derived((page.params as Record<string, string>).category as PostureSlug);
 	const guide = $derived(GUIDES[slug]);
 
 	interface Snapshot {

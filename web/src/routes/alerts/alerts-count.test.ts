@@ -39,7 +39,8 @@ const nav = vi.hoisted(() => {
 		},
 	};
 });
-vi.mock('$app/stores', () => ({ page: { subscribe: nav.subscribe } }));
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(() => ({ page: { subscribe: nav.subscribe } })));
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn(async (href: string) => {
 		nav.url = new URL(href, nav.url);

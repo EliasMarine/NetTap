@@ -12,11 +12,12 @@ import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 // figure on it links to the list that holds it over that window
 
 const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
-vi.mock('$app/stores', async () => {
+// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable: w } = await import('svelte/store');
 	pageStore.value = w({ url: new URL('http://localhost/moment') });
 	return { page: pageStore.value };
-});
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 const { default: Page } = await import('./+page.svelte');
