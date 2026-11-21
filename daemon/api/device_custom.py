@@ -179,13 +179,23 @@ async def handle_clear_picture(request: web.Request) -> web.Response:
 
 
 async def handle_set_details(request: web.Request) -> web.Response:
-    """NET-320: merge a partial {watch_after_min, group, owner, notes}; the device must be known."""
+    """NET-320: merge a partial {watch_after_min, group, owner, notes}; the device must be known.
+
+    NET-331: except a body of exactly {"watch_after_min": null}, so a watch restored from a
+    backup for a device the registry no longer knows can still be cleared and its slot freed.
+    """
     try:
         changes = await _body(request)
     except ValueError as exc:
         return _error(str(exc), 400)
+    # OLD CODE START — NET-331: every details PUT needed a known device
+    # return await _run(
+    #     request, lambda store, mac: store.update(mac, changes), True, **_DETAILS
+    # )
+    # OLD CODE END
+    need_device = changes != {"watch_after_min": None}
     return await _run(
-        request, lambda store, mac: store.update(mac, changes), True, **_DETAILS
+        request, lambda store, mac: store.update(mac, changes), need_device, **_DETAILS
     )
 
 

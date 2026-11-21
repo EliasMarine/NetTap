@@ -225,3 +225,83 @@ def test_compaction_racing_appends_loses_nothing(tmp_path):
     assert {f"b{i}" for i in range(100)} <= keys
     seqs = [e["seq"] for e in _lines(path)]
     assert seqs == sorted(seqs) and len(seqs) == len(set(seqs))
+
+
+# --- F5 (NET-331, round 4 #9): an unreadable journal is unavailable, never empty -------------
+
+
+def _unreadable(path) -> None:
+    """Reading the journal now fails with IsADirectoryError, an OSError that isn't "missing"."""
+    path.rename(path.with_suffix(".bak"))
+    path.mkdir()
+
+
+def _readable_again(path) -> None:
+    path.rmdir()
+    path.with_suffix(".bak").rename(path)
+
+
+def test_an_unreadable_journal_is_unavailable_until_its_load_works(tmp_path):
+    path = tmp_path / "e.jsonl"
+    first = EventJournal(str(path))
+    for key in "abc":
+        first.append("new_device", key, "t", {}, instance="")
+    _unreadable(path)
+    journal = EventJournal(str(path))
+    assert not journal.available
+    with pytest.raises(OSError):
+        journal.append("device_offline", "AA", "t", {}, instance="down|t")
+    with pytest.raises(OSError):
+        journal.after(0, 10)
+    assert journal.reload() is False
+    _readable_again(path)
+    # the append loads it first: seq 4 after the existing three, never 1 over them
+    assert (
+        journal.append("device_offline", "AA", "t", {}, instance="down|t")["seq"] == 4
+    )
+    assert journal.available
+    assert journal.append("new_device", "a", "t", {}, instance="") is None  # ids known
+    assert [e["seq"] for e in journal.after(0, 10)] == [1, 2, 3, 4]
+    assert [e["seq"] for e in _lines(path)] == [1, 2, 3, 4]
+
+
+def test_reload_recovers_an_unreadable_journal_without_an_append(tmp_path):
+    path = tmp_path / "e.jsonl"
+    EventJournal(str(path)).append("new_device", "a", "t", {}, instance="")
+    _unreadable(path)
+    journal = EventJournal(str(path))
+    assert (journal.available, journal.last_seq) == (False, 0)
+    _readable_again(path)
+    assert journal.reload() is True
+    assert journal.last_seq == 1
+    assert [e["key"] for e in journal.after(0, 10)] == ["a"]
+    assert journal.reload() is True  # a no-op once loaded
+
+
+def test_a_torn_tail_that_cannot_be_cut_leaves_it_unavailable(tmp_path):
+    path = tmp_path / "e.jsonl"
+    EventJournal(str(path)).append("new_device", "a", "t", {}, instance="")
+    with open(path, "ab") as f:
+        f.write(b'{"seq":2,"id":"x","ty')
+    denied = PermissionError(13, "Permission denied")
+    with patch("services.event_journal.open", side_effect=denied, create=True):
+        journal = EventJournal(str(path))  # no crash at start-up
+    assert not journal.available
+    # once the file can be cut, the next append does it and continues the numbering
+    assert journal.append("new_device", "b", "t", {}, instance="")["seq"] == 2
+    assert [e["key"] for e in _lines(path)] == ["a", "b"]
+
+
+def test_an_unreadable_journal_logs_one_error_not_one_per_retry(tmp_path, caplog):
+    path = tmp_path / "e.jsonl"
+    EventJournal(str(path)).append("new_device", "a", "t", {}, instance="")
+    _unreadable(path)
+    with caplog.at_level("DEBUG", logger="nettap.services.event_journal"):
+        journal = EventJournal(str(path))
+        assert journal.reload() is False  # a dispatcher poll's retry
+        with pytest.raises(OSError):
+            journal.append(
+                "new_device", "b", "t", {}, instance=""
+            )  # a producer's retry
+    levels = [r.levelname for r in caplog.records if "unreadable" in r.getMessage()]
+    assert levels == ["ERROR", "DEBUG", "DEBUG"]

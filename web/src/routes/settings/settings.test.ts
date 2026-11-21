@@ -481,6 +481,8 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 			new_device: true,
 			// F6 (NET-339): nor this one
 			data_cap: true,
+			// NET-331: nor watched devices
+			watched_device: true,
 			// F8 (NET-330): nor quiet hours, which read as off with the default window
 			quiet: { enabled: false, start: '22:00', end: '07:00', critical_through: true },
 		});

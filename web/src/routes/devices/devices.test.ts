@@ -541,12 +541,18 @@ describe('Devices — All devices table', () => {
 describe('Devices — page refresh contract', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
+	// NET-331: the Watched devices card's list loads with the rest
+	const watchedReply = (state: 'up' | 'down') => ({
+		check: { attempt_at: new Date().toISOString(), success_at: new Date().toISOString(), capture_at: null, coverage_since: null, skipped: null, error: null },
+		devices: [{ mac: 'AA:BB:CC:00:00:01', name: 'NAS', after_min: 60, state, seen_at: '2026-11-20T09:00:00Z', since: '2026-11-20T08:00:00Z' }],
+	});
 	const ALL = {
 		'/api/capture/mode': MIRROR,
 		'/api/devices/registry': { devices: [PHONE], total: 1 },
 		'/api/devices': LIST,
 		'/api/devices/count': { from: '', to: '', count: 1 },
 		'/api/devices/registry/new-count': { count: 0, since: '' },
+		'/api/devices/watched': watchedReply('up'),
 	};
 
 	it('registers its loader and reports ok when every request succeeds', async () => {
@@ -573,6 +579,57 @@ describe('Devices — page refresh contract', () => {
 		render(Page);
 		await screen.findByText("Couldn't load devices: the request failed.");
 		expect(await refreshPage()).toBe('failed');
+	});
+
+	it('one refresh reloads the device list and the Watched devices card (NET-331)', async () => {
+		stubDaemon(ALL);
+		render(Page);
+		const card = await screen.findByRole('table', { name: 'Watched devices' });
+		expect(within(card).getByText('Online')).toBeInTheDocument();
+
+		const f = stubDaemon({ ...ALL, '/api/devices/watched': watchedReply('down') });
+		expect(await refreshPage()).toBe('ok');
+		const paths = f.mock.calls.map(([url]) => String(url).split('?')[0]);
+		expect(paths).toContain('/api/devices');
+		expect(paths.filter((u) => u === '/api/devices/watched')).toHaveLength(1);
+		expect(within(screen.getByRole('table', { name: 'Watched devices' })).getByText('Offline')).toBeInTheDocument();
+	});
+
+	it('a failed watched list marks only its card and keeps the last list (NET-331)', async () => {
+		stubDaemon(ALL);
+		render(Page);
+		await screen.findByRole('table', { name: 'Watched devices' });
+
+		stubDaemon({ ...ALL, '/api/devices/watched': undefined });
+		expect(await refreshPage()).toBe('partial');
+		// OLD CODE: getByText("Couldn't refresh watched devices; showing the last figures loaded.") (review M4: the reason follows)
+		expect(screen.getByText(/^Couldn't refresh watched devices; showing the last figures loaded\. NetTap answered HTTP 503\.$/)).toBeInTheDocument();
+		expect(screen.getByRole('table', { name: 'Watched devices' })).toBeInTheDocument();
+		expect(screen.getByRole('table', { name: 'All devices' })).toBeInTheDocument();
+	});
+
+	// OLD CODE: it('Stop watching clears the watch, then reloads the card through the page loader (NET-331)', …) (review L1)
+	it('Stop watching clears the watch, then reloads only the watched list (NET-331)', async () => {
+		const f = vi.fn(async (url: string, init?: RequestInit) => {
+			if (init?.method === 'PUT') return { ok: true, status: 200, json: async () => ({ device: { mac: 'AA:BB:CC:00:00:01', watch_after_min: null } }) };
+			const stopped = f.mock.calls.some(([, i]) => i?.method === 'PUT');
+			const body = stopped && url === '/api/devices/watched' ? { ...watchedReply('up'), devices: [] } : (ALL as Record<string, unknown>)[url.split('?')[0]];
+			return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
+		});
+		vi.stubGlobal('fetch', f);
+		render(Page);
+		const card = await screen.findByRole('table', { name: 'Watched devices' });
+
+		// OLD CODE: getByRole('button', { name: 'Stop watching' }) (review M3: named for its device)
+		await fireEvent.click(within(card).getByRole('button', { name: /^Stop watching/ }));
+		expect(await screen.findByText('No devices are watched')).toBeInTheDocument();
+		const put = f.mock.calls.find(([, i]) => i?.method === 'PUT');
+		expect(put?.[0]).toBe('/api/devices/registry/AA%3ABB%3ACC%3A00%3A00%3A01/details');
+		expect(JSON.parse(String(put?.[1]?.body))).toEqual({ watch_after_min: null });
+		// OLD CODE: the page's loader ran again (the device list was read after the PUT too) (review L1: that wiped Section D's line)
+		const putAt = f.mock.calls.indexOf(put!);
+		await vi.waitFor(() => expect(f.mock.calls.slice(putAt + 1).map(([u]) => String(u).split('?')[0])).toEqual(['/api/devices/watched']));
+		expect(screen.getByRole('table', { name: 'All devices' })).toBeInTheDocument();
 	});
 });
 

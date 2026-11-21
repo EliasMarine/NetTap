@@ -206,7 +206,8 @@ describe('Notification settings delivery results', () => {
 
 	// OLD CODE: it('the rule form offers only the alert event, the one NetTap sends', …) expected ['alert'] (NET-319: new devices have a sender now)
 	// OLD CODE: it('the rule form offers alerts and new devices, the events NetTap sends', …) (F6: and data cap warnings)
-	it('the rule form offers alerts, new devices and data cap warnings, the events NetTap sends', async () => {
+	// OLD CODE: it('the rule form offers alerts, new devices and data cap warnings, the events NetTap sends', …) (NET-331: and watched devices)
+	it('the rule form offers alerts, new devices, data cap warnings and watched devices, the events NetTap sends', async () => {
 		stubFetch(LISTS);
 		render(Page);
 		await screen.findByText('Home Discord');
@@ -216,8 +217,10 @@ describe('Notification settings delivery results', () => {
 		const options = Array.from((screen.getByLabelText('Event type') as HTMLSelectElement).options).map((o) => o.value);
 		// OLD CODE: expect(options).toEqual(['alert']);
 		// OLD CODE: expect(options).toEqual(['new_device', 'alert']); (F6)
-		expect(options).toEqual(['new_device', 'data_cap', 'alert']);
+		// OLD CODE: expect(options).toEqual(['new_device', 'data_cap', 'alert']); (NET-331)
+		expect(options).toEqual(['new_device', 'data_cap', 'watched_device', 'alert']);
 		expect(screen.getByRole('option', { name: 'Data cap' })).toHaveValue('data_cap');
+		expect(screen.getByRole('option', { name: 'Watched device' })).toHaveValue('watched_device');
 		for (const unsent of ['anomaly', 'storage_warning', 'smart_warning', 'capture_error', 'system_error']) {
 			expect(options).not.toContain(unsent);
 		}
@@ -267,6 +270,43 @@ describe('Notification settings delivery results', () => {
 
 		const post = fn.mock.calls.find(([url, init]) => url === '/api/notifications/rules' && init?.method === 'POST');
 		expect(JSON.parse(String(post?.[1]?.body))).toEqual({ event_type: 'data_cap', channels: ['ch1'], min_severity: 4 });
+	});
+
+	// NET-331: "Offline" is high (2) and "Back online" low (4), so a watched-device rule takes All (4) too
+	it('creates a watched-device rule at All (4), with no severity field, and names it "Watched device"', async () => {
+		const fn = vi.fn(async (url: string, init?: RequestInit) => {
+			if (url === '/api/notifications/rules' && init?.method === 'POST') {
+				return { ok: true, status: 201, json: async () => ({ id: 'r1', ...JSON.parse(String(init.body)) }) };
+			}
+			const body = LISTS[url];
+			return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 500, json: async () => ({}) };
+		});
+		vi.stubGlobal('fetch', fn);
+		render(Page);
+		await screen.findByText('Home Discord');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+		await fireEvent.change(screen.getByLabelText('Event type'), { target: { value: 'watched_device' } });
+		expect(screen.queryByLabelText('Minimum severity')).not.toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('checkbox', { name: /Home Discord/ }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Create rule' }));
+
+		const post = fn.mock.calls.find(([url, init]) => url === '/api/notifications/rules' && init?.method === 'POST');
+		expect(JSON.parse(String(post?.[1]?.body))).toEqual({ event_type: 'watched_device', channels: ['ch1'], min_severity: 4 });
+	});
+
+	it('names a stored watched-device rule "Watched device"', async () => {
+		stubFetch({
+			...LISTS,
+			'/api/notifications/rules': {
+				rules: [{ id: 'settings-watched', event_type: 'watched_device', channels: ['ch1'], min_severity: 4, created_at: '2026-11-20T10:00:00Z' }],
+				count: 1,
+			},
+		});
+		render(Page);
+
+		const row = (await screen.findByText('Watched device')).closest('li') as HTMLElement;
+		expect(within(row).getByText(/to 1 channel/)).toBeInTheDocument();
 	});
 
 	it('names a stored data cap rule "Data cap"', async () => {

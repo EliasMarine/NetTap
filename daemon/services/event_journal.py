@@ -66,6 +66,8 @@ class EventJournal:
         self._recent: deque[dict] = deque(maxlen=window)
         self._ids: set[str] = set()
         self._next_seq = 1
+        # F5 (NET-331): False while the file can't be read; append and after then retry the load
+        self._available = True
         # a first start (no file yet) and a lost dispatcher state look alike without this
         self.existed_at_start = self._path.exists()
         with self._lock:
@@ -74,29 +76,67 @@ class EventJournal:
     # --- start-up ----------------------------------------------------------
 
     def _load(self) -> None:
+        """Read the file into memory (called with the lock held). F5 (NET-331, round 4 #9): one
+        that can't be read leaves the journal unavailable, never empty, so no append reuses an
+        existing journal's sequence numbers or misses its ids."""
+        # OLD CODE START — F5: an unreadable file started at seq 1 with no ids, so the next append
+        # reused an existing journal's numbers and could repeat an event already in it
+        # try:
+        #     raw = self._path.read_bytes()
+        # except FileNotFoundError:
+        #     return
+        # except OSError as exc:
+        #     logger.error("Event journal unreadable (%s): starting with no history", exc)
+        #     return
+        # OLD CODE END
         try:
             raw = self._path.read_bytes()
+            if raw and not raw.endswith(b"\n"):
+                # a crash mid-append: cut the torn line before anything is appended after it
+                keep = raw.rfind(b"\n") + 1
+                logger.warning(
+                    "Event journal: dropping a torn last line (%d bytes)",
+                    len(raw) - keep,
+                )
+                with open(self._path, "r+b") as f:
+                    f.truncate(keep)
+                    f.flush()
+                    os.fsync(f.fileno())
+                raw = raw[:keep]
         except FileNotFoundError:
-            return
+            raw = b""
         except OSError as exc:
-            logger.error("Event journal unreadable (%s): starting with no history", exc)
+            # ERROR once, as it becomes unavailable; the retries (every poll and append) at DEBUG
+            log = logger.error if self._available else logger.debug
+            log("Event journal unreadable (%s): unavailable until it can be read", exc)
+            self._available = False
             return
-        if raw and not raw.endswith(b"\n"):
-            # a crash mid-append: cut the torn line before anything is appended after it
-            keep = raw.rfind(b"\n") + 1
-            logger.warning(
-                "Event journal: dropping a torn last line (%d bytes)", len(raw) - keep
-            )
-            with open(self._path, "r+b") as f:
-                f.truncate(keep)
-                f.flush()
-                os.fsync(f.fileno())
-            raw = raw[:keep]
         entries = self._parse(raw.decode("utf-8", errors="replace"))
         self._ids = {e["id"] for e in entries}
+        self._recent.clear()
         self._recent.extend(entries)
-        if entries:
-            self._next_seq = entries[-1]["seq"] + 1
+        self._next_seq = entries[-1]["seq"] + 1 if entries else 1
+        self._available = True
+
+    def _require(self) -> None:
+        """Called with the lock held: an unavailable journal tries its load again, else OSError."""
+        if not self._available:
+            self._load()
+        if not self._available:
+            raise OSError("the event journal can't be read")
+
+    @property
+    def available(self) -> bool:
+        """False while the file can't be read: nothing is appended or read until it loads."""
+        return self._available
+
+    def reload(self) -> bool:
+        """Try an unavailable journal's load again (a no-op once loaded); whether it is available.
+        The dispatcher calls it, so recovery doesn't wait for a producer's append (round 6 #3)."""
+        with self._lock:
+            if not self._available:
+                self._load()
+            return self._available
 
     @staticmethod
     def _parse(text: str) -> list[dict]:
@@ -136,10 +176,11 @@ class EventJournal:
         """Write one event durably (fsync). None when it is already in the journal.
 
         Raises OSError when it couldn't be written; the file is then exactly as before, so a
-        partial line never sits in front of the next append.
+        partial line never sits in front of the next append. Also while the journal is unavailable.
         """
         eid = event_id(event_type, key, observed_at if instance is None else instance)
         with self._lock:
+            self._require()  # F5: never seq 1 over a journal that couldn't be read
             if eid in self._ids:
                 return None
             entry = {
@@ -230,8 +271,10 @@ class EventJournal:
 
     def after(self, seq: int, limit: int) -> list[dict]:
         """Up to `limit` entries after `seq`, oldest first; read from the file when the
-        backlog is older than the in-memory window, so nothing unread is ever skipped."""
+        backlog is older than the in-memory window, so nothing unread is ever skipped.
+        OSError while the journal is unavailable (F5): an unread journal is never an empty one."""
         with self._lock:
+            self._require()
             if not self._recent or self._recent[0]["seq"] <= seq + 1:
                 return [e for e in self._recent if e["seq"] > seq][:limit]
             return [e for e in self._read_all() if e["seq"] > seq][:limit]

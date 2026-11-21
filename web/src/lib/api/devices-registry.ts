@@ -25,6 +25,8 @@ export interface RegistryDevice {
 	icon?: string | null;
 	/** NET-200: the owner's photo, `/api/devices/registry/<MAC>/picture?v=<hash>`, or null */
 	picture?: string | null;
+	/** NET-320/331: minutes of silence before "Offline" (15, 30, 60, 240 or 1440), or null when not watched */
+	watch_after_min?: number | null;
 	category: string; // "computer" | "phone" | "iot" | "infrastructure" | "unknown"
 	first_seen: string;
 	last_seen: string;
@@ -194,7 +196,8 @@ export type DeviceIcon = (typeof DEVICE_ICONS)[number];
 // }
 // OLD CODE END
 /** One save; resolves to the device as the daemon now has it, or throws a reason fit to show. */
-async function saveDevice(mac: string, part: 'name' | 'picture', method: 'PUT' | 'DELETE', body?: object): Promise<RegistryDevice> {
+// OLD CODE: async function saveDevice(mac: string, part: 'name' | 'picture', method: 'PUT' | 'DELETE', body?: object): Promise<RegistryDevice> { (NET-331: the watch saves through the details route)
+export async function saveDevice(mac: string, part: 'name' | 'picture' | 'details', method: 'PUT' | 'DELETE', body?: object): Promise<RegistryDevice> {
 	let res: Response;
 	try {
 		res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}/${part}`, {

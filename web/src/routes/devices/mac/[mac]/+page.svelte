@@ -41,6 +41,7 @@
 	import DeviceCustomise from '$components/DeviceCustomise.svelte';
 	import LiveBandwidthCard from '$components/LiveBandwidthCard.svelte';
 	import DeviceCompareCard from '$components/DeviceCompareCard.svelte';
+	import { initCaptureMode } from '$lib/stores/captureMode';
 
 	type Destination = DeviceTraffic['top_destinations'][number];
 	type DnsQuery = NonNullable<DeviceTraffic['dns_queries']>[number];
@@ -93,6 +94,8 @@
 	// OLD CODE END
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
+		// NET-331 (review L3): Watch hides in bridge mode; asks again if the startup request failed, as devices/[ip] does
+		void initCaptureMode();
 		const m = mac;
 		const r = range;
 		if (!m) return 'skipped';
@@ -159,6 +162,8 @@
 			picture: saved.picture,
 			display_name: saved.display_name,
 			discovered_name: saved.discovered_name,
+			// NET-331: every save's reply carries the committed watch, null when cleared, so reopening shows it
+			watch_after_min: saved.watch_after_min ?? null,
 		};
 	}
 

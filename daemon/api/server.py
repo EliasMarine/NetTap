@@ -85,6 +85,7 @@ from api.capture import register_capture_routes
 from api.dhcp_gateway import register_dhcp_gateway_routes
 from api.devices_v2 import register_devices_v2_routes
 from api.device_custom import register_device_custom_routes
+from api.devices_watched import capture_health_reader, register_watched_devices_routes
 from api.live import register_live_routes
 from api.bandwidth import register_bandwidth_routes
 from api.live_bandwidth import register_live_bandwidth_routes
@@ -112,6 +113,7 @@ from api.local_services import register_local_service_routes
 from api.suricata_categories import register_suricata_category_routes
 from api.suricata_rule import register_suricata_rule_routes
 from services.pipeline_health import OVERALL as PIPELINE_OVERALL, PipelineHealth
+from services.pipeline_health import NETWORK_INDEX
 from services.tshark_service import TSharkService
 from services.capture_index import CaptureIndex
 from services.packet_search import PacketSearchService
@@ -145,6 +147,7 @@ from services.notification_dispatcher import AlertDispatcher
 from services.data_cap import DataCapWatch
 from services.event_journal import EventJournal
 from services.scheduled_jobs import Job, Scheduler
+from services.watched_devices import WatchedDevices
 from services import owner_tz
 from services import quiet_hours
 from services.usage_ledger import UsageLedger
@@ -1463,6 +1466,19 @@ def create_app(
     # NET-330: kept so a test built through create_app checks the real wiring
     app["alert_dispatcher"] = alert_dispatcher
     app.cleanup_ctx.append(alert_dispatcher.ctx)
+    # NET-331: watched devices, checked by a job below. Its own client without retries, as the
+    # pipeline probe's, so a check can't outlive its deadline
+    watched_devices = WatchedDevices(
+        details=device_details,
+        journal=event_journal,
+        name_for=device_custom.name_for,
+        client=OpenSearch(
+            **storage.client_kwargs(max_retries=0, retry_on_timeout=False)
+        ),
+        index=NETWORK_INDEX,
+        capture_health=capture_health_reader(app),
+    )
+    register_watched_devices_routes(app, watched_devices)
 
     # NET-319: background checks; later slices add their jobs here
     scheduler = Scheduler(
@@ -1497,6 +1513,14 @@ def create_app(
                 every_s=900,
                 deadline_s=30,
                 run=data_cap_watch.run,
+            ),
+            # NET-331: device went offline / back online, from conn records' last packet
+            Job(
+                "watched-devices",
+                "Watched devices",
+                every_s=300,
+                deadline_s=60,
+                run=watched_devices.run,
             ),
         ]
     )

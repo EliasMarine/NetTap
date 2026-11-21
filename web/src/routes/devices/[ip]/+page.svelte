@@ -168,18 +168,27 @@
 			picture: saved.picture ?? null,
 			hostname: saved.custom_name ?? original,
 			discovered_name: saved.custom_name ? original : undefined,
+			// NET-331: every save's reply carries the committed watch, null when cleared, so reopening shows it
+			watch_after_min: saved.watch_after_min ?? null,
 		};
 	}
 
-	/** Run one name or picture save for the device on screen; a failure throws to DeviceCustomise. */
-	async function customise(action: (mac: string) => Promise<RegistryDevice>): Promise<void> {
+	/** Run one name, picture or watch save for the device on screen; a failure throws to DeviceCustomise. */
+	// OLD CODE: async function customise(action: (mac: string) => Promise<RegistryDevice>): Promise<void> { (review L4: + target)
+	async function customise(action: (mac: string) => Promise<RegistryDevice>, target?: 'details'): Promise<void> {
 		const mac = device?.mac;
 		if (!mac) throw new Error('This page is still loading the device. Try again in a moment.');
+		// review L4: the details route takes only the registry's MAC, never the observed one
+		const editMac = target === 'details' ? device?.registry_mac : (device?.registry_mac ?? mac);
+		if (!editMac) throw new Error("This device's MAC address can't be used to save a watch.");
 		const key = mac.toLowerCase();
 		if (savingMacs.has(key)) throw new Error('A change to this device is still saving. Try again in a moment.');
 		savingMacs.add(key);
 		try {
-			const saved = await action(mac);
+			// OLD CODE: const saved = await action(mac); (NET-331: the details route parses the MAC strictly)
+			// the observed MAC can be an 8-octet DHCP chaddr; registry_mac is the six-octet key every route edits
+			// OLD CODE: const saved = await action(device?.registry_mac ?? mac); (review L4: worked out above, per target)
+			const saved = await action(editMac);
 			editRev += 1;
 			edits.set(key, { rev: editRev, saved });
 			if (device?.mac?.toLowerCase() === key) device = withOwner(device, saved);
@@ -898,7 +907,12 @@ OLD CODE END -->
 			{@const mac = device.mac}
 			<!-- keyed: another device starts with its panels closed -->
 			<!-- discovered_name comes only with an owner's name; without one the hostname is the network's name, for the Name hint -->
-			{#key mac}<DeviceCustomise device={{ ...device, mac, discovered_name: device.custom_name ? device.discovered_name : device.hostname }} onsave={customise} />{/key}
+			<!-- OLD CODE: {#key mac}<DeviceCustomise device={{ …, discovered_name: … }} onsave={customise} />{/key} (review L4: Watch needs the registry's MAC) -->
+			{#key mac}<DeviceCustomise
+					device={{ ...device, mac, discovered_name: device.custom_name ? device.discovered_name : device.hostname }}
+					onsave={customise}
+					watchable={!!device.registry_mac}
+				/>{/key}
 		{/if}
 		<dl class="ident-meta">
 			<div><dt class="meta-k">IP address</dt><dd class="meta-v mono">{device.ip}</dd></div>

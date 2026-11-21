@@ -15,6 +15,7 @@ import type {
 	getNewDeviceCount,
 } from '../../../src/lib/api/devices-registry.ts';
 import type { CaptureMode } from '../../../src/lib/api/capture.ts';
+import type { WatchedDevicesResponse } from '../../../src/lib/api/devices-watched.ts';
 import { DAY, MIN, iso, type FixtureRoute } from './types.ts';
 import { CONN_TEMPLATES, connections } from './net-connections.ts';
 import {
@@ -127,6 +128,9 @@ const detail = (d: LanDevice): DeviceDetailResponse => {
 			bandwidth_series: bandwidthSeries(d),
 			unique_destinations: 38,
 			top_services: destinations.map((x) => ({ name: peer(x.ip).org, bytes: x.bytes, connections: x.connections })),
+			// NET-320/331: the MAC its details are edited by, so the page offers Watch
+			registry_mac: d.mac.toUpperCase(),
+			watch_after_min: 60,
 		},
 	};
 };
@@ -235,6 +239,17 @@ const emptyRegistryTraffic = (d: LanDevice): RegistryTrafficEnvelope => ({
 
 type NewDeviceCount = Awaited<ReturnType<typeof getNewDeviceCount>>;
 
+// NET-331: the Watched devices card. One device of each state, the newest check two minutes old.
+const WATCH_CHECK = { attempt_at: iso(2 * MIN), success_at: iso(2 * MIN), capture_at: iso(3 * MIN), coverage_since: iso(DAY), skipped: null, error: null };
+export const WATCHED = {
+	check: WATCH_CHECK,
+	devices: [
+		{ mac: lanDevice('192.168.1.50').mac, name: 'Front door camera', after_min: 15, state: 'down', seen_at: iso(41 * MIN), since: iso(16 * MIN) },
+		{ mac: lanDevice('192.168.1.31').mac, name: null, after_min: 240, state: 'up', seen_at: iso(4 * MIN), since: iso(3 * DAY) },
+		{ mac: lanDevice('192.168.1.22').mac, name: 'Living room TV', after_min: 1440, state: 'unknown', seen_at: null, since: null },
+	],
+} satisfies WatchedDevicesResponse;
+
 export const DEVICES_ROUTES: FixtureRoute[] = [
 	{
 		path: '/api/devices',
@@ -250,6 +265,12 @@ export const DEVICES_ROUTES: FixtureRoute[] = [
 		path: '/api/devices/registry',
 		empty: { devices: [], total: 0 } satisfies RegistryListResponse,
 		populated: { devices: LAN_DEVICES.map(registryRow), total: LAN_DEVICES.length } satisfies RegistryListResponse,
+	},
+	// NET-331: exact, so the device-by-IP pattern below never answers for it
+	{
+		path: '/api/devices/watched',
+		empty: { check: WATCH_CHECK, devices: [] } satisfies WatchedDevicesResponse,
+		populated: WATCHED,
 	},
 	{
 		path: '/api/devices/registry/new-count',

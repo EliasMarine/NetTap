@@ -1,6 +1,7 @@
 <!--
   DeviceCustomise.svelte (NET-200): the owner names a device and gives it an icon or a photo.
-  Two buttons open inline panels in the device's hero card (no modal). The page owns the save
+  NET-331: and watches it, for a message when it goes quiet (hidden in bridge mode, with why).
+  Three buttons open inline panels in the device's hero card (no modal). The page owns the save
   (`onsave`): it checks the device is still the one on screen before it shows the result, and
   this component reports the daemon's reason when a save fails. One save at a time.
 -->
@@ -18,8 +19,12 @@
 		type RegistryDevice,
 	} from '$api/devices-registry';
 	import { squarePicture } from '$lib/utils/device-picture';
+	import { isWatchMinutes, setWatch, watchLabel, WATCH_BRIDGE_NOTE, WATCH_CHOICES, type WatchMinutes } from '$api/devices-watched';
+	import { captureMode } from '$lib/stores/captureMode';
 
-	type Save = (action: (mac: string) => Promise<RegistryDevice>) => Promise<void>;
+	// OLD CODE: type Save = (action: (mac: string) => Promise<RegistryDevice>) => Promise<void>; (review L4: the watch says it edits the details)
+	/** `target` 'details': the action edits the strict details route, so the page must give the registry's own MAC. */
+	type Save = (action: (mac: string) => Promise<RegistryDevice>, target?: 'details') => Promise<void>;
 	// OLD CODE: let { device, onsave }: { device: RegistryDevice; onsave: Save } = $props(); (NET-201: the IP page's device fits too)
 	/** What the panels read: a registry device, or an IP page's device once its MAC is known. */
 	type Customisable = {
@@ -29,8 +34,12 @@
 		discovered_name?: string | null;
 		icon?: string | null;
 		picture?: string | null;
+		/** NET-331: the saved watch time in minutes, or null when not watched */
+		watch_after_min?: number | null;
 	};
-	let { device, onsave }: { device: Customisable; onsave: Save } = $props();
+	// OLD CODE: let { device, onsave }: { device: Customisable; onsave: Save } = $props(); (review L4)
+	/** `watchable` false hides Watch: the IP page has no registry MAC to save a watch by. */
+	let { device, onsave, watchable = true }: { device: Customisable; onsave: Save; watchable?: boolean } = $props();
 
 	/** Plain names for the built-in icons, read by screen readers and shown on hover. */
 	const ICON_LABELS: Record<DeviceIcon, string> = {
@@ -48,7 +57,8 @@
 		devices: 'Other device',
 	};
 
-	let panel = $state<'none' | 'name' | 'picture'>('none');
+	// OLD CODE: let panel = $state<'none' | 'name' | 'picture'>('none'); (NET-331: + watch)
+	let panel = $state<'none' | 'name' | 'picture' | 'watch'>('none');
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 	let nameDraft = $state('');
@@ -59,12 +69,18 @@
 	let announcement = $state('');
 	let nameButton = $state<HTMLButtonElement>();
 	let pictureButton = $state<HTMLButtonElement>();
+	let watchButton = $state<HTMLButtonElement>();
+	/** NET-331: the watch time picked in the panel; null is Off. */
+	let watchDraft = $state<WatchMinutes | null>(null);
+	// every frame carries the router's MAC in bridge mode, so a watch could never see the device
+	const bridge = $derived($captureMode === 'bridge');
 
 	// Locally administered (randomised, "private") MACs set bit 0x02 of the first octet
 	const randomised = $derived((parseInt(device.mac.slice(0, 2), 16) & 0x02) === 0x02);
 	const hasPicture = $derived(!!device.icon || !!device.picture);
 
-	function open(which: 'name' | 'picture'): void {
+	// OLD CODE: function open(which: 'name' | 'picture'): void { (NET-331: + watch)
+	function open(which: 'name' | 'picture' | 'watch'): void {
 		error = null;
 		if (panel === which) {
 			panel = 'none';
@@ -73,6 +89,8 @@
 		panel = which;
 		nameDraft = device.custom_name ?? '';
 		choice = null;
+		// OLD CODE: watchDraft = (device.watch_after_min ?? null) as WatchMinutes | null; (review L5: a value the daemon doesn't allow reads as Off)
+		watchDraft = isWatchMinutes(device.watch_after_min) ? device.watch_after_min : null;
 	}
 
 	// OLD CODE START — PR #214 review: focus was lost when the panel closed, and nothing was announced
@@ -98,7 +116,8 @@
 	// OLD CODE END
 	/** Close the open panel and put focus back on the button that opened it. */
 	async function close(): Promise<void> {
-		const trigger = panel === 'name' ? nameButton : pictureButton;
+		// OLD CODE: const trigger = panel === 'name' ? nameButton : pictureButton; (NET-331: + watch)
+		const trigger = panel === 'name' ? nameButton : panel === 'watch' ? watchButton : pictureButton;
 		panel = 'none';
 		error = null;
 		choice = null;
@@ -106,14 +125,16 @@
 		trigger?.focus();
 	}
 
-	async function run(action: (mac: string) => Promise<RegistryDevice>, done: string): Promise<void> {
+	// OLD CODE: async function run(action: (mac: string) => Promise<RegistryDevice>, done: string): Promise<void> { (review L4: + target)
+	async function run(action: (mac: string) => Promise<RegistryDevice>, done: string, target?: 'details'): Promise<void> {
 		if (saving) return;
 		saving = true;
 		error = null;
 		announcement = '';
 		let saved = false;
 		try {
-			await onsave(action);
+			// OLD CODE: await onsave(action); (review L4)
+			await onsave(action, target);
 			saved = true;
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Couldn't save the device.";
@@ -164,6 +185,13 @@
 		if (picked) void run((mac) => setDevicePicture(mac, picked), 'Picture saved.');
 	}
 
+	function saveWatch(event: SubmitEvent): void {
+		event.preventDefault();
+		const minutes = watchDraft;
+		// OLD CODE: void run((mac) => setWatch(mac, minutes), minutes === null ? 'Watch turned off.' : 'Watch saved.'); (review L4)
+		void run((mac) => setWatch(mac, minutes), minutes === null ? 'Watch turned off.' : 'Watch saved.', 'details');
+	}
+
 	const chosenIcon = $derived(choice && 'icon' in choice ? choice.icon : null);
 	const chosenImage = $derived(choice && 'image' in choice ? choice.image : null);
 	/** Pressed: the icon just chosen, or with nothing chosen the saved icon (unless a photo shows). */
@@ -191,12 +219,30 @@
 			onclick={() => open('picture')}
 			disabled={saving}>Change picture</button
 		>
+		<!-- OLD CODE: {#if !bridge} (review L4: and only with a MAC the details route takes) -->
+		{#if !bridge && watchable}
+			<button
+				class="btn"
+				type="button"
+				bind:this={watchButton}
+				aria-expanded={panel === 'watch'}
+				aria-controls={panel === 'watch' ? 'device-watch-panel' : undefined}
+				onclick={() => open('watch')}
+				disabled={saving}>Watch</button
+			>
+		{/if}
 	</div>
+	{#if bridge}<p class="field-help">{WATCH_BRIDGE_NOTE}</p>{/if}
 	<p class="sr-only" role="status">{announcement}</p>
 
 	{#if panel !== 'none' && randomised}
 		<p class="notice is-warn" role="note">
-			<Icon name="warn" /><span>This device uses a private (randomised) MAC address, so the name and picture may not stay with it if it changes address.</span>
+			<!-- OLD CODE: <Icon name="warn" /><span>This device uses a private (randomised) MAC address, so the name and picture may not stay with it if it changes address.</span> (NET-331: the watch has its own risk) -->
+			<Icon name="warn" /><span
+				>{panel === 'watch'
+					? 'This device uses a private (randomised) MAC address. If it picks a new one, NetTap stops hearing the old address and will report the device offline.'
+					: 'This device uses a private (randomised) MAC address, so the name and picture may not stay with it if it changes address.'}</span
+			>
 		</p>
 	{/if}
 
@@ -220,6 +266,32 @@
 				{#if device.custom_name}
 					<button class="btn" type="button" onclick={() => run((mac) => clearDeviceName(mac), 'Name cleared.')} disabled={saving}>Use the discovered name</button>
 				{/if}
+				<button class="btn" type="button" onclick={close} disabled={saving}>Cancel</button>
+				<button class="btn primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+			</div>
+		</form>
+	{/if}
+
+	{#if panel === 'watch'}
+		<form id="device-watch-panel" class="cust-panel" onsubmit={saveWatch}>
+			<div class="field">
+				<label class="label" for="device-watch">Tell me when it goes quiet for</label>
+				<select
+					id="device-watch"
+					class="select"
+					bind:value={watchDraft}
+					aria-invalid={error ? 'true' : undefined}
+					aria-describedby="device-watch-help{error ? ' device-watch-error' : ''}"
+				>
+					<option value={null}>Off</option>
+					{#each WATCH_CHOICES as minutes (minutes)}<option value={minutes}>{watchLabel(minutes)}</option>{/each}
+				</select>
+				<span class="field-help" id="device-watch-help"
+					>NetTap sends one message when the device has been silent this long, 15 to 20 minutes after the time passes, and one when it is back. Pick at least twice its longest quiet spell: smart devices that check in only now and then, and devices that hold one long connection open (a camera stream, a backup), need longer. It reports silence, not tampering: another device on your network can pretend to be this one.</span
+				>
+				{#if error}<span class="field-error" id="device-watch-error" role="alert">{error}</span>{/if}
+			</div>
+			<div class="form-actions">
 				<button class="btn" type="button" onclick={close} disabled={saving}>Cancel</button>
 				<button class="btn primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
 			</div>

@@ -5,7 +5,7 @@
  * no horizontal page scroll down to 390 px, screenshots in every theme. */
 import { test, expect, type Page } from '@playwright/test';
 import { VARIANTS, expectReached, setMode, setVariant, settle, stubUpstreams, watchApi } from './harness.ts';
-import { BY_TYPE_LAYOUT } from './fixtures/devices.ts';
+import { BY_TYPE_LAYOUT, WATCHED } from './fixtures/devices.ts';
 
 // OLD CODE START — NET-201: the Cards layout's breakpoints
 // /** The grid's column breakpoints are on the app container (system.css: `@container app`). */
@@ -132,6 +132,31 @@ test.describe('Devices layout in mirror mode (NET-180, NET-296)', () => {
 				const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
 				expect.soft(scrollWidth, `horizontal scroll, ${variant} @ ${width}`).toBeLessThanOrEqual(width);
 				await page.screenshot({ path: testInfo.outputPath(`all-devices-${variant}-${width}.png`), fullPage: true });
+			}
+		}
+	});
+});
+
+/** NET-331: the Watched devices card with the populated list (the fixture daemon serves it in populated mode). */
+test.describe('Watched devices card (NET-331)', () => {
+	test('lists every watched device with its state, and fits the page down to 390 px', async ({ page }, testInfo) => {
+		await open(page);
+		const card = page.getByRole('table', { name: 'Watched devices' });
+		await expect(card).toBeVisible();
+		await expect(card.getByRole('row')).toHaveCount(WATCHED.devices.length + 1);
+		await expect(card.getByRole('row').nth(1)).toContainText('Front door camera');
+		await expect(card.getByRole('row').nth(1)).toContainText('Offline');
+		await expect(card.getByText('Waiting for first sighting')).toBeVisible();
+		await expect(page.locator('main .notice').filter({ hasText: 'Watching is paused' })).toHaveCount(0);
+		for (const variant of VARIANTS) {
+			await setVariant(page, variant);
+			for (const width of [1440, 390]) {
+				await page.setViewportSize({ width, height: 900 });
+				await settle(page);
+				const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+				expect.soft(scrollWidth, `horizontal scroll, ${variant} @ ${width}`).toBeLessThanOrEqual(width);
+				await card.scrollIntoViewIfNeeded();
+				await page.screenshot({ path: testInfo.outputPath(`watched-${variant}-${width}.png`), fullPage: true });
 			}
 		}
 	});

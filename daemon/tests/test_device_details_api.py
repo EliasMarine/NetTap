@@ -184,6 +184,38 @@ class TestDelete(_Base):
         assert resp.status == 200 and self.details.export() == {}
 
 
+class TestWatchOnlyClear(_Base):
+    """NET-331: exactly {"watch_after_min": null} clears a watch on a MAC the registry lost."""
+
+    GONE_URL = f"/api/devices/registry/{GONE}/details"
+
+    async def test_it_clears_a_restored_watch_and_keeps_the_rest(self):
+        self.details.update(GONE, {"watch_after_min": 60, "group": "Kids"})
+        resp = await self.client.put(self.GONE_URL, json={"watch_after_min": None})
+        assert resp.status == 200
+        device = (await resp.json())["device"]
+        assert device["mac"] == GONE and device["watch_after_min"] is None
+        assert self.details.export() == {GONE: {"group": "Kids"}}
+
+    async def test_it_works_while_opensearch_is_down(self):
+        self.details.update(MAC, {"watch_after_min": 15})
+        self.os.get.side_effect = OpenSearchException("down")
+        resp = await self.client.put(URL, json={"watch_after_min": None})
+        assert resp.status == 200 and self.details.export() == {}
+
+    async def test_every_other_body_still_needs_a_known_device(self):
+        self.details.update(GONE, {"watch_after_min": 60})
+        for body in (
+            {"watch_after_min": 15},
+            {"watch_after_min": None, "group": None},
+            {"watch_after_min": None, "notes": "x"},
+            {"group": None},
+        ):
+            resp = await self.client.put(self.GONE_URL, json=body)
+            assert resp.status == 404, body
+        assert self.details.export() == {GONE: {"watch_after_min": 60}}
+
+
 class TestStoreFailures(_Base):
     async def test_a_damaged_file_is_a_503_for_both_routes(self):
         self.details._problem = "Device details file is unreadable: x"

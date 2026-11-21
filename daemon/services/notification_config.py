@@ -23,6 +23,7 @@ EVENT_TYPES = {
     "capture_error",
     "system_error",
     "data_cap",  # NET-339: 80%, 100% and "on track to go over"
+    "watched_device",  # F5 (NET-331): a watched device went offline or came back
 }
 
 # Settings › API keys saves the SMTP server here (api/settings.py); the env is the fallback
@@ -36,8 +37,15 @@ QUICK_RULE = "settings-alerts"
 QUICK_NEWDEVICE = "settings-newdevice"
 # NET-339: "Tell me when I near my data cap", the same kind of fixed rule
 QUICK_DATACAP = "settings-datacap"
+# F5 (NET-331): "Tell me when a watched device goes offline or comes back", the same kind
+QUICK_WATCHED = "settings-watched"
 # the fixed event rules and their event types; deleting one turns it off (hub)
-_EVENT_RULES = {QUICK_NEWDEVICE: "new_device", QUICK_DATACAP: "data_cap"}
+# OLD CODE: _EVENT_RULES = {QUICK_NEWDEVICE: "new_device", QUICK_DATACAP: "data_cap"} (F5)
+_EVENT_RULES = {
+    QUICK_NEWDEVICE: "new_device",
+    QUICK_DATACAP: "data_cap",
+    QUICK_WATCHED: "watched_device",
+}
 DEFAULT_MIN_SEVERITY = 2  # high and above
 
 # The public view shows only these config keys as they are...
@@ -268,6 +276,7 @@ def quick_view(channels: dict, rules: dict, smtp_configured: bool, quiet: dict) 
         # never set means on (decision D1); off is the rule kept with enabled: false
         "new_device": rule_on(rules.get(QUICK_NEWDEVICE)),
         "data_cap": rule_on(rules.get(QUICK_DATACAP)),  # NET-339, the same default
+        "watched_device": rule_on(rules.get(QUICK_WATCHED)),  # F5, the same default
         "min_severity": rule["min_severity"]
         if rule_ok(rule) and "min_severity" in rule
         else DEFAULT_MIN_SEVERITY,
@@ -382,13 +391,19 @@ def _with_quick_rule(
     now: str,
     new_device: bool = True,
     data_cap: bool = True,
+    watched_device: bool = True,
 ) -> dict:
-    """`rules` with the Settings rules sending alerts, and new devices and data cap warnings
-    when on, to whichever Settings channels exist. With none, the alert rule is left out and
-    both event rules are kept with no channel, so their on/off holds for later."""
+    """`rules` with the Settings rules sending alerts, and new devices, data cap warnings and
+    watched devices (F5) when on, to whichever Settings channels exist. With none, the alert rule
+    is left out and the event rules are kept with no channel, so their on/off holds for later."""
     ids = _quick_ids(channels)
     others = {k: v for k, v in rules.items() if k != QUICK_RULE}
-    on = {QUICK_NEWDEVICE: new_device, QUICK_DATACAP: data_cap}
+    # OLD CODE: on = {QUICK_NEWDEVICE: new_device, QUICK_DATACAP: data_cap} (F5)
+    on = {
+        QUICK_NEWDEVICE: new_device,
+        QUICK_DATACAP: data_cap,
+        QUICK_WATCHED: watched_device,
+    }
     events = {
         rid: _event_rule(rid, kind, rules, ids, on[rid], now)
         for rid, kind in _EVENT_RULES.items()
@@ -416,8 +431,8 @@ def _with_quick_rule(
 #     return {**rules, QUICK_NEWDEVICE: _newdevice_rule(rules, ids, True, now)}
 # OLD CODE END
 def with_default_event_rules(channels: dict, rules: dict, now: str) -> dict:
-    """New devices and data cap warnings on by default (D1) for a setup that never chose: each
-    fixed rule is added, on, when a Settings channel exists and it is absent. An off rule is
+    """New devices, data cap warnings and watched devices (F5) on by default (D1) for a setup that
+    never chose: each fixed rule is added, on, when a Settings channel exists and it is absent. An off rule is
     left alone. `rules` itself when nothing is added."""
     ids = _quick_ids(channels)
     missing = {
@@ -465,6 +480,10 @@ def apply_quick_settings(
     data_cap = body.get("data_cap", rule_on(rules.get(QUICK_DATACAP)))
     if not isinstance(data_cap, bool):
         raise ValueError("data_cap must be true or false")
+    # F5 (NET-331): the same for watched devices
+    watched_device = body.get("watched_device", rule_on(rules.get(QUICK_WATCHED)))
+    if not isinstance(watched_device, bool):
+        raise ValueError("watched_device must be true or false")
     # NET-330: quiet hours, the same way: left out keeps the saved setting
     new_quiet = body.get("quiet", quiet)
     reason = quiet_hours.problem(new_quiet)
@@ -503,9 +522,12 @@ def apply_quick_settings(
     # OLD CODE: return new, _with_quick_rule(new, rules, min_severity, now) (NET-319: + new devices)
     # OLD CODE: return new, _with_quick_rule(new, rules, min_severity, now, new_device) (NET-339: + data cap)
     # OLD CODE: return new, _with_quick_rule(new, rules, min_severity, now, new_device, data_cap) (NET-330: + quiet)
+    # OLD CODE: _with_quick_rule(new, rules, min_severity, now, new_device, data_cap), (F5)
     return (
         new,
-        _with_quick_rule(new, rules, min_severity, now, new_device, data_cap),
+        _with_quick_rule(
+            new, rules, min_severity, now, new_device, data_cap, watched_device
+        ),
         quiet_hours.of(new_quiet),
     )
 

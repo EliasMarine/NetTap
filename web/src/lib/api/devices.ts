@@ -107,6 +107,10 @@ export interface DeviceDetail extends Device {
 	/** Connections with an address in another of the LAN rule's subnets (their bytes can count twice) */
 	inter_vlan_connections?: number;
 	top_services?: Array<{ name: string; bytes: number; connections: number }>;
+	/** NET-320: the MAC the registry files this device under, the one its details are edited by; null when the MAC is unusable */
+	registry_mac?: string | null;
+	/** NET-320/331: minutes of silence before "Offline", or null when not watched */
+	watch_after_min?: number | null;
 }
 
 export interface DeviceDetailResponse {
