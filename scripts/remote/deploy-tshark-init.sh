@@ -16,7 +16,6 @@ set -u
 REPO_DIR="/home/nettap/NetTap"
 BRANCH="${BRANCH:-main}"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
-API="http://localhost:8880"
 FAILED=0
 
 check() {  # check "label" <0 pass / 1 fail> "detail"
@@ -93,29 +92,36 @@ fi
 echo ""
 
 echo "→ Step 7: 20 supervised filter checks through the daemon..."
-TOKEN=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token 2>/dev/null)
-if [ -z "$TOKEN" ]; then
-    check "Daemon token" 1 "couldn't read it"
+# Run inside the daemon (host network, Python, the token file mounted), so the token never
+# appears in a process list on the host
+PROBE='
+import json, urllib.request
+token = open("/run/nettap-auth/daemon-token").read().strip()
+body = json.dumps({"filter": "tcp.port == 443"}).encode()
+ok = 0
+for _ in range(20):
+    req = urllib.request.Request(
+        "http://localhost:8880/api/packets/check-filter", data=body, method="POST",
+        headers={"X-NetTap-Daemon-Token": token, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as reply:
+            ok += reply.status == 200
+    except Exception:
+        pass
+print(ok)
+'
+BASE_PIDS=$(cat "$(cgroup_dir)/pids.current" 2>/dev/null || echo 0)
+OK=$(sudo docker exec nettap-storage-daemon python3 -c "$PROBE" 2>/dev/null || echo 0)
+if [ "$OK" = "20" ]; then check "Filter checks answered 200" 0 "20 of 20"; else check "Filter checks answered 200" 1 "${OK:-0} of 20"; fi
+echo "   waiting 10 s for the watchdogs to be killed and reaped..."
+sleep 10
+Z=$(zombies)
+if [ "$Z" = "0" ]; then check "Zombies after the checks" 0 "0"; else check "Zombies after the checks" 1 "$Z"; fi
+NOW_PIDS=$(cat "$(cgroup_dir)/pids.current" 2>/dev/null || echo '?')
+if [ "$NOW_PIDS" != "?" ] && [ "$NOW_PIDS" -le $((BASE_PIDS + 3)) ]; then
+    check "pids.current back at its baseline" 0 "$NOW_PIDS (was $BASE_PIDS)"
 else
-    BASE_PIDS=$(cat "$(cgroup_dir)/pids.current" 2>/dev/null || echo 0)
-    OK=0
-    for i in $(seq 1 20); do
-        CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
-            -H "X-NetTap-Daemon-Token: $TOKEN" -H 'Content-Type: application/json' \
-            -d '{"filter":"tcp.port == 443"}' "$API/api/packets/check-filter")
-        [ "$CODE" = "200" ] && OK=$((OK + 1))
-    done
-    if [ "$OK" -eq 20 ]; then check "Filter checks answered 200" 0 "20 of 20"; else check "Filter checks answered 200" 1 "$OK of 20"; fi
-    echo "   waiting 10 s for the watchdogs to be killed and reaped..."
-    sleep 10
-    Z=$(zombies)
-    if [ "$Z" = "0" ]; then check "Zombies after the checks" 0 "0"; else check "Zombies after the checks" 1 "$Z"; fi
-    NOW_PIDS=$(cat "$(cgroup_dir)/pids.current" 2>/dev/null || echo '?')
-    if [ "$NOW_PIDS" != "?" ] && [ "$NOW_PIDS" -le $((BASE_PIDS + 3)) ]; then
-        check "pids.current back at its baseline" 0 "$NOW_PIDS (was $BASE_PIDS)"
-    else
-        check "pids.current back at its baseline" 1 "$NOW_PIDS (was $BASE_PIDS)"
-    fi
+    check "pids.current back at its baseline" 1 "$NOW_PIDS (was $BASE_PIDS)"
 fi
 echo ""
 
@@ -127,5 +133,8 @@ if [ "$FAILED" -eq 0 ]; then
     echo "=== Deploy complete: every check passed ==="
 else
     echo "=== Deploy finished with failures (✗ above) ==="
-    echo "Rollback: git checkout $PREVIOUS -- docker/docker-compose.yml && ${COMPOSE[*]} up -d --no-deps --force-recreate nettap-tshark"
+    echo "To undo only this change: delete the 'init: true' line under nettap-tshark in"
+    echo "$REPO_DIR/docker/docker-compose.yml, then run:"
+    echo "  ${COMPOSE[*]} up -d --no-deps --force-recreate nettap-tshark"
 fi
+exit "$FAILED"
