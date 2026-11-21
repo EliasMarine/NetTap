@@ -29,7 +29,7 @@ WATCH_CHOICES = (15, 30, 60, 240, 1440)
 # the budget #5 (watched devices) is planned for
 WATCH_MAX = 50
 TEXT_MAX = {"group": 32, "owner": 64, "notes": 1000}
-# the file's exact bytes; keeps F2's share of a backup under 768 KiB as the browser saves it
+# the file's exact bytes; a backup carries the same map in the same compact UTF-8 (NET-344)
 DETAILS_MAX_BYTES = 512 * 1024
 PROBLEMS_MAX = 5
 EMPTY: dict[str, Any] = dict.fromkeys(FIELDS)

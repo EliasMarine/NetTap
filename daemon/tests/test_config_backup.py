@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from services.backup_fit import RESTORE_LIMIT_BYTES, encode as fit_encode
 from services.config_backup import ConfigBackup, _SCHEMA_VERSION, _NETTAP_VERSION
 from services.device_custom import DEVICES_MAX, DeviceCustomStore
 from services.device_details import (
@@ -934,22 +935,22 @@ def _box(config_paths, root) -> tuple[ConfigBackup, DeviceDetailsStore]:
     return backup, details
 
 
-def _full_section() -> dict:
-    """DEVICES_MAX devices with every field (50 watched), notes of four-byte characters filling
-    the file to within one device's share of DETAILS_MAX_BYTES: F2's worst case in a backup."""
+def _full_section(char: str) -> dict:
+    """DEVICES_MAX devices with every field (50 watched), notes of `char` filling the file to
+    within one device's share of DETAILS_MAX_BYTES: F2's worst case in a backup."""
     section = {
         f"AA:BB:CC:DD:{i // 256:02X}:{i % 256:02X}": {
             "group": "Kids",
             "owner": "Sam",
-            "notes": "\U0001f600",
+            "notes": char,
             **({"watch_after_min": 15} if i < WATCH_MAX else {}),
         }
         for i in range(DEVICES_MAX)
     }
-    spare = (DETAILS_MAX_BYTES - len(encode(section))) // 4
+    spare = (DETAILS_MAX_BYTES - len(encode(section))) // len(char.encode("utf-8"))
     each, extra = divmod(spare, DEVICES_MAX)
     for n, entry in enumerate(section.values()):
-        entry["notes"] += "\U0001f600" * (each + (n < extra))
+        entry["notes"] += char * (each + (n < extra))
     return section
 
 
@@ -1025,26 +1026,25 @@ class TestDeviceDetailsBackup:
         assert any("Device details not restored" in e for e in result["errors"])
         assert details.export() == {}
 
-    def test_a_full_store_adds_under_768_kib_to_the_backup_as_the_browser_saves_it(
-        self, config_paths, tmp_path
+    @pytest.mark.parametrize("char", ["a", "\U0001f600"], ids=["ascii", "emoji"])
+    def test_a_full_store_adds_its_own_compact_bytes_to_the_download(
+        self, config_paths, tmp_path, char
     ):
-        section = _full_section()
+        """The download carries the map as the file stores it: compact UTF-8, so a four-byte
+        emoji counts four bytes, not the twelve of an escaped pair, and nothing is trimmed."""
+        section = _full_section(char)
         size = len(encode(section))
         assert DETAILS_MAX_BYTES - 4 * DEVICES_MAX < size <= DETAILS_MAX_BYTES
         backup, details = _box(config_paths, tmp_path)
         details.restore(section)
-        config = backup.export_config()
-        without = {
-            **config,
-            "sections": {
-                k: v for k, v in config["sections"].items() if k != "device_details"
-            },
-        }
 
-        def saved(
-            c: dict,
-        ) -> int:  # downloadConfigFile: JSON.stringify(config, null, 2)
-            return len(json.dumps(c, indent=2, ensure_ascii=False).encode("utf-8"))
+        body, left_out = backup.export_file()
 
-        assert config["sections"]["device_details"] == section
-        assert saved(config) - saved(without) < 768 * 1024
+        carried = fit_encode(
+            section
+        )  # the download's own encoder (services.backup_fit)
+        assert left_out == 0 and len(body) < RESTORE_LIMIT_BYTES
+        assert b'"device_details":' + carried in body
+        assert json.loads(body)["sections"]["device_details"] == section
+        # the file is {"devices":<map>,"version":1}: the download adds the map's bytes, no more
+        assert len(carried) == size - len(encode({})) + 2 <= DETAILS_MAX_BYTES

@@ -9,6 +9,7 @@ last check. Locally, from daemon/:
     PYTHONPATH=. python ../scripts/remote/verify_device_details.py
 """
 
+import json
 import os
 import stat
 import sys
@@ -140,7 +141,10 @@ def check_strict_mac(store: DeviceDetailsStore) -> None:
 
 def check_backup_round_trip(store: DeviceDetailsStore) -> None:
     paths = {k: os.path.join(TMP, "backup", k) for k in config_backup._DEFAULT_PATHS}
-    exported = ConfigBackup(config_paths=paths, device_details=store).export_config()
+    # the real download path: fit, then the shared preflight, then one encode (NET-344)
+    # OLD CODE: exported = ConfigBackup(config_paths=paths, device_details=store).export_config()
+    body, _left_out = ConfigBackup(config_paths=paths, device_details=store).export_file()
+    exported = json.loads(bytes(body))
     section = exported["sections"].get("device_details")
     if section != store.export():
         fail("the export's device_details section doesn't match the store")

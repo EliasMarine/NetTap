@@ -19,6 +19,7 @@ from api.alerts import handle_false_positive, handle_suppress_alert
 from api.settings import register_settings_routes
 from services.config_backup import BackupRefused, ConfigBackup, section_errors
 from services.device_custom import DeviceCustomStore
+from services.device_details import DeviceDetailsStore
 from services.excluded_ips import EXCLUDED_IPS_MAX, load_excluded_ips, save_excluded_ips
 from services.notification_hub import NotificationHub
 
@@ -112,6 +113,11 @@ BAD = {
         {"alert_suppressions": {"global": [None]}},
         "Alert suppressions not restored: this backup's copy isn't valid",
     ),
+    # NET-320
+    "device details": (
+        {"device_details": {MAC: {"watch_after_min": 7}}},
+        f"Device details for {MAC}: Pick 15, 30, 60, 240 or 1440 minutes.",
+    ),
 }
 
 
@@ -143,7 +149,8 @@ def backup(paths, tmp_path) -> ConfigBackup:
     hub = NotificationHub(
         config_path=paths["notification_config"], env_file=paths["env_file"]
     )
-    return ConfigBackup(config_paths=paths, device_custom=store, notification_hub=hub)
+    details = DeviceDetailsStore(str(tmp_path / "appdata"))
+    return ConfigBackup(paths, store, hub, details)
 
 
 def _data(sections: dict, **metadata) -> dict:
@@ -193,6 +200,7 @@ SHARED = [
     "quiet hours",
     "device name",
     "device picture",
+    "device details",
 ]
 
 

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from services import alert_intelligence, owner_tz, quiet_hours
+from services.backup_devices import restore_devices
 
 # NET-344: the encoding and the content check live in their own modules; their public names are
 # re-exported here (`as` marks a re-export), so callers keep importing from config_backup
@@ -54,8 +55,6 @@ from services.backup_fit import (
 # OLD CODE: from services.backup_notifications import redact_channels, restore_channels (NET-224: the hub restores)
 from services.backup_notifications import redact_channels
 from services.capture_config import load_capture_config, write_file_atomic
-from services.device_custom import StoreUnavailable
-from services.device_details import problems as details_problems
 from services.excluded_ips import parse_single_ip
 from services.home_location import load_home, parse_home, save_home
 
@@ -409,14 +408,12 @@ class ConfigBackup:
             result["is_valid"] = False
             result["errors"].extend(problems)
 
-        # NET-320: bad details, or a damaged details file here, refuse the whole import the same way
+        # NET-320: a damaged details file here refuses the whole import too (the section's
+        # content is checked in section_errors)
         if "device_details" in sections and self._device_details is not None:
-            reasons = details_problems(sections["device_details"])
             if not self._device_details.healthy:
-                reasons.append(DETAILS_UNREADABLE)
-            if reasons:
                 result["is_valid"] = False
-                result["errors"].extend(reasons)
+                result["errors"].append(DETAILS_UNREADABLE)
 
         # A9: restoring a different capture mode restarts capture, so the page asks first
         capture = capture_section(sections.get("capture_mode_config"))
@@ -512,43 +509,10 @@ class ConfigBackup:
         #     else:
         #         errors.append("Failed to write device_aliases")
         # OLD CODE END
-        # Device names and pictures: each present section replaces the owner's set, all or nothing
-        device_parts = [
-            s for s in ("device_aliases", "device_pictures") if s in sections
-        ]
-        device_names = sections.get("device_aliases")
-        # OLD CODE: notes: list[str] = [] (A9: created above, the notification notes go first)
-        if "device_aliases" in sections and "device_pictures" not in sections:
-            # A backup from before NET-200: its device_aliases came from the dead baseline
-            # code and is always {}, so replacing with it would wipe every owner's name
-            device_parts.remove("device_aliases")
-            device_names = None
-            notes.append(
-                "This backup was made before device names could be backed up; "
-                "the current device names are kept."
-            )
-        if device_parts and self._device_custom is None:
-            errors.append("Device names and pictures can't be restored here")
-        elif device_parts:
-            try:
-                self._device_custom.restore(
-                    device_names, sections.get("device_pictures")
-                )
-                applied.extend(device_parts)
-            # TypeError too: a malformed backup must never escape after other sections applied
-            except (ValueError, TypeError, RuntimeError, OSError) as exc:
-                logger.error("Device names and pictures not restored: %s", exc)
-                errors.append(f"Device names and pictures not restored: {exc}")
-
-        # NET-320: a present section replaces the set; a backup from before F2 has none, and the
-        # current details are kept. No details store (older setups): skipped.
-        if "device_details" in sections and self._device_details is not None:
-            try:
-                self._device_details.restore(sections["device_details"])
-                applied.append("device_details")
-            except (ValueError, StoreUnavailable, OSError) as exc:
-                logger.error("Device details not restored: %s", exc)
-                errors.append(f"Device details not restored: {exc}")
+        # Device names and pictures, then details (NET-320)
+        restore_devices(
+            sections, self._device_custom, self._device_details, applied, errors, notes
+        )
 
         # OLD CODE START — A9: any JSON was written, CIDRs and junk included (the Settings
         # form refuses them), and the running daemon kept its old list

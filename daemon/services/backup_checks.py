@@ -15,6 +15,7 @@ from typing import Any
 from services.bandwidth_tracker import MAX_MONTHLY_CAP_BYTES
 from services.capture_config import CaptureConfig
 from services.device_custom import restore_message, restore_problems
+from services.device_details import problems as details_problems
 from services.dhcp_gateway_net import validate_interface_name, validate_subnet
 from services.excluded_ips import EXCLUDED_IPS_MAX, parse_single_ip
 from services.home_location import parse_home
@@ -40,6 +41,7 @@ LABELS = {
     "notification_quiet": "quiet hours",
     "device_aliases": "device names",
     "device_pictures": "device pictures",
+    "device_details": "device details",
     "excluded_ips": "excluded IPs",
     "bandwidth_cap": "the bandwidth cap",
     "home_location": "the home location",
@@ -279,6 +281,13 @@ def _device_errors(sections: dict) -> dict[str, list[str]]:
     return {"device_aliases": _joined(names), "device_pictures": _joined(pictures)}
 
 
+def _details_errors(section: Any) -> list[str]:
+    """DeviceDetailsStore.restore's reasons, with the restore's own prefix (backup_devices)."""
+    return [
+        f"Device details not restored: {reason}" for reason in details_problems(section)
+    ]
+
+
 _SECTION_CHECKS = {
     "capture_mode_config": _capture_errors,
     "storage_retention": _retention_errors,
@@ -287,6 +296,8 @@ _SECTION_CHECKS = {
     "home_location": _home_errors,
     "alert_acknowledgements": ack_errors,
     "alert_suppressions": _suppression_errors,
+    # NET-320: worded as the restore words them, "Device details not restored: …"
+    "device_details": _details_errors,
 }
 
 

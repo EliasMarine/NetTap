@@ -1,6 +1,25 @@
 # F2: device details store (NET-320)
 
-**Status:** built on `feature/f2-device-details`. The PR stays a draft until NET-344 (every downloadable backup restores) has merged and its restore test passes on `main` (plan §3 decision 9). Then: rebase, re-run every suite, merge, and deploy with `scripts/remote/deploy-device-details.sh`.
+**Status:** rebased onto `main` `587af4aa` after NET-344 merged and passed on the G11 (plan §3 decision 9). Next are the reviews, the merge, and the deploy with `scripts/remote/deploy-device-details.sh`.
+
+## Rebase onto NET-344 (2026-11-20)
+
+- **Conflicts:**
+  - `daemon/api/backup.py` keeps NET-344's export, plus F2's `StoreUnavailable` → readable 503;
+  - the web backup client keeps `main`'s version, since `exportConfig` is retired and `downloadConfigFile` already shows the daemon's reason.
+- **`device_details` joins `section_errors`,** so validate, import and export share F2's `problems()`. The damaged-file check stays in `validate_import`, because it depends on the box, not the file. `fit` never trims details.
+- **The device-store restore moved** to `services/backup_devices.py` `restore_devices()`, so `config_backup.py` stays at 800 lines.
+- **The serialisation test** now checks the export's compact map, for ASCII and emoji notes: it is the file's size minus 24 bytes, so at most 512 KiB.
+- **The release fixture** is `tests/test_backup_release_fixture.py`: 32 pictures and 480 devices with 1,000-character notes.
+  - With 46,000 acknowledgements the exact file is 16,405,610 bytes, and nothing is left out. Codex's 46,000 figure was measured on the old pretty-printed download.
+  - So it also runs at 70,000 acknowledgements: 20,377 left out, 106 bytes under the limit. The count matches an independent binary search over real encodings.
+  - In both cases, names, pictures, details and the kept acknowledgements come back identical.
+- **`deploy-device-details.sh`:**
+  - the headroom arithmetic is gone, kept as `OLD CODE`;
+  - before the rebuild, the live export is classified without `--require-section`;
+  - after the recreate, with `--require-section device_details`;
+  - a size or legacy finding is reported, and anything else fails.
+- **Suites after the rebase:** daemon 5,932 passed and 5 skipped on aiohttp 3.13.3 and 3.14.5; ruff clean.
 
 **Plan:** `plans/2026-11-20-f2-device-details.md`. Codex approved it in round 6 of 6, after 12, 7, 4, 1 and 1 findings. The log is in `plans/2026-11-20-f2-device-details.review-log.md`.
 
@@ -58,6 +77,13 @@
 - **Bolting a backup-wide guard onto a feature slice produced new findings every round.** Rounds 2 to 5 were all about backup size, which is a problem older than F2. Splitting it into NET-344 and ordering the merges ended the loop.
 - **The web app re-encodes JSON in both directions.** Its proxy parses and re-serialises JSON replies, the download pretty-prints, and the upload stringifies again. Any size guarantee has to measure, or preserve, the bytes the owner actually saves.
 - **aiohttp refuses a body whose length is `>=` `client_max_size`.** nginx and adapter-node accept exactly the limit, so the daemon's limit is the real cutoff, one byte lower.
+
+## For the UI slices (#5 watched devices, #9 groups)
+
+From the post-rebase security review:
+- **Rendering:** keep notes, owner and group as Svelte text interpolation. No `{@html}`, markdown or auto-linking: notes can hold `javascript:` URLs.
+- **CSV:** if owner or group become Devices CSV columns, pass them through `csvCell`.
+- **Backups:** notes are included in backups, but the Backup tab says passwords are left out. Owners type device passwords into notes, so add a one-line hint on the notes field.
 
 ## Rebase requirements once NET-344 is merged
 

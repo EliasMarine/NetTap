@@ -2,6 +2,8 @@
 
 _Codex APPROVED in round 6, 2026-11-20 (rounds 1–5: 12, 7, 4, 1 and 1 findings; see §9–§13)_
 
+_Update after NET-344 merged (#342, 2026-11-20): the 768 KiB "as the browser saves it" bound and the pre-deploy headroom check are superseded. NET-344's `fit` measures the real compact file, and the deploy checks use its classifier. F2's share of a backup is its compact map, at most 512 KiB. The tracking doc's "Rebase" section has the details._
+
 **Linear:** NET-320 · **Roadmap:** `plans/2026-11-18-feature-roadmap.md` §F2, decision D2 · **Depends on:** nothing · **Used by:** #5 watched devices (NET-331), #9 groups/owners/notes
 **Branch:** `feature/f2-device-details` from `origin/main` 07e1c1cd
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Deploy NET-320 (roadmap F2, the device details store) and check it on the box (plan §5 G11):
-#   - headroom first, before anything is rebuilt: the live backup as Settings uploads it, plus
-#     F2's worst case of 768 KiB, must fit the daemon's 16 MiB request limit, or nothing changes;
+#   - the live backup first, before anything is rebuilt: NET-344's classify_backup_export.py
+#     classifies the running daemon's export (a 200 passes; the size 413 or a legacy_excluded_ips
+#     422 is a finding for the owner; anything else stops the deploy with nothing changed);
 #   - the running daemon and web app are the images just built (image IDs, not the tags);
 #   - live and read-only: registry rows carry group, owner and watch_after_min, the device page
-#     read carries notes, a backup export has a device_details section, no unreadable-file line;
+#     read carries notes, the classified export (a 200 must now carry device_details; the same
+#     two findings are reported, anything else fails), no unreadable-file line;
 #   - isolated: verify_device_details.py runs in a throwaway copy of the daemon image with no
 #     network and no mounts (store, budgets, MAC rule, 0600, backup round trip, damaged file);
 #   - the daemon's settled memory stays within 50 MB of before.
@@ -21,9 +23,9 @@ BRANCH="${BRANCH:-main}"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 DAEMON_IMAGE="nettap/storage-daemon:latest"
 WEB_IMAGE="nettap/web:latest"
-LIMIT_BYTES=16777216     # MAX_REQUEST_BYTES in daemon/api/server.py (16 MiB); aiohttp refuses a body >= it
-F2_SHARE_BYTES=786432    # F2's worst case in a backup, 768 KiB (plan §2.1)
+CLASSIFIER="scripts/remote/classify_backup_export.py"  # NET-344, standard library only
 FAILED=0
+FINDINGS=0
 
 check() {  # check LABEL STATUS(0=ok) DETAIL
     if [ "$2" -eq 0 ]; then echo "   ✓ $1${3:+ ($3)}"; else echo "   ✗ $1${3:+ ($3)}"; FAILED=1; fi
@@ -57,6 +59,48 @@ result() {  # result LABEL OUTPUT  (OUTPUT starting with OK passes)
     check "$1" "$rc" "$2"
 }
 
+# The export's raw bytes to stdout and its status to stderr, read with the token as daemon_py does
+EXPORT_PY='
+import sys, urllib.error, urllib.request
+try:
+    token = open("/run/nettap-auth/daemon-token").read().strip()
+    req = urllib.request.Request("http://localhost:8880/api/backup/export",
+                                 headers={"X-NetTap-Daemon-Token": token})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        status, body = r.status, r.read()
+except urllib.error.HTTPError as e:
+    status, body = e.code, e.read()
+except OSError as e:
+    status, body = 0, str(e).encode()
+sys.stdout.buffer.write(body)
+print(status, file=sys.stderr)'
+
+classify_export() {  # classify_export [--require-section NAME]: the classifier's one-line verdict on the live export
+    local status verdict
+    if [ ! -f "$CLASSIFIER" ]; then echo "FAIL $CLASSIFIER isn't in this checkout (NET-344 isn't on the box)"; return; fi
+    # stderr (the status) to the pipe, stdout (the bytes) to the file, which the user writes
+    # shellcheck disable=SC2024  # only docker needs sudo
+    status=$(sudo docker exec nettap-storage-daemon python3 -c "$EXPORT_PY" 2>&1 >"$TMPD/export.json" | tail -n 1)
+    # it runs in the daemon container as -c, so stdin carries the export (the host has no python)
+    # shellcheck disable=SC2024  # the user reads the file; only docker needs sudo
+    verdict=$(sudo docker exec -i nettap-storage-daemon python3 -c "$(cat "$CLASSIFIER")" "${status:-000}" "$@" < "$TMPD/export.json" 2>&1)
+    # the export holds notes, names, photos and the home location: gone as soon as it's read
+    rm -f "$TMPD/export.json"
+    echo "$verdict"
+}
+
+export_verdict() {  # export_verdict LABEL VERDICT: OK passes, FINDING is reported (!), anything else fails
+    case "$2" in
+        OK\ *) check "$1" 0 "$2" ;;
+        FINDING\ *)
+            FINDINGS=1
+            echo "   ! $1: $2"
+            echo "     The owner has to act on this (the message says how); the deploy carries on."
+            ;;
+        *) check "$1" 1 "${2:-no verdict}" ;;
+    esac
+}
+
 daemon_rss_mb() {  # the daemon process's resident memory, in MB (not docker stats: F1 lesson)
     sudo docker top nettap-storage-daemon -o pid,rss,args 2>/dev/null | awk '$3 ~ /python/ && / main\.py/ { if ($2 > m) m = $2 } END { printf "%d", m / 1024 }'
 }
@@ -86,21 +130,37 @@ settled_rss_mb() {  # wait until VmRSS moves under 10% across a minute (at most 
 echo "=== Deploy: device details (NET-320, $BRANCH) ==="
 echo ""
 
-echo "→ Step 1: Backup headroom, measured on the running daemon before anything changes..."
+# OLD CODE START — NET-344: fit measures the real file and trims the oldest acknowledgements, so
+# the 768 KiB reserve for F2's share is gone; the export is classified instead (tracking doc,
+# "Rebase requirements")
+# echo "→ Step 1: Backup headroom, measured on the running daemon before anything changes..."
+# cd "$REPO_DIR" || { echo "   ✗ $REPO_DIR not found"; exit 1; }
+# # compact, as Settings uploads a restore (web/src/lib/api/backup.ts importConfig: JSON.stringify)
+# HEADROOM=$(daemon_py "
+# s, b = call('GET', '/api/backup/export')
+# if s != 200:
+#     print('FAIL the export answered', s)
+# else:
+#     size = len(json.dumps(json.loads(b), separators=(',', ':'), ensure_ascii=False).encode())
+#     room = $LIMIT_BYTES - $F2_SHARE_BYTES - size
+#     print('OK' if room > 0 else 'FAIL', f'backup {size / 1e6:.2f} MB as uploaded, limit {$LIMIT_BYTES / 1e6:.2f} MB, headroom after F2 adds {$F2_SHARE_BYTES / 1e6:.2f} MB: {room / 1e6:.2f} MB')")
+# result "the live backup has room for F2's share" "$HEADROOM"
+# if [ "$FAILED" -ne 0 ]; then
+#     echo ""
+#     echo "=== Stopped: nothing was changed. A backup this size couldn't be restored once F2 fills up; shrink it first (NET-344) ==="
+#     exit 1
+# fi
+# echo ""
+# OLD CODE END
+echo "→ Step 1: The live backup, classified on the running daemon before anything changes..."
 cd "$REPO_DIR" || { echo "   ✗ $REPO_DIR not found"; exit 1; }
-# compact, as Settings uploads a restore (web/src/lib/api/backup.ts importConfig: JSON.stringify)
-HEADROOM=$(daemon_py "
-s, b = call('GET', '/api/backup/export')
-if s != 200:
-    print('FAIL the export answered', s)
-else:
-    size = len(json.dumps(json.loads(b), separators=(',', ':'), ensure_ascii=False).encode())
-    room = $LIMIT_BYTES - $F2_SHARE_BYTES - size
-    print('OK' if room > 0 else 'FAIL', f'backup {size / 1e6:.2f} MB as uploaded, limit {$LIMIT_BYTES / 1e6:.2f} MB, headroom after F2 adds {$F2_SHARE_BYTES / 1e6:.2f} MB: {room / 1e6:.2f} MB')")
-result "the live backup has room for F2's share" "$HEADROOM"
+TMPD=$(mktemp -d)
+trap 'rm -rf "$TMPD"' EXIT
+# no --require-section: the running build may not have F2 yet
+export_verdict "the running daemon's backup export" "$(classify_export)"
 if [ "$FAILED" -ne 0 ]; then
     echo ""
-    echo "=== Stopped: nothing was changed. A backup this size couldn't be restored once F2 fills up; shrink it first (NET-344) ==="
+    echo "=== Stopped: nothing was changed. The running daemon's backup export failed (✗ above); fix that first ==="
     exit 1
 fi
 echo ""
@@ -177,11 +237,15 @@ else:
     d = json.loads(b).get('device', {}) if s == 200 else {}
     ok = s == 200 and all(k in d for k in ('notes', 'group', 'owner', 'watch_after_min'))
     print('OK' if ok else 'FAIL', 'status', s)")"
-result "a backup export has a device_details section" "$(daemon_py "
-s, b = call('GET', '/api/backup/export')
-dd = json.loads(b).get('sections', {}).get('device_details') if s == 200 else None
-# a count only: the section holds the owner's own words
-print('OK' if isinstance(dd, dict) else 'FAIL', 'status', s, 'entries', len(dd) if isinstance(dd, dict) else type(dd).__name__)")"
+# OLD CODE START — NET-344: the export is classified now; a size 413 or legacy_excluded_ips 422
+# is a finding, not a failure, and the classifier prints sizes, never the section's notes
+# result "a backup export has a device_details section" "$(daemon_py "
+# s, b = call('GET', '/api/backup/export')
+# dd = json.loads(b).get('sections', {}).get('device_details') if s == 200 else None
+# # a count only: the section holds the owner's own words
+# print('OK' if isinstance(dd, dict) else 'FAIL', 'status', s, 'entries', len(dd) if isinstance(dd, dict) else type(dd).__name__)")"
+# OLD CODE END
+export_verdict "the backup export carries device_details" "$(classify_export --require-section device_details)"
 # the container was just recreated, so its whole log is since the restart
 UNREADABLE=$(sudo docker logs nettap-storage-daemon 2>&1 | grep -c "Device details file is unreadable" || true)
 if [ "${UNREADABLE:-0}" -eq 0 ]; then rc=0; else rc=1; fi
@@ -215,9 +279,11 @@ echo "→ Step 12: Container status..."
 sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "nettap-web|nettap-storage-daemon"
 echo ""
 
-if [ "$FAILED" -eq 0 ]; then
-    echo "=== Deploy complete: every check passed ==="
-else
+if [ "$FAILED" -ne 0 ]; then
     echo "=== Deploy complete, but a check FAILED (✗ above) ==="
     exit 1
+elif [ "$FINDINGS" -ne 0 ]; then
+    echo "=== Deploy complete; every check passed, with a finding for the owner (! above) ==="
+else
+    echo "=== Deploy complete: every check passed ==="
 fi

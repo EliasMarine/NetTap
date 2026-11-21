@@ -1,6 +1,6 @@
 # NET-344: every downloadable backup restores
 
-**Status:** built and reviewed on `fix/backup-size`; next are the PR, the two-angle review, the merge, and the G11 deploy (`bash scripts/remote/deploy-backup-size.sh`). Merging it unblocks F2 (NET-320, draft PR #341).
+**Status:** MERGED 2026-11-20 as PR #342 (`587af4aa`) and deployed on the G11 with `deploy-backup-size.sh`, every check passing. The live export is 22,667 bytes with nothing left out, and validates byte for byte. Through nginx, the size limit is enforced at `limit − 1` (accepted) and `limit + 1` (refused with 413). The isolated round trip restored 32 pictures and the 54,656 newest of 70,100 acknowledgements in 22.4 s. The daemon settled at 287 MB. Merging it unblocks F2 (NET-320, draft PR #341).
 
 **Plan:** `plans/2026-11-20-net344-backup-size.md`. Codex reviewed it for the owner's six-round cap without approving (12, 9, 8, 7, 7 and 8 findings). Round 6 took 7 of 8 findings and rejected one, which is pre-existing (§14). The owner's standing rule is to take the recommendation and keep going. The log is `plans/2026-11-20-net344-backup-size.review-log.md`.
 
@@ -28,13 +28,13 @@ A config backup could download fine and then fail to restore. There were four ca
   - **503:** an export is already running. It carries `Retry-After: 30`, which the proxy forwards, and nothing is queued.
 - **One preflight.** `services/backup_checks.py` `section_errors` holds every section's content check. Validate, import and export share it, and it runs off the event loop. A content failure applies nothing. The importer calls the same rules, so the two can't drift.
 - **Notifications are exported from the running hub** (`NotificationHub.backup_state`). A channel the hub skipped at load would otherwise have blocked every backup.
-- **Validate and import answer a plain 413** for a body at or over the limit, instead of "Invalid JSON body".
+- **Validate and import answer a plain 413** for a body over the limit (see the aiohttp lesson below), instead of "Invalid JSON body". NaN and Infinity are an ordinary 400.
 - **Excluded IPs:**
   - capped at 10,000;
   - duplicates are removed on load and on import;
   - the Settings save and the import both write atomically.
 - **Suppression reasons:**
-  - the suppress and false-positive APIs store `str(reason or "")`;
+  - the suppress and false-positive APIs store `"" if reason is None else str(reason)`;
   - the export copy turns any non-string reason into text;
   - the restore accepts `null` from older backups.
 - **nginx:** the backup location gets `proxy_read_timeout 300s` (the web app's import budget is 290 s).
@@ -86,9 +86,16 @@ A config backup could download fine and then fail to restore. There were four ca
   - `/deep-review`: no findings from its four agents (report in `security-reviews/fix-backup-size/`);
   - `/ponytail-review`: no must-fix. Its should-fix (old non-IP excluded entries got `invalid_section`) and its three nice-to-haves are all taken. They were decimal MB, one rule in one place, and dropping unused reply fields and `exportConfig`. It also flagged the notification-hub case, which is fixed.
 
+## Known limits
+
+- **A hand-edited backup with a partial retention section** is checked against the default settings, but a restore merges it with the box's saved settings. It can pass the check and then be refused at restore. A backup NetTap exports always carries the full section.
+- **A failed excluded-IP Settings save** still returns the raw error text in its 500, as on `main` before this change.
+- **Suppressions can't be removed (NET-346),** so a backup made too large by suppressions alone stays a refusal.
+
 ## Lessons
 
 - **Each round 4–5 addition opened a new class of findings.** Restoring legacy ranges brought a new predicate and a rollback schema gate. A repair script brought archive, overwrite and conflict problems. A 16 MiB Settings save brought the OpenSearch term limit and UI size. Cutting them, and adding a cap, closed more than it opened.
-- **aiohttp refuses a body whose length is `>=` `client_max_size`,** while nginx and adapter-node accept exactly the limit. The daemon is the real cutoff, one byte lower.
+- **aiohttp changed its body-size cutoff between versions.** 3.13 refuses a body `>=` `client_max_size`, and 3.14 (what CI and the next image build install, since `requirements.txt` allows `>=3.9,<4.0`) refuses one `>` it. A body under 16 MiB restores on every version, which is why the export stays strictly under it, and why the cutoff tests and the G11 probe post `limit + 1`. Found when CI went red on the first push.
+- **A parity test caught real drift.** The preflight accepted a partial retention section that `save()` refused once merged with the defaults. The fix is `RetentionConfigManager.checked_merge`, shared by both.
 - **`app["excluded_ips"]` is the raw stored list,** so legacy CIDRs still affect Live Connections and Top Destinations. Most other views use `valid_excluded_ips`, which skips them.
 - **Found on the way:** NET-345 (an expired suppression blocks suppressing the same alert again) and NET-346 (no way to list or remove suppressions).
