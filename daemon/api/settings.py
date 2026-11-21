@@ -19,6 +19,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from api.offload import run_blocking
 from services.excluded_ips import (
     EXCLUDED_IPS_MAX,
     parse_single_ip,
@@ -289,11 +290,16 @@ async def handle_put_excluded_ips(request: web.Request) -> web.Response:
     # NET-344: past this the live views break (OpenSearch's terms limit) and Settings can't list it
     if len(clean_ips) > EXCLUDED_IPS_MAX:
         return web.json_response(
-            {"error": "Up to 10,000 excluded IPs. Remove some first."}, status=400
+            {"error": f"Up to {EXCLUDED_IPS_MAX:,} excluded IPs. Remove some first."},
+            status=400,
         )
 
     try:
-        save_excluded_ips(clean_ips, request.app.get("excluded_ips_file"))
+        # OLD CODE: save_excluded_ips(clean_ips, request.app.get("excluded_ips_file"))
+        # (NET-344: a 10,000-entry atomic write with fsync ran on the request loop)
+        await run_blocking(
+            save_excluded_ips, clean_ips, request.app.get("excluded_ips_file")
+        )
     except OSError as exc:
         return web.json_response(
             {"error": f"Failed to save excluded IPs: {exc}"}, status=500

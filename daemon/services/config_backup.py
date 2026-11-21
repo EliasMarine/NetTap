@@ -32,12 +32,13 @@ from services.backup_checks import (
     CAPTURE_FIELDS as CAPTURE_FIELDS,
     LEFT_OUT as LEFT_OUT,
     BackupRefused as BackupRefused,
-    _SECTION_FILES,
-    _ack_errors,
-    _cap_errors,
-    _first_bad_entry,
-    _left_out_check,
-    _refusal,
+    SECTION_FILES,
+    ack_errors,
+    cap_errors,
+    excluded_ip_errors,
+    first_bad_entry,
+    left_out_check,
+    refusal,
     capture_section,
     section_errors,
     suppressions_ok,
@@ -45,10 +46,9 @@ from services.backup_checks import (
 from services.backup_fit import (
     RESTORE_LIMIT_BYTES as RESTORE_LIMIT_BYTES,
     BackupTooLarge as BackupTooLarge,
-    _encode_exact,
-    _fit,
     encode as encode,
-    fit as fit,
+    encode_exact,
+    fit,
 )
 
 # OLD CODE: from services.backup_notifications import redact_channels, restore_channels (NET-224: the hub restores)
@@ -263,7 +263,7 @@ class ConfigBackup:
 
         Raises BackupTooLarge (413) or BackupRefused (422); anything else is a failed export.
         """
-        fitted, size, left_out = _fit(self.export_config())
+        fitted, size, left_out = fit(self.export_config())
         sections = fitted["sections"]
         errors = section_errors(sections)
         if errors:
@@ -271,12 +271,12 @@ class ConfigBackup:
                 logger.error(
                     "Backup refused: %s in %s can't be restored: %s%s",
                     name,
-                    self._paths.get(_SECTION_FILES.get(name, ""), "the device store"),
+                    self._paths.get(SECTION_FILES.get(name, ""), "the device store"),
                     "; ".join(reasons),
-                    _first_bad_entry(name, sections.get(name)),
+                    first_bad_entry(name, sections.get(name)),
                 )
-            raise _refusal(errors, sections)
-        return _encode_exact(fitted, size), left_out
+            raise refusal(errors, sections)
+        return encode_exact(fitted, size), left_out
 
     def current_capture(self) -> dict:
         """The box's capture mode as a backup section; {} before setup has saved one."""
@@ -384,7 +384,7 @@ class ConfigBackup:
         #         result["errors"].append(reason)
         # OLD CODE END
         problems = [r for reasons in section_errors(sections).values() for r in reasons]
-        left_out_error, left_out_warning = _left_out_check(metadata, sections)
+        left_out_error, left_out_warning = left_out_check(metadata, sections)
         if left_out_error:
             problems.append(left_out_error)
         if left_out_warning:
@@ -545,14 +545,24 @@ class ConfigBackup:
         #         errors.append("Failed to write excluded_ips")
         # OLD CODE END
         if "excluded_ips" in sections:
-            # single IPs, at most EXCLUDED_IPS_MAX of them (section_errors), canonical and once each
-            ips = list(dict.fromkeys(map(parse_single_ip, sections["excluded_ips"])))
-            try:
-                self._write_atomic(self._paths.get("excluded_ips", ""), ips)
-                applied.append("excluded_ips")
-            except OSError as exc:
-                logger.error("Excluded IPs not restored: %s", exc)
-                errors.append(f"Excluded IPs not restored: {exc}")
+            raw = sections["excluded_ips"]
+            # the preflight's own rule again at the write, so a hand-built validation can't put
+            # nulls or an oversized list in the file
+            problems = excluded_ip_errors(raw)
+            if problems:
+                errors.extend(problems)
+            else:
+                # single IPs, at most EXCLUDED_IPS_MAX of them, canonical and once each
+                ips = list(dict.fromkeys(map(parse_single_ip, raw)))
+                try:
+                    self._write_atomic(self._paths.get("excluded_ips", ""), ips)
+                    applied.append("excluded_ips")
+                except OSError as exc:
+                    # the reason stays in the log: the reply (a 400) never carries paths
+                    logger.error("Excluded IPs not restored: %s", exc)
+                    errors.append(
+                        "Excluded IPs not restored: the file couldn't be written."
+                    )
 
         # Apply bandwidth cap
         # OLD CODE START — wrote any JSON, and a shape the tracker can't read (a list, Infinity)
@@ -686,7 +696,7 @@ class ConfigBackup:
         #     errors.append("Bandwidth cap not restored: this backup's copy isn't valid")
         #     return
         # OLD CODE END
-        problems = _cap_errors(cap)
+        problems = cap_errors(cap)
         if problems:
             errors.extend(problems)
             return
@@ -725,7 +735,7 @@ class ConfigBackup:
                 #     isinstance(d, dict) and all(isinstance(v, dict) for v in d.values())
                 # ),
                 # OLD CODE END
-                lambda d: not _ack_errors(d),
+                lambda d: not ack_errors(d),
             ),
             "alert_suppressions": (
                 "suppressions",

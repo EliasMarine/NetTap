@@ -19,7 +19,7 @@ from services.dhcp_gateway_net import validate_interface_name, validate_subnet
 from services.excluded_ips import EXCLUDED_IPS_MAX, parse_single_ip
 from services.home_location import parse_home
 from services.notification_hub import backup_problems
-from storage.retention_config import RetentionConfigManager, validate_config
+from storage.retention_config import RetentionConfigManager
 
 # The fields each capture mode uses, as POST /api/setup/configure takes them
 CAPTURE_FIELDS = {
@@ -29,10 +29,10 @@ CAPTURE_FIELDS = {
 }
 _SUPPRESS_TIMES = ("expires_at", "suppressed_at", "marked_at")
 LEFT_OUT = "acknowledgements_left_out"
-_ACKS = "alert_acknowledgements"
+ACKS = "alert_acknowledgements"
 
 # How the owner reads each section's name
-_LABELS = {
+LABELS = {
     "capture_mode_config": "the capture mode",
     "storage_retention": "retention",
     "notification_channels": "notification channels",
@@ -47,7 +47,7 @@ _LABELS = {
     "alert_suppressions": "alert suppressions",
 }
 # The ConfigBackup path each section comes from, for the log
-_SECTION_FILES = {
+SECTION_FILES = {
     "capture_mode_config": "capture_config",
     "storage_retention": "retention_config",
     "notification_channels": "notification_config",
@@ -109,8 +109,8 @@ def suppressions_ok(data: Any) -> bool:
     )
 
 
-def _labels(sections: Iterable[str]) -> str:
-    return ", ".join(_LABELS.get(name, name) for name in sections)
+def labels(sections: Iterable[str]) -> str:
+    return ", ".join(LABELS.get(name, name) for name in sections)
 
 
 class BackupRefused(Exception):
@@ -122,11 +122,11 @@ class BackupRefused(Exception):
         self.code = code
 
 
-def _invalid(sections: list[str]) -> BackupRefused:
+def invalid(sections: list[str]) -> BackupRefused:
     return BackupRefused(
         "invalid_section",
-        f"No backup was made: {_labels(sections)} on this NetTap can't be restored as "
-        "stored. The daemon log names the entry.",
+        f"No backup was made: {labels(sections)} on this NetTap can't be restored as "
+        "stored. The daemon log has the details.",
     )
 
 
@@ -156,10 +156,9 @@ def _retention_errors(values: Any) -> list[str]:
     if not isinstance(values, dict):
         return ["Retention settings not restored: not a JSON object"]
     try:
-        validate_config(values)
-        # save() then merges onto the saved settings, where a null value fails (int(None));
-        # a manager that has read nothing starts from the defaults and touches no file
-        RetentionConfigManager(config_path="")._merge_config(values)
+        # save()'s own checks; a manager that has read nothing merges onto the defaults (the
+        # restore merges onto the box's saved settings, so a partial section can still differ)
+        RetentionConfigManager(config_path="").checked_merge(values)
     except (AttributeError, TypeError, ValueError) as exc:
         return [f"Retention settings not restored: {exc}"]
     return []
@@ -205,7 +204,7 @@ def _shown(text: str) -> str:
     return clean if len(clean) <= 64 else clean[:63] + "…"
 
 
-def _excluded_ip_errors(raw: Any) -> list[str]:
+def excluded_ip_errors(raw: Any) -> list[str]:
     """Single IPs only, as the Settings PUT keeps them, and at most EXCLUDED_IPS_MAX."""
     if not isinstance(raw, list):
         return [
@@ -227,7 +226,7 @@ def _excluded_ip_errors(raw: Any) -> list[str]:
     return errors
 
 
-def _cap_errors(cap: Any) -> list[str]:
+def cap_errors(cap: Any) -> list[str]:
     """As _restore_bandwidth_cap checks it; {} (a box that never set one) is skipped."""
     if cap == {}:
         return []
@@ -251,7 +250,7 @@ def _home_errors(home: Any) -> list[str]:
     return []
 
 
-def _ack_errors(acks: Any) -> list[str]:
+def ack_errors(acks: Any) -> list[str]:
     if isinstance(acks, dict) and all(isinstance(v, dict) for v in acks.values()):
         return []
     return ["Alert acknowledgements not restored: this backup's copy isn't valid"]
@@ -283,10 +282,10 @@ def _device_errors(sections: dict) -> dict[str, list[str]]:
 _SECTION_CHECKS = {
     "capture_mode_config": _capture_errors,
     "storage_retention": _retention_errors,
-    "excluded_ips": _excluded_ip_errors,
-    "bandwidth_cap": _cap_errors,
+    "excluded_ips": excluded_ip_errors,
+    "bandwidth_cap": cap_errors,
     "home_location": _home_errors,
-    "alert_acknowledgements": _ack_errors,
+    "alert_acknowledgements": ack_errors,
     "alert_suppressions": _suppression_errors,
 }
 
@@ -314,7 +313,7 @@ def section_errors(sections: dict) -> dict[str, list[str]]:
     return {name: reasons for name, reasons in found.items() if reasons}
 
 
-def _left_out_check(metadata: dict, sections: dict) -> tuple[str | None, str | None]:
+def left_out_check(metadata: dict, sections: dict) -> tuple[str | None, str | None]:
     """(error, warning) for metadata.acknowledgements_left_out; absent means 0 (plan §2.4)."""
     left = metadata.get(LEFT_OUT, 0)
     if not isinstance(left, int) or isinstance(left, bool) or left < 0:
@@ -324,7 +323,7 @@ def _left_out_check(metadata: dict, sections: dict) -> tuple[str | None, str | N
         )
     if left == 0:
         return None, None
-    acks = sections.get(_ACKS)
+    acks = sections.get(ACKS)
     if not isinstance(acks, dict):
         return "The backup says it leaves out acknowledgements but carries none", None
     noun = "acknowledgement" if left == 1 else "acknowledgements"
@@ -370,19 +369,19 @@ def _legacy_message(raw: list) -> str:
     return " ".join(parts)
 
 
-def _refusal(errors: dict[str, list[str]], sections: dict) -> BackupRefused:
+def refusal(errors: dict[str, list[str]], sections: dict) -> BackupRefused:
     """legacy_excluded_ips when the only problem is excluded IPs an older NetTap kept: text
     that isn't one IP (ranges included), or too many; invalid_section for anything else."""
     raw = sections.get("excluded_ips")
     if set(errors) == {"excluded_ips"} and isinstance(raw, list):
         if not _excluded_findings(raw)[2]:
             return BackupRefused("legacy_excluded_ips", _legacy_message(raw))
-    return _invalid(list(errors))
+    return invalid(list(errors))
 
 
-def _first_bad_entry(section: str, data: Any) -> str:
+def first_bad_entry(section: str, data: Any) -> str:
     """Where acknowledgements or suppressions fail the restore check, for the log."""
-    if section == _ACKS and isinstance(data, dict):
+    if section == ACKS and isinstance(data, dict):
         bad = next((k for k, v in data.items() if not isinstance(v, dict)), None)
         return "" if bad is None else f" (first bad entry {str(bad)[:64]!r})"
     if section != "alert_suppressions" or not isinstance(data, dict):

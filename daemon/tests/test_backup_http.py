@@ -9,7 +9,6 @@ import asyncio
 import base64
 import json
 import os
-import resource
 import subprocess
 import sys
 import threading
@@ -222,15 +221,17 @@ async def test_a_trimmed_backup_restores_into_another_box(boxes):
 
 
 @pytest.mark.asyncio
-async def test_limit_minus_one_restores_and_the_limit_is_a_plain_413(boxes):
+async def test_limit_minus_one_restores_and_over_the_limit_is_a_plain_413(boxes):
+    """aiohttp <=3.13 refuses a body >= the limit, 3.14 one > it, so LIMIT + 1 is the plain 413
+    on both and LIMIT - 1 (the most fit ever answers) restores on both."""
     box = await boxes()
-    under, at = _padded(EMPTY, LIMIT - 1), _padded(EMPTY, LIMIT)
+    under, over = _padded(EMPTY, LIMIT - 1), _padded(EMPTY, LIMIT + 1)
     status, validation = await _post(box.client, "/api/backup/validate", under)
     assert status == 200 and validation["is_valid"], validation
     status, result = await _post(box.client, "/api/backup/import", under)
     assert status == 200 and result["applied"] == [], result
     for path in ("/api/backup/validate", "/api/backup/import"):
-        status, reply = await _post(box.client, path, at)
+        status, reply = await _post(box.client, path, over)
         assert status == 413, path
         assert reply == {"error": "This file is over the 16 MB restore limit."}
     status, _ = await _post(box.client, "/api/backup/validate", b'{"metadata": ')
@@ -252,6 +253,32 @@ async def test_a_near_limit_file_with_1e_05_posted_as_raw_bytes_restores(boxes):
     status, result = await _post(box.client, "/api/backup/import", body)
     assert status == 200 and result["applied"] == ["alert_acknowledgements"], result
     assert box.read("alert_acks") == {"a1": {"score": 1e-05}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/backup/validate", "/api/backup/import"])
+@pytest.mark.parametrize(
+    "number,section",
+    [
+        ("NaN", '"alert_acknowledgements":{"a1":{"score":NaN}}'),
+        ("Infinity", '"alert_suppressions":{"global":[{"signature_id":Infinity}]}'),
+        ("-Infinity", '"notification_rules":{"r1":{"min":-Infinity}}'),
+    ],
+)
+async def test_nan_and_infinity_are_refused_as_invalid_json(
+    boxes, path, number, section
+):
+    """L1: Python's json takes them; once written, every export was a 422 and the Alerts page
+    got NaN. They are not JSON, so the body is the plain 400 and nothing is written."""
+    box = await boxes()
+    body = '{"metadata":{"schema_version":2},"sections":{' + section + "}}"
+    status, reply = await _post(box.client, path, body.encode())
+    assert (status, reply) == (400, {"error": "Invalid JSON body"}), number
+    for key in ("alert_acks", "suppressions", "notification_config"):
+        assert (
+            not Path(box.paths[key]).exists()
+            or number not in Path(box.paths[key]).read_text()
+        )
 
 
 @pytest.mark.asyncio
@@ -446,48 +473,53 @@ async def _until(predicate, seconds: float = 10.0) -> None:
 async def test_two_exports_of_a_32_mib_file_one_builds_and_none_waits(
     boxes, monkeypatch
 ):
+    """The build is held until the 503s are checked, so the order is fixed, not timed."""
     box = await boxes()
     box.write("alert_acks", ack_file_32mib())
+    building, release = threading.Event(), threading.Event()
     builds = []
     real = ConfigBackup.export_config
 
-    def counted(self):
-        builds.append(time.monotonic())
+    def held(self):
+        builds.append(self)
+        building.set()
+        assert release.wait(30), "the build was never released"
         return real(self)
 
-    monkeypatch.setattr(ConfigBackup, "export_config", counted)
-    rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    monkeypatch.setattr(ConfigBackup, "export_config", held)
+    state = box.client.app[backup_api.EXPORT_STATE]
 
-    start = time.monotonic()
     first = asyncio.create_task(box.client.get("/api/backup/export"))
-    await _until(lambda: backup_api._exporting)
-    second = await box.client.get("/api/backup/export")
-    assert second.status == 503
-    assert second.headers["Retry-After"] == "30"
-    assert await second.json() == {
-        "error": "A backup is already being made. Try again in a moment."
-    }
+    try:
+        await _until(building.is_set)
+        second = await box.client.get("/api/backup/export")
+        assert second.status == 503
+        assert second.headers["Retry-After"] == "30"
+        assert await second.json() == {
+            "error": "A backup is already being made. Try again in a moment."
+        }
+    finally:
+        release.set()
     resp = await first
     body = await resp.read()
-    seconds = time.monotonic() - start
     assert resp.status == 200 and len(body) < LIMIT
     assert json.loads(body)["metadata"][LEFT_OUT] > 0
-    assert seconds < 10
+    assert len(builds) == 1 and not state["busy"]
 
     # a client that leaves mid-build: its build finishes, and no later build follows from it
+    building.clear()
+    release.clear()
     gone = asyncio.create_task(box.client.get("/api/backup/export"))
-    await _until(lambda: backup_api._exporting)
-    gone.cancel()
-    assert (await box.client.get("/api/backup/export")).status == 503
-    await _until(lambda: not backup_api._exporting)
-    await asyncio.sleep(0.2)
+    try:
+        await _until(building.is_set)
+        gone.cancel()
+        assert (await box.client.get("/api/backup/export")).status == 503
+    finally:
+        release.set()
+    await _until(
+        lambda: not state["busy"], seconds=120
+    )  # a hang guard, not a time limit
     assert len(builds) == 2
-
-    rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    print(
-        f"32 MiB acknowledgements: export {seconds:.1f} s; process peak RSS "
-        f"{rss_before} -> {rss_after} (ru_maxrss units)"
-    )
 
 
 # A fresh interpreter, so its peak RSS is this export's alone (ru_maxrss: KiB on Linux, bytes on macOS)
@@ -552,17 +584,16 @@ async def test_health_answers_during_a_populated_near_limit_validation(
 
     def slow(*args):
         entered.set()
-        release.wait(10)
+        # release is set only after /api/health answers, which needs the loop free
+        assert release.wait(10), "validation blocked the loop"
         return real(*args)
 
     monkeypatch.setattr(checks, "restore_problems", slow)
     validating = asyncio.create_task(_post(box.client, "/api/backup/validate", body))
     try:
         await _until(entered.is_set)
-        start = time.monotonic()
         health = await box.client.get("/api/health")
         assert health.status == 200
-        assert time.monotonic() - start < 0.5  # the loop is free while the check runs
     finally:
         release.set()
     status, validation = await validating

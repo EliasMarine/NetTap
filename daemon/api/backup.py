@@ -14,10 +14,11 @@ setup wizard and Settings › Retention, and the running daemon reloads what it
 keeps in memory, so a restore takes effect at once and says what it skipped.
 
 NET-344: the export answers the exact bytes it fitted under the restore limit
-(services.config_backup.fit), or a 413 / 422 / 503 saying why there is no file;
+(services.backup_fit.fit), or a 413 / 422 / 503 saying why there is no file;
 validate and import share one preflight, run once and off the loop.
 """
 
+import functools
 import json
 import logging
 import zoneinfo
@@ -46,8 +47,18 @@ logger = logging.getLogger("nettap.api.backup")
 
 EXPORT_BUSY = "A backup is already being made. Try again in a moment."
 FILE_TOO_LARGE = "This file is over the 16 MB restore limit."
-# NET-344: one export builds at a time and none waits (a waiting one could outlive its client)
-_exporting = False
+# NET-344: one export builds at a time and none waits (a waiting one could outlive its client).
+# The app holds {"busy": bool}, set up by register_backup_routes; a dict, since a started app's
+# own keys shouldn't change
+EXPORT_STATE = "backup_export"
+
+
+def _no_constant(name: str) -> None:
+    raise ValueError(f"{name} isn't JSON")
+
+
+# NET-344 L1: NaN and Infinity are not JSON; the export can't carry them, so a restore can't either
+_strict_loads = functools.partial(json.loads, parse_constant=_no_constant)
 
 
 # OLD CODE START — NET-344: the web app re-encoded this reply, so the saved file wasn't the bytes
@@ -67,16 +78,16 @@ _exporting = False
 # OLD CODE END
 async def handle_export(request: web.Request) -> web.Response:
     """GET /api/backup/export — the backup file, as the bytes a restore takes back."""
-    global _exporting
-    if _exporting:  # checked and set with no await between, so two can't both pass
+    state = request.app[EXPORT_STATE]
+    if state["busy"]:  # checked and set with no await between, so two can't both pass
         return public_json(
             {"error": EXPORT_BUSY}, status=503, headers={"Retry-After": "30"}
         )
-    _exporting = True
+    state["busy"] = True
     try:
         return await _export(request.app["config_backup"])
     finally:
-        _exporting = False
+        state["busy"] = False
 
 
 def _export_file(backup: ConfigBackup) -> tuple[bytearray, str]:
@@ -114,8 +125,10 @@ async def handle_import(request: web.Request) -> web.Response:
     Body: JSON config object (as exported by /api/backup/export).
     """
     try:
-        data = await request.json()
-    # NET-344: a body at the restore limit was answered "Invalid JSON body"
+        # OLD CODE: data = await request.json()
+        # (NET-344 L1: took NaN and Infinity, which were then written and broke every export)
+        data = await request.json(loads=_strict_loads)
+    # NET-344: a body over the restore limit was answered "Invalid JSON body"
     except web.HTTPRequestEntityTooLarge:
         return public_json({"error": FILE_TOO_LARGE}, status=413)
     except Exception:
@@ -300,8 +313,10 @@ async def handle_validate(request: web.Request) -> web.Response:
     Body: JSON config object.
     """
     try:
-        data = await request.json()
-    # NET-344: a body at the restore limit was answered "Invalid JSON body"
+        # OLD CODE: data = await request.json()
+        # (NET-344 L1: took NaN and Infinity, which were then written and broke every export)
+        data = await request.json(loads=_strict_loads)
+    # NET-344: a body over the restore limit was answered "Invalid JSON body"
     except web.HTTPRequestEntityTooLarge:
         return public_json({"error": FILE_TOO_LARGE}, status=413)
     except Exception:
@@ -330,6 +345,7 @@ async def handle_validate(request: web.Request) -> web.Response:
 def register_backup_routes(app: web.Application, backup: ConfigBackup) -> None:
     """Register backup API routes."""
     app["config_backup"] = backup
+    app[EXPORT_STATE] = {"busy": False}
 
     app.router.add_get("/api/backup/export", handle_export)
     app.router.add_post("/api/backup/import", handle_import)

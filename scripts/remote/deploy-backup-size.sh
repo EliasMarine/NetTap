@@ -9,7 +9,8 @@
 #     classify_backup_export.py (a size 413 or a legacy_excluded_ips 422 is a finding for the
 #     owner, anything else but a 200 fails); a 200's exact bytes must validate; an empty-sections
 #     document of limit - 1 bytes is accepted by validate and by import (applied: []), and the
-#     same document at the limit gets 413 from both;
+#     same document one byte over the limit gets 413 from both (every layer refuses it; aiohttp
+#     3.14 accepts exactly the limit, older versions refused it, so the limit itself isn't probed);
 #   - isolated: verify_backup_size.py runs in a throwaway copy of the daemon image (no network,
 #     no mounts): 32 full-size pictures and enough acknowledgements to pass the limit, exported,
 #     fitted and restored into temp paths;
@@ -178,16 +179,18 @@ case "$VERDICT" in
 esac
 
 padded $((LIMIT - 1)) "$TMPD/under.json"
-padded "$LIMIT" "$TMPD/at.json"
-check_eq "padded documents' sizes" "$(wc -c < "$TMPD/under.json" | xargs) $(wc -c < "$TMPD/at.json" | xargs)" "$((LIMIT - 1)) $LIMIT"
+padded $((LIMIT + 1)) "$TMPD/over.json"
+check_eq "padded documents' sizes" "$(wc -c < "$TMPD/under.json" | xargs) $(wc -c < "$TMPD/over.json" | xargs)" "$((LIMIT - 1)) $((LIMIT + 1))"
 STATUS=$(post validate "$TMPD/under.json" "$TMPD/r1.json")
 check_eq "limit - 1 bytes: validate accepts" "$STATUS $(reply "$TMPD/r1.json" 'd.get("is_valid")')" "200 True"
 STATUS=$(post import "$TMPD/under.json" "$TMPD/r2.json")
 check_eq "limit - 1 bytes: import accepts, applies nothing" "$STATUS $(reply "$TMPD/r2.json" 'd.get("success") is True and d.get("applied") == []')" "200 True"
 for route in validate import; do
-    STATUS=$(post "$route" "$TMPD/at.json" "$TMPD/r3.json")
-    check_eq "limit bytes: $route refuses with 413" "$STATUS" "413"
-    echo "     $(reply "$TMPD/r3.json" 'd.get("error")')"
+    STATUS=$(post "$route" "$TMPD/over.json" "$TMPD/r3.json")
+    check_eq "limit + 1 bytes: $route refuses with 413" "$STATUS" "413"
+    ERR=$(reply "$TMPD/r3.json" 'd.get("error")')
+    [ "$ERR" = "unreadable" ] && ERR="nginx's own 413 page (nginx refuses it first)"
+    echo "     $ERR"
 done
 RSS_AFTER=$(daemon_rss_mb)
 echo ""

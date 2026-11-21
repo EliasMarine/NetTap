@@ -1,8 +1,9 @@
 """NET-344: the four layers a backup restore crosses agree on one 16 MiB limit.
 
-nginx (16m) and adapter-node (BODY_SIZE_LIMIT 16M) accept a body of exactly 16 MiB; aiohttp
-refuses one whose length is >= client_max_size, so the daemon is the real cutoff and
-RESTORE_LIMIT_BYTES names it. The files are read as text, from the repo this test sits in.
+nginx (16m) and adapter-node (BODY_SIZE_LIMIT 16M) accept a body of exactly 16 MiB. aiohttp
+up to 3.13 refuses a body >= client_max_size and 3.14 refuses one > it, so only a body under
+16 MiB restores on every version, and RESTORE_LIMIT_BYTES names that bound: an export always
+stays under it. The files are read as text, from the repo this test sits in.
 """
 
 import re

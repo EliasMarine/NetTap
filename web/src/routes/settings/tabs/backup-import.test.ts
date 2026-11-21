@@ -282,6 +282,44 @@ describe('Backup keeps the bytes and the selection straight (NET-344)', () => {
 		expect(fn.mock.calls.filter((c) => c[0].startsWith('/api/backup/import')).map((c) => c[1]?.body)).toEqual([B]);
 	});
 
+	// PR #342 review M1: a restore's result must stay under its own file
+	it('holds Remove while a restore runs', async () => {
+		let finish: (v: unknown) => void = () => {};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((url: string) =>
+				url === '/api/backup/validate'
+					? Promise.resolve({ ok: true, status: 200, json: async () => VALID })
+					: new Promise((resolve) => (finish = resolve)),
+			),
+		);
+		const { container } = render(Page);
+		await fireEvent.change(input(container), { target: { files: [new File(['{}'], 'n.json')] } });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Apply configuration' }));
+
+		expect(await screen.findByRole('button', { name: 'Importing…' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled();
+
+		finish({ ok: true, status: 200, json: async () => IMPORTED });
+		await screen.findByText('Import successful');
+		expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled();
+	});
+
+	// PR #342 review M1: a file that can't fit even compacted is refused here, before any upload
+	it('refuses a file over the restore limit itself, uploading nothing', async () => {
+		const { RESTORE_LIMIT_BYTES } = await import('$lib/api/backup');
+		const fn = vi.fn(async () => ({ ok: true, status: 200, json: async () => VALID }));
+		vi.stubGlobal('fetch', fn);
+		const { container } = render(Page);
+		const text = JSON.stringify({ a: 'x'.repeat(RESTORE_LIMIT_BYTES) });
+		await fireEvent.change(input(container), { target: { files: [new File([text], 'big.json')] } });
+
+		expect(await screen.findByText('This file is 16.8 MB, over the 16 MB restore limit.')).toBeInTheDocument();
+		expect(fn).not.toHaveBeenCalled();
+		expect(screen.queryByRole('button', { name: 'Apply configuration' })).not.toBeInTheDocument();
+		expect(screen.queryByText('Validating configuration…')).not.toBeInTheDocument();
+	});
+
 	it("shows the daemon's warning about left-out acknowledgements before Apply", async () => {
 		const warning = 'This backup leaves out 12 alert acknowledgements. Restoring replaces this NetTap\'s acknowledgements with the 30 it carries.';
 		vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ...VALID, warnings: [warning] }) })));

@@ -47,7 +47,10 @@ const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 	// on the rules lock; the same allowance as setup configure (RULE_UPDATE_TIMEOUT_MS)
 	'/api/backup/import': 290_000,
 	// NET-344: the daemon builds and fits a backup of up to 16 MB off the loop
+	// The 60 s also covers streaming the body to the browser: the signal stays on the fetch until it is read
 	'/api/backup/export': 60_000,
+	// NET-344: validation parses up to 16 MiB and dry-runs every section, pictures included, off the loop
+	'/api/backup/validate': 30_000,
 	// NET-264: the local service browser runs in the drill-down slots, inside the same 25 s budget
 	'/api/local-services': 30_000,
 	// The Threats page's beaconing pair runs in the drill-down slots, inside the same budget

@@ -15,7 +15,7 @@ import tracemalloc
 import pytest
 
 import services.backup_fit as bf
-from services.backup_checks import _LABELS
+from services.backup_checks import LABELS
 from services.config_backup import (
     LEFT_OUT,
     RESTORE_LIMIT_BYTES,
@@ -28,6 +28,12 @@ from services.config_backup import (
 
 ACKS = "alert_acknowledgements"
 META = {"nettap_version": "0.4.0", "schema_version": 2, "exported_at": "2026-11-20"}
+
+
+def fit_bytes(config: dict) -> tuple[bytearray, int]:
+    """The backup's bytes and the acknowledgements left out, as ConfigBackup.export_file makes them."""
+    fitted, size, left = fit(config)
+    return bf.encode_exact(fitted, size), left
 
 
 def _config(acks: dict | None = None, **sections) -> dict:
@@ -92,7 +98,7 @@ def test_nan_is_refused_with_the_section_named():
         encode({"x": float("nan")})
     config = _config(bandwidth_cap={"monthly_cap_bytes": float("inf")})
     with pytest.raises(BackupRefused) as refused:
-        fit(config)
+        fit_bytes(config)
     assert refused.value.code == "invalid_section"
     assert str(refused.value).startswith(
         "No backup was made: the bandwidth cap on this"
@@ -106,11 +112,11 @@ def test_each_sections_streamed_size_is_its_share_of_the_body():
         excluded_ips=["192.0.2.1"],
         notification_rules={"r": {"note": "x\udfff"}},
     )
-    body, left = fit(config)
+    body, left = fit_bytes(config)
     assert left == 0 and bytes(body) == encode(config)
     for name, value in config["sections"].items():
         share = encode(value)
-        assert bf._size(value) == len(share)  # streamed == one-shot
+        assert bf.encoded_size(value) == len(share)  # streamed == one-shot
         assert encode(name) + b":" + share in body
 
 
@@ -119,21 +125,21 @@ def test_each_sections_streamed_size_is_its_share_of_the_body():
 
 def test_under_the_limit_nothing_is_trimmed():
     config = _config(_acks(5))
-    body, left = fit(config)
+    body, left = fit_bytes(config)
     assert (bytes(body), left) == (encode(config), 0)
     assert LEFT_OUT not in json.loads(body)["metadata"]
 
 
 def test_a_body_of_limit_minus_one_is_kept_whole():
     config = _padded(_config(_acks(5)), RESTORE_LIMIT_BYTES - 1)
-    body, left = fit(config)
+    body, left = fit_bytes(config)
     assert left == 0 and len(body) == RESTORE_LIMIT_BYTES - 1
     assert bytes(body) == encode(config)
 
 
 def test_a_body_of_exactly_the_limit_leaves_out_the_oldest_acknowledgement():
     config = _padded(_config(_acks(5)), RESTORE_LIMIT_BYTES)
-    body, left = fit(config)
+    body, left = fit_bytes(config)
     doc = json.loads(body)
     assert left == 1 and doc["metadata"][LEFT_OUT] == 1
     assert sorted(doc["sections"][ACKS]) == ["a2", "a3", "a4", "a5"]
@@ -151,7 +157,7 @@ def test_the_input_is_never_changed():
         RESTORE_LIMIT_BYTES,
     )
     before = copy.deepcopy(config)
-    fit(config)
+    fit_bytes(config)
     assert config == before
 
 
@@ -171,7 +177,7 @@ def test_the_count_digits_and_maximality_match_brute_force(small_limit, n, bound
     for limit in range(sizes[n - boundary - 1] - 2, sizes[n - boundary + 2] + 2):
         small_limit(limit)
         kept = max(k for k in range(n + 1) if sizes[k] < limit)
-        body, left = fit(config)
+        body, left = fit_bytes(config)
         assert left == n - kept, limit
         assert bytes(body) == encode(_candidate(config, order, kept))
         seen.add(left)
@@ -196,7 +202,7 @@ def test_newest_first_by_instant_with_naive_times_oldest_and_ties_by_id(small_li
     for limit in range(full - 500, full + 2):
         small_limit(limit)
         try:
-            body, left = fit(config)
+            body, left = fit_bytes(config)
         except BackupTooLarge:
             continue
         seen[left] = set(json.loads(body)["sections"][ACKS])
@@ -211,7 +217,9 @@ def test_a_lone_surrogate_in_a_kept_and_a_dropped_entry_matches_the_total(small_
     acks["a6"]["acknowledged_by"] = "new\ud800"  # kept
     config = _config(acks, device_aliases={"AA:BB:CC:DD:EE:01": "Telly 📺"})
     small_limit(len(encode(config)) - 40)
-    body, left = fit(config)  # fit raises if its total and the body disagree
+    body, left = fit_bytes(
+        config
+    )  # encode_exact raises if fit's total and the body disagree
     doc = json.loads(body.decode("utf-8"))
     assert left >= 1 and "a1" not in doc["sections"][ACKS]
     assert doc["sections"][ACKS]["a6"]["acknowledged_by"] == "new\ud800"
@@ -261,22 +269,22 @@ def test_owner_settings_over_the_limit_are_a_413_naming_the_largest(
     value = make()
     config = _config(_acks(50), **{section: value})
     with pytest.raises(BackupTooLarge) as refused:
-        fit(config)
+        fit_bytes(config)
     text = str(refused.value)
     assert float(re.search(r"would be ([\d.]+) MB", text).group(1)) >= 16.8
     # decimal MB (NET-166), the largest part named with its own size
     largest = f"{len(encode(value)) / 1_000_000:.1f} MB"
-    assert f"The largest part is {_LABELS[section]} ({largest})." in text
+    assert f"The largest part is {LABELS[section]} ({largest})." in text
     assert (
         text.startswith("This backup would be ")
         and "over the 16 MB restore limit" in text
     )
-    assert _LABELS[section] in text and advice in text
+    assert LABELS[section] in text and advice in text
 
 
 def test_sizes_read_in_decimal_mb_and_the_smallest_refusal_is_16_8():
-    assert bf._mb(RESTORE_LIMIT_BYTES) == "16.8 MB"
-    assert bf._mb(9_050_000) == "9.1 MB"
+    assert bf.decimal_mb(RESTORE_LIMIT_BYTES) == "16.8 MB"
+    assert bf.decimal_mb(9_050_000) == "9.1 MB"
 
 
 # ---------------------------------------------------------------------------- normalisation
@@ -288,7 +296,7 @@ def test_reasons_that_arent_text_become_text_only_in_the_copy():
         "per_device": {"192.0.2.5": [{"signature_id": 3, "reason": None}]},
         "false_positives": [{"signature_id": 4, "reason": "kept"}],
     }
-    body, _ = fit(_config(alert_suppressions=supp))
+    body, _ = fit_bytes(_config(alert_suppressions=supp))
     out = json.loads(body)["sections"]["alert_suppressions"]
     assert out["global"] == [{"signature_id": 1, "reason": "5"}, {"signature_id": 2}]
     assert out["per_device"]["192.0.2.5"] == [{"signature_id": 3, "reason": ""}]
@@ -300,7 +308,7 @@ def test_reasons_that_arent_text_become_text_only_in_the_copy():
 def test_a_stale_left_out_count_is_replaced():
     config = _config(_acks(2))
     config["metadata"][LEFT_OUT] = 7
-    body, left = fit(config)
+    body, left = fit_bytes(config)
     assert left == 0 and LEFT_OUT not in json.loads(body)["metadata"]
 
 
@@ -329,7 +337,7 @@ def test_fits_workspace_stays_under_twice_the_cutoff():
         before, _ = tracemalloc.get_traced_memory()
         tracemalloc.reset_peak()
         start = time.monotonic()
-        body, left = fit(config)
+        body, left = fit_bytes(config)
         seconds = time.monotonic() - start
         _, peak = tracemalloc.get_traced_memory()
     finally:

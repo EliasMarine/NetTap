@@ -274,6 +274,26 @@ describe('backup API client', () => {
 			expect(blobs).toEqual([]);
 		});
 
+		// PR #342 review L1: a 200 that isn't a backup's shape is refused, not saved
+		it.each([
+			['an HTML page', '<!doctype html><html><body>Bad gateway</body></html>'],
+			['null', 'null'],
+			['an array', '[]'],
+			['no sections', '{"metadata":{}}'],
+			['metadata that is not an object', '{"metadata":[],"sections":{}}'],
+		])('refuses %s and saves nothing', async (_what, body) => {
+			exportReply(body);
+			const { blobs } = catchSave();
+			await expect(downloadConfigFile()).rejects.toThrow('The backup came back damaged, so it was not saved.');
+			expect(blobs).toEqual([]);
+		});
+
+		it('reads a left-out count that is not a number as none', async () => {
+			exportReply('{"metadata":{"acknowledgements_left_out":"12"},"sections":{}}');
+			catchSave();
+			expect(await downloadConfigFile()).toEqual({ leftOut: 0 });
+		});
+
 		it('says the status when the error reply has no reason', async () => {
 			exportReply('Bad gateway', 502);
 			catchSave();

@@ -62,6 +62,23 @@ export const RESTORE_LIMIT_BYTES = 16 * 1024 * 1024;
 
 const utf8Length = (text: string): number => new TextEncoder().encode(text).length;
 
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** The export's `acknowledgements_left_out`, or a refusal when the text isn't a backup's shape. */
+function backupLeftOut(text: string): number {
+	let config: unknown;
+	try {
+		config = JSON.parse(text);
+	} catch {
+		config = null;
+	}
+	if (!isObject(config) || !isObject(config.metadata) || !isObject(config.sections)) {
+		throw new Error('The backup came back damaged, so it was not saved.');
+	}
+	const v = config.metadata.acknowledgements_left_out;
+	return typeof v === 'number' ? v : 0;
+}
+
 /**
  * Download the exported config as a file, byte for byte as the daemon made it (NET-344), so the
  * size it was fitted to is the size that restores. `leftOut` counts the oldest alert
@@ -89,15 +106,17 @@ export async function downloadConfigFile(): Promise<{ leftOut: number }> {
 	}
 
 	const blob = await res.blob();
-	// Parsed before it is offered, so a reply that isn't a backup is never saved as one
-	const leftOut: number = JSON.parse(await blob.text()).metadata?.acknowledgements_left_out ?? 0;
+	// Checked before it is offered, so a reply that isn't a backup is never saved as one
+	// OLD CODE: const leftOut: number = JSON.parse(await blob.text()).metadata?.acknowledgements_left_out ?? 0; (PR #342 review L1: null, [] or HTML threw a raw TypeError or SyntaxError)
+	const leftOut = backupLeftOut(await blob.text());
 	const named = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1];
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement('a');
 	a.href = url;
 	a.download = named ?? `nettap-config-${new Date().toISOString().slice(0, 10)}.json`;
 	a.click();
-	URL.revokeObjectURL(url);
+	// OLD CODE: URL.revokeObjectURL(url); (PR #342 review L4: revoked at once, Safari and Firefox can cancel a large download)
+	setTimeout(() => URL.revokeObjectURL(url), 0);
 	return { leftOut };
 }
 

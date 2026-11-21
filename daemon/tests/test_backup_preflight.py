@@ -354,12 +354,37 @@ def test_a_failed_settings_save_leaves_the_old_list(tmp_path):
     assert [p.name for p in tmp_path.iterdir()] == ["ips.json"]  # no temp file left
 
 
-def test_a_failed_restore_write_leaves_the_old_list(backup, paths):
+def test_a_failed_restore_write_leaves_the_old_list(backup, paths, caplog):
     with patch("os.fsync", side_effect=OSError("disk full")):
         result = backup.import_config(_data({"excluded_ips": ["192.0.2.2"]}))
     assert result["success"] is False and "excluded_ips" not in result["applied"]
-    assert any("Excluded IPs not restored: disk full" in e for e in result["errors"])
+    # a fixed reply (the 400 never carries an OSError's text or a path); the reason is logged
+    assert (
+        "Excluded IPs not restored: the file couldn't be written." in result["errors"]
+    )
+    assert not any("disk full" in e for e in result["errors"])
+    assert "disk full" in caplog.text
     assert load_excluded_ips(paths["excluded_ips"]) == ["192.0.2.9"]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        ["192.0.2.2", "10.0.0.0/8"],  # parses to None
+        [
+            f"10.0.{i >> 8}.{i & 255}" for i in range(EXCLUDED_IPS_MAX + 1)
+        ],  # over the cap
+        "192.0.2.2",  # not a list
+        5,
+    ],
+    ids=["range", "over the cap", "text", "number"],
+)
+def test_a_hand_built_validation_cant_write_bad_excluded_ips(backup, paths, bad):
+    """The write checks again, so a caller passing its own validation writes nothing bad."""
+    result = backup.import_config(_data({"excluded_ips": bad}), {"is_valid": True})
+    assert result["success"] is False and result["applied"] == []
+    assert any(e.startswith("Excluded IPs not restored:") for e in result["errors"])
+    assert Path(paths["excluded_ips"]).read_text() == '["192.0.2.9"]'
 
 
 async def _settings_client(tmp_path) -> TestClient:
@@ -397,7 +422,9 @@ async def test_the_settings_put_takes_10000_and_refuses_10001(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("sent,stored", [(None, ""), (7, "7"), ("noisy", "noisy")])
+@pytest.mark.parametrize(
+    "sent,stored", [(None, ""), (0, "0"), (7, "7"), ("", ""), ("noisy", "noisy")]
+)
 async def test_suppress_and_false_positive_store_the_reason_as_text(
     tmp_path, monkeypatch, sent, stored
 ):

@@ -16,12 +16,12 @@ from datetime import datetime
 from itertools import islice
 from typing import Any
 
-from services.backup_checks import _ACKS, LEFT_OUT, _invalid, _labels
+from services.backup_checks import ACKS, LEFT_OUT, invalid, labels
 
 logger = logging.getLogger("nettap.services.backup_fit")
 
-# aiohttp refuses a body whose length is >= client_max_size (MAX_REQUEST_BYTES), so a backup
-# restores only when it is shorter than this; nginx and adapter-node accept 16 MiB itself
+# client_max_size (MAX_REQUEST_BYTES): aiohttp <=3.13 refuses a body >= the limit, 3.14 one > it;
+# a body under the limit restores on both, so fit keeps every export strictly under it
 RESTORE_LIMIT_BYTES = 16 * 1024 * 1024
 _ENCODER = json.JSONEncoder(separators=(",", ":"), ensure_ascii=False, allow_nan=False)
 # A str holds a surrogate only alone (a pair is one code point), and strict UTF-8 refuses it
@@ -54,7 +54,7 @@ def _chunks(obj: Any) -> Iterator[bytes]:
         yield _escape_surrogates(chunk).encode("utf-8")
 
 
-def _size(obj: Any) -> int:
+def encoded_size(obj: Any) -> int:
     return sum(len(chunk) for chunk in _chunks(obj))
 
 
@@ -72,7 +72,7 @@ def _object_size(members: Iterable[int]) -> int:
     return 2 + total + max(count - 1, 0)
 
 
-def _mb(size: int) -> str:
+def decimal_mb(size: int) -> str:
     # decimal MB, as NetTap shows every size (NET-166): the smallest refused size reads 16.8 MB
     return f"{size / 1_000_000:.1f} MB"
 
@@ -83,11 +83,11 @@ class BackupTooLarge(Exception):
 
     def __init__(self, size: int, sizes: dict[str, int]) -> None:
         """``size``: the smallest body possible (no acknowledgements); ``sizes``: each section's."""
-        others = {name: n for name, n in sizes.items() if name != _ACKS}
+        others = {name: n for name, n in sizes.items() if name != ACKS}
         largest = max(others, key=others.__getitem__, default="")
         super().__init__(
-            f"This backup would be {_mb(size)}, over the 16 MB restore limit. The largest "
-            f"part is {_labels([largest])} ({_mb(others.get(largest, 0))}). "
+            f"This backup would be {decimal_mb(size)}, over the 16 MB restore limit. The largest "
+            f"part is {labels([largest])} ({decimal_mb(others.get(largest, 0))}). "
             + _TOO_LARGE_ADVICE.get(largest, "The daemon log lists each part's size.")
         )
 
@@ -149,15 +149,15 @@ def _section_sizes(sections: dict) -> dict[str, int]:
     sizes: dict[str, int] = {}
     for name, value in sections.items():
         try:
-            if name == _ACKS and isinstance(value, dict):
+            if name == ACKS and isinstance(value, dict):
                 sizes[name] = _object_size(_entry_size(k, v) for k, v in value.items())
             else:
-                sizes[name] = _size(value)
+                sizes[name] = encoded_size(value)
         except ValueError as exc:  # NaN or Infinity (allow_nan=False)
             logger.error(
                 "Backup refused: %s holds a value JSON can't carry: %s", name, exc
             )
-            raise _invalid([name]) from exc
+            raise invalid([name]) from exc
     return sizes
 
 
@@ -172,19 +172,28 @@ def _too_large(size: int, sizes: dict[str, int]) -> BackupTooLarge:
     return BackupTooLarge(size, sizes)
 
 
-def _fit(config: dict) -> tuple[dict, int, int]:
-    """(the copy to export, its exact encoded size, acknowledgements left out). See fit()."""
+def fit(config: dict) -> tuple[dict, int, int]:
+    """(the copy to export, its exact encoded size under RESTORE_LIMIT_BYTES, the acknowledgements
+    left out); encode_exact turns the copy into the backup's bytes.
+
+    Sizes are measured by streaming the encoding, never by building the file. When the whole
+    config doesn't fit, the newest acknowledgements that do are kept (by UTC instant; zone-less,
+    missing or unparsable times count as oldest; ties by alert ID) and the count of the rest goes
+    in the metadata. Every other section is kept whole: BackupTooLarge when even no
+    acknowledgements don't fit, BackupRefused for a value JSON can't carry. The input is never
+    changed; suppression reasons that aren't text become text in the copy.
+    """
     config = _normalised(config)
     sections, meta = config["sections"], config["metadata"]
     sizes = _section_sizes(sections)
-    acks = sections.get(_ACKS)
+    acks = sections.get(ACKS)
     acks = acks if isinstance(acks, dict) else {}
     # every section whole, the acknowledgements as {}; the sections object, then the rest
     members = {name: len(encode(name)) + 1 + n for name, n in sizes.items()}
     if acks:
-        members[_ACKS] -= sizes[_ACKS] - 2
-    base = _size({**config, "sections": {}}) - 2 + _object_size(members.values())
-    full = base + (sizes[_ACKS] - 2 if acks else 0)
+        members[ACKS] -= sizes[ACKS] - 2
+    base = encoded_size({**config, "sections": {}}) - 2 + _object_size(members.values())
+    full = base + (sizes[ACKS] - 2 if acks else 0)
     if full < RESTORE_LIMIT_BYTES:
         return config, full, 0
     if not acks:
@@ -192,7 +201,9 @@ def _fit(config: dict) -> tuple[dict, int, int]:
 
     # The newest prefix that fits with its commas and `"acknowledgements_left_out":<count>`.
     # Each entry adds more than a digit can take away, so the total only grows.
-    key_size = _size({**meta, LEFT_OUT: 0}) - _size(meta) - 1  # the key and its comma
+    key_size = (
+        encoded_size({**meta, LEFT_OUT: 0}) - encoded_size(meta) - 1
+    )  # the key and its comma
     ids = _newest_first(acks)
     total, used, kept = len(acks), 0, 0
     for key in ids:
@@ -215,12 +226,12 @@ def _fit(config: dict) -> tuple[dict, int, int]:
     fitted = {
         **config,
         "metadata": {**meta, LEFT_OUT: left},
-        "sections": {**sections, _ACKS: {key: acks[key] for key in islice(ids, kept)}},
+        "sections": {**sections, ACKS: {key: acks[key] for key in islice(ids, kept)}},
     }
     return fitted, size, left
 
 
-def _encode_exact(obj: dict, size: int) -> bytearray:
+def encode_exact(obj: dict, size: int) -> bytearray:
     """obj encoded once, into a buffer of the measured size: a bytearray, so the body is never
     copied (fit's workspace stays under twice the limit)."""
     body = bytearray(size)
@@ -234,17 +245,3 @@ def _encode_exact(obj: dict, size: int) -> bytearray:
     if pos != size or size >= RESTORE_LIMIT_BYTES:
         raise AssertionError(f"Backup encoding is {pos} bytes, measured {size}")
     return body
-
-
-def fit(config: dict) -> tuple[bytearray, int]:
-    """The backup's bytes (under RESTORE_LIMIT_BYTES) and how many acknowledgements it leaves out.
-
-    Sizes are measured by streaming the encoding, never by building the file. When the whole
-    config doesn't fit, the newest acknowledgements that do are kept (by UTC instant; zone-less,
-    missing or unparsable times count as oldest; ties by alert ID) and the count of the rest goes
-    in the metadata. Every other section is kept whole: BackupTooLarge when even no
-    acknowledgements don't fit, BackupRefused for a value JSON can't carry. The input is never
-    changed; suppression reasons that aren't text become text in the copy.
-    """
-    fitted, size, left_out = _fit(config)
-    return _encode_exact(fitted, size), left_out
