@@ -15,7 +15,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
@@ -285,7 +285,12 @@ _ROUTES = [
     ("GET", "/api/mac/merge-suggestions", {}),
     ("GET", "/api/changelog", {}),
     ("GET", "/api/pcap/files", {}),
-    ("GET", "/api/pcap/search?filter=dns", {}),
+    # NET-347: a new search compiles its filter in TShark first; the walk is the blocking step
+    (
+        "GET",
+        "/api/pcap/search?filter=dns",
+        {"services.pcap_search.PcapSearchService.check_filter": AsyncMock()},
+    ),
     ("GET", "/api/pcap/download?filter=dns", {}),
     ("GET", "/api/tshark/pcaps", {}),
 ]

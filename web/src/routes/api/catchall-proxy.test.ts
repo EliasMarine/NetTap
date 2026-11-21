@@ -84,6 +84,9 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 		['/api/packets/captures', 15_000],
 		['/api/packets/fields?prefix=http.re', 25_000],
 		['/api/packets/check-filter', 25_000],
+		// NET-347: a search start compiles its filter and lists its files; the daemon gives up at 45 s
+		['/api/pcap/search?filter=dns&from=2026-11-20T00:00:00Z', 55_000],
+		['/api/pcap/check-filter', 25_000],
 	])('gives %s %i ms', async (path, ms) => {
 		await GET(event(path) as never);
 		expect(daemonFetch.mock.calls[0][2]).toBe(ms);

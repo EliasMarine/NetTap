@@ -1,6 +1,6 @@
 # NET-347 (A0): the TShark container could not fork
 
-**Date:** 2026-11-20 · **Branch:** `fix/tshark-init` · **Status:** in review
+**Date:** 2026-11-20 · **Branch:** `fix/tshark-init` · **Status:** done, verified on the G11 (PR #345 → 65e1bc71)
 
 ## What changed
 - `docker/docker-compose.yml`: `init: true` on `nettap-tshark`.
@@ -18,7 +18,7 @@ The image's entrypoint `tail -f /dev/null` was PID 1 and never reaped. Every sup
 ## Test results
 - `shellcheck scripts/remote/deploy-tshark-init.sh`: clean.
 - `docker compose config` renders `init: true` for `nettap-tshark`.
-- Device: see the deploy output (added after the run).
+- Device (2026-11-20, `deploy-tshark-init.sh`): before, pids 14137/14138 and 14,136 zombies. After: `HostConfig.Init` true, PID 1 `docker-init`, closed capture read (frame 1), 20 of 20 checks answered 200, 0 zombies, pids.current 2. Every check passed.
 
 ## Lessons
 - A container driven by `docker exec` needs a PID 1 that reaps.
