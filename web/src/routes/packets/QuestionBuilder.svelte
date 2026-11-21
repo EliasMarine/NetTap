@@ -172,17 +172,30 @@
 	 * Run the search with the choices as they stand, over exactly the window shown; "Write your own
 	 * filter" calls it too. A "last N minutes" window loads the list first, so it ends at the press.
 	 */
-	/** A reload is in flight: a second press waits for it instead of reading the list mid-reload */
-	let reloading: Promise<unknown> | null = null;
+	// OLD CODE START — NET-349 review: each press compared against its own "before", so a second press after
+	// the list landed (the rest of the page still loading) read the new list as "didn't arrive"
+	// let reloading: Promise<unknown> | null = null;
+	// … const before = capturesAt; reloading ??= reloadCaptures().finally(() => (reloading = null)); await reloading;
+	// … if (capturesAt === null || capturesAt === before) { error = …; return; }
+	// OLD CODE END
+	/** The list reload in flight: every press and Check again shares it, and its answer */
+	let reloading: Promise<boolean> | null = null;
+
+	/** Loads the capture list again; true when a new one arrived (a failed load leaves the old time). */
+	function reloadList(): Promise<boolean> {
+		if (!reloading) {
+			const before = capturesAt;
+			reloading = reloadCaptures()
+				.then(() => capturesAt !== null && capturesAt !== before)
+				.finally(() => (reloading = null));
+		}
+		return reloading;
+	}
 
 	export async function search() {
 		if (refuse()) return;
 		if (question.when.kind === 'last') {
-			const before = capturesAt;
-			reloading ??= reloadCaptures().finally(() => (reloading = null));
-			await reloading;
-			// a list that didn't arrive leaves the old time, and the window would end there
-			if (capturesAt === null || capturesAt === before) {
+			if (!(await reloadList())) {
 				error = "NetTap couldn't load its list of capture files again, so nothing was searched. Try again in a moment.";
 				return;
 			}
@@ -337,8 +350,10 @@
 				<p class="notice is-warn"><Icon name="warn" />That's more than one search reads ({captures.limits.max_files} files or {formatBytes(captures.limits.max_bytes)}). Pick a shorter stretch of time.</p>
 			{/if}
 			OLD CODE END -->
+			<!-- OLD CODE: <p class="notice is-warn" id="{uid}-limit"><Icon name="warn" />{limitWarning}</p> (NET-349 review: a disabled Find packets left no way to refresh the estimate here) -->
 			{#if overLimit}
 				<p class="notice is-warn" id="{uid}-limit"><Icon name="warn" />{limitWarning}</p>
+				<button class="btn check-again" type="button" onclick={() => reloadList()}><Icon name="refresh" />Check again</button>
 			{/if}
 		{/if}
 		<!-- OLD CODE: {#if error && !(problem || windowProblem)}<p class="field-error" role="alert">{error}</p>{/if} (NET-349: + a refusal for size, until a choice or a new capture list fits) -->
@@ -363,6 +378,7 @@
 	.word { font-size: var(--text-sm); color: var(--text-3); }
 	/* A hint takes its own line under the controls it explains */
 	.v .field-help { flex-basis: 100%; margin: 0; }
+	.check-again { margin-top: var(--sp-2); }
 	/* Nine kinds: the track wraps instead of running past the card (bundle.css:42 makes it flex: none) */
 	.kinds { flex: 0 1 auto; flex-wrap: wrap; max-width: 100%; border-radius: var(--r-lg); }
 	.addr { width: calc(var(--sp-8) * 8); max-width: 100%; }

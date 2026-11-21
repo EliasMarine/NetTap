@@ -324,6 +324,37 @@ describe('Packet analysis: first visit', () => {
 			expect(Number(state.to) - Number(state.from)).toBe(300);
 		});
 
+		// NET-349 review: Find packets was off and its own reload was the only way to refresh the estimate
+		it('offers Check again, which loads the list again and turns Find packets back on once it fits', async () => {
+			await overLimit();
+			vi.mocked(api.getCaptures).mockResolvedValue(CAPTURES);
+			await fireEvent.click(within(builder()).getByRole('button', { name: 'Check again' }));
+			await vi.waitFor(() => expect(findIn(builder())).toBeEnabled());
+			expect(findIn(editor())).toBeEnabled();
+			expect(within(builder()).queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+		});
+
+		// NET-349 review: a second press after the list landed, while the rest of the page still loaded,
+		// compared against the new list and said nothing was searched
+		it('never says the list failed when a second press lands while the first reload finishes', async () => {
+			render(Page);
+			await vi.waitFor(() => expect(within(builder()).getByText(/NetTap will read/)).toHaveTextContent(/not indexed yet/));
+			let release = () => {};
+			const held = new Promise<void>((r) => (release = r));
+			const answer = vi.mocked(fetch).getMockImplementation()!;
+			vi.mocked(fetch).mockImplementation(async (url, init) => {
+				if (String(url).startsWith('/api/tshark/status')) await held;
+				return answer(url, init);
+			});
+			await fireEvent.click(findIn(builder()));
+			await vi.waitFor(() => expect(api.getCaptures).toHaveBeenCalledTimes(2));
+			await new Promise((r) => setTimeout(r, 0));
+			await fireEvent.click(findIn(builder()));
+			release();
+			await vi.waitFor(() => expect(goto).toHaveBeenCalledTimes(2));
+			expect(within(builder()).queryByText(/nothing was searched/)).not.toBeInTheDocument();
+		});
+
 		it('turns off both Find packets buttons while over the limit, each pointing at the warning', async () => {
 			await overLimit();
 			expect(findIn(builder())).toHaveAccessibleDescription(WARNING);

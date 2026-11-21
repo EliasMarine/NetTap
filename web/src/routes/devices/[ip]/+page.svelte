@@ -499,7 +499,9 @@
 			bandwidthInterval = interval;
 			loadedView = view;
 			// NET-349: the reply's own window, else the one this load asked for (never the live span)
-			quiet = !d.mac && d.connection_count === 0 ? { ip, ...(from && to ? { from, to } : s), match: 'pending' } : null;
+			// OLD CODE: quiet = !d.mac && d.connection_count === 0 ? { ip, ...(from && to ? { from, to } : s), match: 'pending' } : null; (NET-349 review: every refresh dropped the registry link until a new lookup came back)
+			const known = quiet?.ip === ip && quiet.match !== 'pending' && quiet.match !== 'unknown' ? quiet.match : 'pending';
+			quiet = !d.mac && d.connection_count === 0 ? { ip, ...(from && to ? { from, to } : s), match: known } : null;
 		}
 		deviceFailed = deviceRes.status === 'rejected';
 		if (catRes.status === 'fulfilled') categories = catRes.value.categories;

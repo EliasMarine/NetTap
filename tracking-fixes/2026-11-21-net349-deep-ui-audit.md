@@ -72,7 +72,7 @@ All six were display gaps:
 
 ## Tests
 
-- **Vitest:** 439 files, 6,031 tests passed. New or updated:
+- **Vitest:** 439 files, 6,034 tests passed. New or updated:
   - `DetailDrawer.render.test.ts` (10)
   - `alert-view.test.ts` (`dnsNamesOf`)
   - `alerts-page.test.ts` (the DNS name visible with Raw JSON closed)
@@ -94,6 +94,10 @@ All six were display gaps:
 
 - **`/deep-review`:** no findings (`security-reviews/fix-deep-ui-audit-2026-11-21/security-review.md`). No server-side code changed, and the DNS and registry names render as escaped Svelte text.
 - **`/ponytail-review`:** two findings, both fixed. The "last N minutes" search now always reloads the capture list first, and the unused `show()` stub is gone.
+- **TypeScript review (PR #350):** no CRITICAL or HIGH findings. Three MEDIUM findings, all fixed with a test each:
+  - **Stale over-limit estimate.** Find packets stayed disabled on an old estimate, and only its own reload could refresh it. The warning now has a Check again button.
+  - **False failure on a second press.** A second press after the list landed, while the rest of the page still loaded, said nothing was searched. Each reload now carries one shared answer.
+  - **Registry link dropped on refresh.** A successful refresh of a quiet device page dropped the registry link until a new lookup answered. The answer it already had is now kept for the same address.
 
 ## Lessons
 

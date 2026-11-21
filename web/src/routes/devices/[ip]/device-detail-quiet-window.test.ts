@@ -164,6 +164,19 @@ describe('Device detail — a window with no traffic (NET-349)', () => {
 		expect(words(notice())).toContain(between(asked.from, asked.to));
 	});
 
+	// NET-349 review: a successful refresh reset the answer to "asking", so the link vanished until a new lookup came back
+	it('keeps the registry link through a successful refresh, without asking again', async () => {
+		render(Page);
+		await flush();
+		expect(within(notice()!).getByRole('link', { name: "Open UnraidBeast's page" })).toBeInTheDocument();
+
+		vi.mocked(searchRegistry).mockReturnValue(new Promise(() => {}));
+		await refreshPage();
+		await flush();
+		expect(within(notice()!).getByRole('link', { name: "Open UnraidBeast's page" })).toBeInTheDocument();
+		expect(searchRegistry).toHaveBeenCalledTimes(1);
+	});
+
 	it("keeps the last notice's dates when a rolling refresh fails", async () => {
 		render(Page);
 		await flush();
