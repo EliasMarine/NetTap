@@ -2341,12 +2341,26 @@ async def handle_suppress_alert(request: web.Request) -> web.Response:
 
     from services.alert_intelligence import suppress_rule
 
+    # OLD CODE START — NET-344: stored a null or numeric reason as sent, which a backup then
+    # couldn't restore on an older NetTap
+    # suppress_rule(
+    #     signature_id=int(sig_id),
+    #     device_ip=body.get("device_ip"),
+    #     reason=body.get("reason", ""),
+    # )
+    # OLD CODE END
     suppress_rule(
         signature_id=int(sig_id),
         device_ip=body.get("device_ip"),
-        reason=body.get("reason", ""),
+        reason=_reason_text(body),
     )
     return web.json_response({"status": "suppressed", "signature_id": sig_id})
+
+
+def _reason_text(body: dict) -> str:
+    """A suppression reason as text, as the backup export copies it (NET-344): 0 is "0"."""
+    reason = body.get("reason")
+    return "" if reason is None else str(reason)
 
 
 async def handle_false_positive(request: web.Request) -> web.Response:
@@ -2362,7 +2376,9 @@ async def handle_false_positive(request: web.Request) -> web.Response:
 
     from services.alert_intelligence import mark_false_positive
 
-    mark_false_positive(signature_id=int(sig_id), reason=body.get("reason", ""))
+    # OLD CODE: mark_false_positive(signature_id=int(sig_id), reason=body.get("reason", ""))
+    # (NET-344: a null or numeric reason was stored as sent)
+    mark_false_positive(signature_id=int(sig_id), reason=_reason_text(body))
     return web.json_response(
         {"status": "marked_false_positive", "signature_id": sig_id}
     )

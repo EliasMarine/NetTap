@@ -180,3 +180,200 @@ describe('Backup restore reports what it did (A9)', () => {
 		expect(screen.getByText(/Left out: passwords, API keys and tokens/)).toBeInTheDocument();
 	});
 });
+
+// NET-344: every downloadable backup restores, so the bytes are kept both ways
+describe('Backup keeps the bytes and the selection straight (NET-344)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	const VALID = { is_valid: true, warnings: [], errors: [], preview: {} };
+	const IMPORTED = { success: true, applied: [], skipped: [], errors: [], warnings: [] };
+
+	function input(container: HTMLElement) {
+		return container.querySelector('input[type="file"]') as HTMLInputElement;
+	}
+
+	it("sends the file's own text, pretty-printed as it is, to validate and import", async () => {
+		const text = '{\n  "metadata": { "schema_version": 2, "x": 1e-05 },\n  "sections": {}\n}\n';
+		const fn = vi.fn(async (url: string, _init?: RequestInit) =>
+			url === '/api/backup/validate'
+				? { ok: true, status: 200, json: async () => VALID }
+				: { ok: true, status: 200, json: async () => IMPORTED },
+		);
+		vi.stubGlobal('fetch', fn);
+		const { container } = render(Page);
+		await fireEvent.change(input(container), { target: { files: [new File([text], 'pretty.json')] } });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Apply configuration' }));
+		await screen.findByText('Import successful');
+
+		expect(fn.mock.calls.map((c) => [c[0], c[1]?.body])).toEqual([
+			['/api/backup/validate', text],
+			['/api/backup/import', text],
+		]);
+	});
+
+	it("never applies an earlier file's body under a later file's name, whatever order they finish in", async () => {
+		const A = '{"metadata":{"schema_version":2},"sections":{"excluded_ips":["10.0.0.1"]}}';
+		const B = '{"metadata":{"schema_version":2},"sections":{"excluded_ips":["10.0.0.2"]}}';
+		const pending = new Map<string, (v: unknown) => void>();
+		const fn = vi.fn((url: string, init?: RequestInit) => {
+			if (url === '/api/backup/validate') {
+				return new Promise((resolve) => pending.set(init?.body as string, resolve));
+			}
+			return Promise.resolve({ ok: true, status: 200, json: async () => IMPORTED });
+		});
+		vi.stubGlobal('fetch', fn);
+		const answer = (body: string, warnings: string[]) =>
+			pending.get(body)!({ ok: true, status: 200, json: async () => ({ ...VALID, warnings }) });
+
+		const { container } = render(Page);
+		await fireEvent.change(input(container), { target: { files: [new File([A], 'a.json')] } });
+		await vi.waitFor(() => expect(pending.has(A)).toBe(true));
+		await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+		await fireEvent.change(input(container), { target: { files: [new File([B], 'b.json')] } });
+		await vi.waitFor(() => expect(pending.has(B)).toBe(true));
+
+		// A finishes first, while B is still being checked: nothing of A's is shown or offered
+		answer(A, ['from file A']);
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.queryByText('from file A')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Apply configuration' })).not.toBeInTheDocument();
+		expect(screen.getByText('Validating configuration…')).toBeInTheDocument();
+
+		answer(B, ['from file B']);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Apply configuration' }));
+		await screen.findByText('Import successful');
+
+		expect(screen.getByText('b.json')).toBeInTheDocument();
+		expect(screen.queryByText('from file A')).not.toBeInTheDocument();
+		const imports = fn.mock.calls.filter((c) => c[0].startsWith('/api/backup/import'));
+		expect(imports.map((c) => c[1]?.body)).toEqual([B]);
+	});
+
+	it('drops a slower earlier check that lands after the later one', async () => {
+		const A = '{"metadata":{"schema_version":2},"sections":{"bandwidth_cap":{"monthly_cap_gb":1}}}';
+		const B = '{"metadata":{"schema_version":2},"sections":{"bandwidth_cap":{"monthly_cap_gb":2}}}';
+		const pending = new Map<string, (v: unknown) => void>();
+		const fn = vi.fn((url: string, init?: RequestInit) =>
+			url === '/api/backup/validate'
+				? new Promise((resolve) => pending.set(init?.body as string, resolve))
+				: Promise.resolve({ ok: true, status: 200, json: async () => IMPORTED }),
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const { container } = render(Page);
+		await fireEvent.change(input(container), { target: { files: [new File([A], 'a.json')] } });
+		await vi.waitFor(() => expect(pending.has(A)).toBe(true));
+		await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+		await fireEvent.change(input(container), { target: { files: [new File([B], 'b.json')] } });
+		await vi.waitFor(() => expect(pending.has(B)).toBe(true));
+
+		pending.get(B)!({ ok: true, status: 200, json: async () => VALID });
+		const apply = await screen.findByRole('button', { name: 'Apply configuration' });
+		// A's invalid answer arrives last and must not replace B's
+		pending.get(A)!({ ok: true, status: 200, json: async () => ({ ...VALID, is_valid: false, errors: ['from file A'] }) });
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.queryByText('from file A')).not.toBeInTheDocument();
+
+		await fireEvent.click(apply);
+		await screen.findByText('Import successful');
+		expect(fn.mock.calls.filter((c) => c[0].startsWith('/api/backup/import')).map((c) => c[1]?.body)).toEqual([B]);
+	});
+
+	// PR #342 review M1: a restore's result must stay under its own file
+	it('holds Remove while a restore runs', async () => {
+		let finish: (v: unknown) => void = () => {};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((url: string) =>
+				url === '/api/backup/validate'
+					? Promise.resolve({ ok: true, status: 200, json: async () => VALID })
+					: new Promise((resolve) => (finish = resolve)),
+			),
+		);
+		const { container } = render(Page);
+		await fireEvent.change(input(container), { target: { files: [new File(['{}'], 'n.json')] } });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Apply configuration' }));
+
+		expect(await screen.findByRole('button', { name: 'Importing…' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled();
+
+		finish({ ok: true, status: 200, json: async () => IMPORTED });
+		await screen.findByText('Import successful');
+		expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled();
+	});
+
+	// PR #342 review M1: a file that can't fit even compacted is refused here, before any upload
+	it('refuses a file over the restore limit itself, uploading nothing', async () => {
+		const { RESTORE_LIMIT_BYTES } = await import('$lib/api/backup');
+		const fn = vi.fn(async () => ({ ok: true, status: 200, json: async () => VALID }));
+		vi.stubGlobal('fetch', fn);
+		const { container } = render(Page);
+		const text = JSON.stringify({ a: 'x'.repeat(RESTORE_LIMIT_BYTES) });
+		await fireEvent.change(input(container), { target: { files: [new File([text], 'big.json')] } });
+
+		expect(await screen.findByText('This file is 16.8 MB, over the 16 MB restore limit.')).toBeInTheDocument();
+		expect(fn).not.toHaveBeenCalled();
+		expect(screen.queryByRole('button', { name: 'Apply configuration' })).not.toBeInTheDocument();
+		expect(screen.queryByText('Validating configuration…')).not.toBeInTheDocument();
+	});
+
+	it("shows the daemon's warning about left-out acknowledgements before Apply", async () => {
+		const warning = 'This backup leaves out 12 alert acknowledgements. Restoring replaces this NetTap\'s acknowledgements with the 30 it carries.';
+		vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ...VALID, warnings: [warning] }) })));
+		const { container } = render(Page);
+		await fireEvent.change(input(container), { target: { files: [new File(['{}'], 'n.json')] } });
+
+		expect(await screen.findByText(warning)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Apply configuration' })).toBeEnabled();
+	});
+
+	it("shows the daemon's 413 when the restore is over the limit", async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 413, json: async () => ({ error: 'This file is over the 16 MB restore limit.' }) })));
+		const { container } = render(Page);
+		await fireEvent.change(input(container), { target: { files: [new File(['{}'], 'n.json')] } });
+
+		expect(await screen.findByText('This file is over the 16 MB restore limit.')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Apply configuration' })).not.toBeInTheDocument();
+	});
+
+	describe('export', () => {
+		function exportAnswers(response: Response) {
+			vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} }));
+			vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+			vi.stubGlobal('fetch', vi.fn(async () => response));
+		}
+
+		it('says which acknowledgements a saved backup left out', async () => {
+			exportAnswers(new Response('{"metadata":{"acknowledgements_left_out":46000},"sections":{}}', { status: 200 }));
+			render(Page);
+			await fireEvent.click(screen.getByRole('button', { name: 'Export configuration' }));
+
+			expect(
+				await screen.findByText(
+					'Backup saved. It leaves out the 46,000 oldest alert acknowledgements to stay under the 16 MB restore limit; after a restore those alerts show as not acknowledged.',
+				),
+			).toBeInTheDocument();
+		});
+
+		it('says plainly that it saved when nothing was left out', async () => {
+			exportAnswers(new Response('{"metadata":{},"sections":{}}', { status: 200 }));
+			render(Page);
+			await fireEvent.click(screen.getByRole('button', { name: 'Export configuration' }));
+
+			expect(await screen.findByText('Configuration exported successfully')).toBeInTheDocument();
+			expect(screen.queryByText(/leaves out/)).not.toBeInTheDocument();
+		});
+
+		it("shows the daemon's refusal as it wrote it", async () => {
+			const error = 'A backup is already being made. Try again in a moment.';
+			exportAnswers(new Response(JSON.stringify({ error }), { status: 503, headers: { 'Retry-After': '30' } }));
+			render(Page);
+			await fireEvent.click(screen.getByRole('button', { name: 'Export configuration' }));
+
+			expect(await screen.findByRole('alert')).toHaveTextContent(error);
+		});
+	});
+});

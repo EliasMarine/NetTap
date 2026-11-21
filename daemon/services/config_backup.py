@@ -11,6 +11,10 @@ ET Pro credentials, and notification passwords, URLs and tokens (A9).
 
 The capture mode and the retention settings need the running daemon to apply,
 so ``api/backup.py`` restores those two; ``import_config`` does the rest.
+
+NET-344: a download is ``fit``'s bytes, under the restore limit (the oldest alert
+acknowledgements are left out first; owner settings never are), and validate, import and
+export share one side-effect-free content check, ``section_errors``.
 """
 
 import json
@@ -22,9 +26,33 @@ from typing import Any
 
 from services import alert_intelligence, owner_tz, quiet_hours
 
+# NET-344: the encoding and the content check live in their own modules; their public names are
+# re-exported here (`as` marks a re-export), so callers keep importing from config_backup
+from services.backup_checks import (
+    CAPTURE_FIELDS as CAPTURE_FIELDS,
+    LEFT_OUT as LEFT_OUT,
+    BackupRefused as BackupRefused,
+    SECTION_FILES,
+    ack_errors,
+    cap_errors,
+    excluded_ip_errors,
+    first_bad_entry,
+    left_out_check,
+    refusal,
+    capture_section,
+    section_errors,
+    suppressions_ok,
+)
+from services.backup_fit import (
+    RESTORE_LIMIT_BYTES as RESTORE_LIMIT_BYTES,
+    BackupTooLarge as BackupTooLarge,
+    encode as encode,
+    encode_exact,
+    fit,
+)
+
 # OLD CODE: from services.backup_notifications import redact_channels, restore_channels (NET-224: the hub restores)
 from services.backup_notifications import redact_channels
-from services.bandwidth_tracker import MAX_MONTHLY_CAP_BYTES
 from services.capture_config import load_capture_config, write_file_atomic
 from services.excluded_ips import parse_single_ip
 from services.home_location import load_home, parse_home, save_home
@@ -76,14 +104,6 @@ _DEFAULT_PATHS = {
     "suppressions": str(alert_intelligence._SUPPRESS_PATH),
 }
 
-# The fields each capture mode uses, as POST /api/setup/configure takes them
-CAPTURE_FIELDS = {
-    "bridge": ("wan_interface", "lan_interface"),
-    "mirror": ("capture_interface", "management_interface"),
-    "dhcp_gateway": ("capture_interface", "dhcp_subnet"),
-}
-_SUPPRESS_TIMES = ("expires_at", "suppressed_at", "marked_at")
-
 # Sections that are exported/imported
 _VALID_SECTIONS = {
     "capture_mode_config",
@@ -102,52 +122,6 @@ _VALID_SECTIONS = {
     # NET-330: quiet hours, with the owner's zone they were set in ({..., "tz"})
     "notification_quiet",
 }
-
-
-def capture_section(section: Any) -> dict:
-    """A capture section reduced to its mode and the fields that mode uses; {} if no valid mode."""
-    if (
-        not isinstance(section, dict)
-        or section.get("capture_mode") not in CAPTURE_FIELDS
-    ):
-        return {}
-    mode = section["capture_mode"]
-    return {"capture_mode": mode, **{f: section.get(f) for f in CAPTURE_FIELDS[mode]}}
-
-
-def _timestamp_ok(value: Any) -> bool:
-    """An ISO time with a zone: a naive expiry never expires (_is_entry_expired)."""
-    if not isinstance(value, str):
-        return False
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
-    except ValueError:
-        return False
-
-
-def _suppress_entry_ok(entry: Any) -> bool:
-    sid = entry.get("signature_id") if isinstance(entry, dict) else None
-    return (
-        isinstance(sid, int)
-        and not isinstance(sid, bool)
-        and isinstance(entry.get("reason", ""), str)
-        and all(_timestamp_ok(entry[k]) for k in _SUPPRESS_TIMES if k in entry)
-    )
-
-
-def suppressions_ok(data: Any) -> bool:
-    """The whole suppress-list shape alert_intelligence reads, so a restore can't break it."""
-    if not isinstance(data, dict):
-        return False
-    lists = [data.get("global", []), data.get("false_positives", [])]
-    per_device = data.get("per_device", {})
-    if not isinstance(per_device, dict):
-        return False
-    lists += list(per_device.values())
-    return all(
-        isinstance(entries, list) and all(_suppress_entry_ok(e) for e in entries)
-        for entries in lists
-    )
 
 
 class ConfigBackup:
@@ -226,10 +200,15 @@ class ConfigBackup:
         }
 
         # Notification channels without their secrets (re-entered after a restore) + rules
-        notif_data = self._read_json(
-            self._paths.get("notification_config", ""), default={}
-        )
-        notif_data = notif_data if isinstance(notif_data, dict) else {}
+        if self._notification_hub is not None:
+            # NET-344: what the box runs and a restore reproduces; the file can still hold a
+            # channel the hub skipped at load, and then no backup would ever be offered
+            notif_data = self._notification_hub.backup_state()
+        else:
+            notif_data = self._read_json(
+                self._paths.get("notification_config", ""), default={}
+            )
+            notif_data = notif_data if isinstance(notif_data, dict) else {}
         config["sections"]["notification_channels"] = redact_channels(
             notif_data.get("channels", {})
         )
@@ -277,6 +256,27 @@ class ConfigBackup:
 
         logger.info("Exported config with %d sections", len(config["sections"]))
         return config
+
+    def export_file(self) -> tuple[bytearray, int]:
+        """NET-344: the download's bytes and the acknowledgements it leaves out (fit), checked as
+        a restore checks it, so no file is offered that wouldn't restore (plan §2.3 steps 5-6).
+
+        Raises BackupTooLarge (413) or BackupRefused (422); anything else is a failed export.
+        """
+        fitted, size, left_out = fit(self.export_config())
+        sections = fitted["sections"]
+        errors = section_errors(sections)
+        if errors:
+            for name, reasons in errors.items():
+                logger.error(
+                    "Backup refused: %s in %s can't be restored: %s%s",
+                    name,
+                    self._paths.get(SECTION_FILES.get(name, ""), "the device store"),
+                    "; ".join(reasons),
+                    first_bad_entry(name, sections.get(name)),
+                )
+            raise refusal(errors, sections)
+        return encode_exact(fitted, size), left_out
 
     def current_capture(self) -> dict:
         """The box's capture mode as a backup section; {} before setup has saved one."""
@@ -375,12 +375,23 @@ class ConfigBackup:
         if not sections:
             result["warnings"].append("No sections found in import data")
 
-        # NET-330: bad quiet hours refuse the whole import, before any section applies
-        if "notification_quiet" in sections:
-            reason = quiet_hours.problem(sections["notification_quiet"])
-            if reason:
-                result["is_valid"] = False
-                result["errors"].append(reason)
+        # OLD CODE START — NET-344: every section is checked before any applies (section_errors)
+        # # NET-330: bad quiet hours refuse the whole import, before any section applies
+        # if "notification_quiet" in sections:
+        #     reason = quiet_hours.problem(sections["notification_quiet"])
+        #     if reason:
+        #         result["is_valid"] = False
+        #         result["errors"].append(reason)
+        # OLD CODE END
+        problems = [r for reasons in section_errors(sections).values() for r in reasons]
+        left_out_error, left_out_warning = left_out_check(metadata, sections)
+        if left_out_error:
+            problems.append(left_out_error)
+        if left_out_warning:
+            result["warnings"].append(left_out_warning)
+        if problems:
+            result["is_valid"] = False
+            result["errors"].extend(problems)
 
         # A9: restoring a different capture mode restarts capture, so the page asks first
         capture = capture_section(sections.get("capture_mode_config"))
@@ -388,12 +399,20 @@ class ConfigBackup:
 
         return result
 
-    def import_config(self, data: dict[str, Any]) -> dict[str, Any]:
+    # OLD CODE: def import_config(self, data: dict[str, Any]) -> dict[str, Any]:
+    # (NET-344: takes the handler's preflight, so it runs once per import)
+    def import_config(
+        self, data: dict[str, Any], validation: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Validate and apply settings from import data.
 
+        ``validation``: validate_import(data)'s result when the caller has it already. With
+        errors nothing is applied: content is checked for every section before any applies.
         Returns a result dict with applied sections and any errors.
         """
-        validation = self.validate_import(data)
+        # OLD CODE: validation = self.validate_import(data)
+        if validation is None:
+            validation = self.validate_import(data)
         if not validation["is_valid"]:
             return {
                 "success": False,
@@ -509,19 +528,41 @@ class ConfigBackup:
         #     else:
         #         errors.append("Failed to write excluded_ips")
         # OLD CODE END
+        # OLD CODE START — NET-344: checked by the preflight now; duplicates were written (Settings
+        # keys its rows by IP) and a failed write could leave half a file
+        # if "excluded_ips" in sections:
+        #     raw = sections["excluded_ips"]
+        #     ips = (
+        #         [parse_single_ip(ip) for ip in raw] if isinstance(raw, list) else [None]
+        #     )
+        #     if None in ips:
+        #         errors.append(
+        #             "Excluded IPs not restored: each must be a single IP address"
+        #         )
+        #     elif self._write_json(self._paths.get("excluded_ips", ""), ips):
+        #         applied.append("excluded_ips")
+        #     else:
+        #         errors.append("Failed to write excluded_ips")
+        # OLD CODE END
         if "excluded_ips" in sections:
             raw = sections["excluded_ips"]
-            ips = (
-                [parse_single_ip(ip) for ip in raw] if isinstance(raw, list) else [None]
-            )
-            if None in ips:
-                errors.append(
-                    "Excluded IPs not restored: each must be a single IP address"
-                )
-            elif self._write_json(self._paths.get("excluded_ips", ""), ips):
-                applied.append("excluded_ips")
+            # the preflight's own rule again at the write, so a hand-built validation can't put
+            # nulls or an oversized list in the file
+            problems = excluded_ip_errors(raw)
+            if problems:
+                errors.extend(problems)
             else:
-                errors.append("Failed to write excluded_ips")
+                # single IPs, at most EXCLUDED_IPS_MAX of them, canonical and once each
+                ips = list(dict.fromkeys(map(parse_single_ip, raw)))
+                try:
+                    self._write_atomic(self._paths.get("excluded_ips", ""), ips)
+                    applied.append("excluded_ips")
+                except OSError as exc:
+                    # the reason stays in the log: the reply (a 400) never carries paths
+                    logger.error("Excluded IPs not restored: %s", exc)
+                    errors.append(
+                        "Excluded IPs not restored: the file couldn't be written."
+                    )
 
         # Apply bandwidth cap
         # OLD CODE START — wrote any JSON, and a shape the tracker can't read (a list, Infinity)
@@ -643,16 +684,23 @@ class ConfigBackup:
                 }
             )
             return
-        value = cap.get("monthly_cap_bytes") if isinstance(cap, dict) else None
-        # OLD CODE: if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        # (D5: no upper bound, so 10**400 was restored and every bandwidth page answered 500)
-        if (
-            not isinstance(value, int)
-            or isinstance(value, bool)
-            or not 0 <= value <= MAX_MONTHLY_CAP_BYTES
-        ):
-            errors.append("Bandwidth cap not restored: this backup's copy isn't valid")
+        # OLD CODE START — NET-344: one rule shared with the preflight
+        # value = cap.get("monthly_cap_bytes") if isinstance(cap, dict) else None
+        # # OLD CODE: if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        # # (D5: no upper bound, so 10**400 was restored and every bandwidth page answered 500)
+        # if (
+        #     not isinstance(value, int)
+        #     or isinstance(value, bool)
+        #     or not 0 <= value <= MAX_MONTHLY_CAP_BYTES
+        # ):
+        #     errors.append("Bandwidth cap not restored: this backup's copy isn't valid")
+        #     return
+        # OLD CODE END
+        problems = cap_errors(cap)
+        if problems:
+            errors.extend(problems)
             return
+        value = cap["monthly_cap_bytes"]
         try:
             self._write_atomic(
                 self._paths.get("bandwidth_cap", ""), {"monthly_cap_bytes": value}
@@ -682,9 +730,12 @@ class ConfigBackup:
             "alert_acknowledgements": (
                 "alert_acks",
                 "Alert acknowledgements",
-                lambda d: (
-                    isinstance(d, dict) and all(isinstance(v, dict) for v in d.values())
-                ),
+                # OLD CODE START — NET-344: one rule shared with the preflight
+                # lambda d: (
+                #     isinstance(d, dict) and all(isinstance(v, dict) for v in d.values())
+                # ),
+                # OLD CODE END
+                lambda d: not ack_errors(d),
             ),
             "alert_suppressions": (
                 "suppressions",

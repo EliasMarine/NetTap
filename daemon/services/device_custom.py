@@ -471,8 +471,11 @@ class DeviceCustomStore:
         new_pictures, files, picture_errors = _restore_pictures(pictures)
         errors += picture_errors
         if errors:
-            more = f" (and {len(errors) - 5} more)" if len(errors) > 5 else ""
-            raise ValueError("; ".join(errors[:5]) + more)
+            # OLD CODE START — NET-344: one rule shared with the preflight
+            # more = f" (and {len(errors) - 5} more)" if len(errors) > 5 else ""
+            # raise ValueError("; ".join(errors[:5]) + more)
+            # OLD CODE END
+            raise ValueError(restore_message(errors))
         if names is None and pictures is None:
             return
         with self._lock:
@@ -495,6 +498,20 @@ class DeviceCustomStore:
             if len(devices) > DEVICES_MAX:
                 raise ValueError(TOO_MANY)
             self._commit(devices, files)
+
+
+def restore_message(problems: list[str]) -> str:
+    """The first five problems, as restore() and the backup preflight both word them."""
+    more = f" (and {len(problems) - 5} more)" if len(problems) > 5 else ""
+    return "; ".join(problems[:5]) + more
+
+
+def restore_problems(
+    names: Any = None, pictures: Any = None
+) -> tuple[list[str], list[str]]:
+    """(name problems, picture problems) DeviceCustomStore.restore would refuse, touching nothing
+    (NET-344 backup preflight). The device cap depends on the store, so restore still checks it."""
+    return _restore_names(names)[1], _restore_pictures(pictures)[2]
 
 
 def _restore_names(names: Any) -> tuple[dict[str, str] | None, list[str]]:

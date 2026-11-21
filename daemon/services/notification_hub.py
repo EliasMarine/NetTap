@@ -14,6 +14,7 @@ every send has a deadline and records why it failed.
 
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import os
@@ -182,6 +183,35 @@ def _restored_quiet(section: Any) -> tuple[dict[str, Any], str | None]:
     return quiet_hours.of(section), note
 
 
+def backup_problems(sections: dict[str, Any]) -> dict[str, str]:
+    """What restore_backup refuses, by section, changing nothing (NET-344): restore_backup and
+    the backup preflight both run it, so the two can't disagree."""
+    problems: dict[str, str] = {}
+    if "notification_channels" in sections:
+        section = sections["notification_channels"]
+        try:
+            # the box's own channels a restore may merge in were checked when they were saved
+            _refuse_unusable(section if isinstance(section, dict) else {})
+            # pure: no current channels, nothing stored
+            restore_channels(section, {}, True)
+        except ValueError as exc:
+            problems["notification_channels"] = str(exc)
+    if "notification_rules" in sections:
+        rules = sections["notification_rules"]
+        # a malformed rule is skipped when sending (rule_ok), so only the shape is checked
+        if not isinstance(rules, dict) or not all(
+            isinstance(r, dict) for r in rules.values()
+        ):
+            problems["notification_rules"] = (
+                "Notification rules in this backup aren't valid"
+            )
+    if "notification_quiet" in sections:
+        reason = quiet_hours.problem(sections["notification_quiet"])
+        if reason:
+            problems["notification_quiet"] = reason
+    return problems
+
+
 def _cut_off(server: smtplib.SMTP) -> None:
     """The SMTP deadline: shutting the socket down wakes a blocked read, so the send raises."""
     with contextlib.suppress(OSError, AttributeError):
@@ -331,6 +361,15 @@ class NotificationHub:
         with self._lock:
             return dict(self._quiet)
 
+    def backup_state(self) -> dict[str, Any]:
+        """NET-344: what the hub runs, shaped like its config file, for a config backup (a copy).
+        The file can still hold a channel the hub skipped at load (_usable_channels), which a
+        restore refuses, so a backup of the file would never be offered."""
+        with self._lock:
+            return copy.deepcopy(
+                {"channels": self._channels, "rules": self._rules, "quiet": self._quiet}
+            )
+
     # ------------------------------------------------------------------
     # Channel CRUD
     # ------------------------------------------------------------------
@@ -455,6 +494,10 @@ class NotificationHub:
         Returns the restore report's warnings. ValueError: the section isn't valid, naming the
         first bad channel; OSError: not saved. Either way nothing changes, in memory or on disk.
         """
+        # NET-344: one rule shared with the preflight; the first problem, in section order
+        problems = backup_problems(sections)
+        if problems:
+            raise ValueError(next(iter(problems.values())))
         smtp = self.smtp_configured()
         with self._lock:
             channels, rules, warnings = self._channels, self._rules, []
@@ -462,16 +505,20 @@ class NotificationHub:
             quiet = self._quiet
             if "notification_channels" in sections:
                 section = sections["notification_channels"]
-                # the box's own channels it may merge in were checked when they were saved
-                _refuse_unusable(section if isinstance(section, dict) else {})
+                # OLD CODE START — NET-344: one rule shared with the preflight
+                # # the box's own channels it may merge in were checked when they were saved
+                # _refuse_unusable(section if isinstance(section, dict) else {})
+                # OLD CODE END
                 channels, warnings = restore_channels(section, self._channels, smtp)
             if "notification_rules" in sections:
                 rules = sections["notification_rules"]
-                # a malformed rule is skipped when sending (rule_ok), so only the shape is checked
-                if not isinstance(rules, dict) or not all(
-                    isinstance(r, dict) for r in rules.values()
-                ):
-                    raise ValueError("Notification rules in this backup aren't valid")
+                # OLD CODE START — NET-344: one rule shared with the preflight
+                # # a malformed rule is skipped when sending (rule_ok), so only the shape is checked
+                # if not isinstance(rules, dict) or not all(
+                #     isinstance(r, dict) for r in rules.values()
+                # ):
+                #     raise ValueError("Notification rules in this backup aren't valid")
+                # OLD CODE END
             if "notification_quiet" in sections:
                 quiet, note = _restored_quiet(sections["notification_quiet"])
                 warnings = [*warnings, note] if note else warnings

@@ -4,11 +4,12 @@
 -->
 <script lang="ts">
 	import {
-		exportConfig,
+		// OLD CODE: exportConfig, (NET-344: no caller left; downloadConfigFile saves the daemon's exact bytes)
 		downloadConfigFile,
 		validateConfig,
 		importConfig,
 		readConfigFile,
+		restoreBody,
 	} from '$lib/api/backup';
 	import type { ValidationResult, ImportResult } from '$lib/api/backup';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -27,6 +28,8 @@
 	let exporting = $state(false);
 	let exportMessage = $state('');
 	let exportError = $state(false);
+	// NET-344: the download note says the backup left out old acknowledgements
+	let exportLeftOut = $state(false);
 	let lastExportDate = $state<string | null>(null);
 
 	// Import
@@ -36,7 +39,11 @@
 	let validation = $state<ValidationResult | null>(null);
 	let importResult = $state<ImportResult | null>(null);
 	let importError = $state('');
-	let importData = $state<unknown>(null);
+	// OLD CODE: let importData = $state<unknown>(null); (NET-344: Apply sends the exact body that was validated)
+	/** The body whose validation finished for the current selection; set together with `validation`. */
+	let importBody = $state<string | null>(null);
+	/** NET-344: bumped by each selection and by Remove, so a slower, older read or validation is dropped. */
+	let generation = 0;
 	// A9: restoring a different capture mode restarts capture, so it waits for this box
 	let applyCapture = $state(false);
 
@@ -83,11 +90,17 @@
 		exporting = true;
 		exportMessage = '';
 		exportError = false;
+		exportLeftOut = false;
 
 		try {
-			await downloadConfigFile();
+			// OLD CODE: await downloadConfigFile();
+			const { leftOut } = await downloadConfigFile();
 			lastExportDate = formatTime(Date.now());
-			exportMessage = 'Configuration exported successfully';
+			// OLD CODE: exportMessage = 'Configuration exported successfully';
+			exportLeftOut = leftOut > 0;
+			exportMessage = exportLeftOut
+				? `Backup saved. It leaves out the ${leftOut.toLocaleString('en-GB')} oldest alert acknowledgement${leftOut === 1 ? '' : 's'} to stay under the 16 MB restore limit; after a restore those alerts show as not acknowledged.`
+				: 'Configuration exported successfully';
 		} catch (e) {
 			exportError = true;
 			exportMessage = e instanceof Error ? e.message : 'Export failed';
@@ -125,33 +138,63 @@
 		isDragging = false;
 	}
 
+	// OLD CODE START — NET-344: a slower read or validation of an earlier file could land under the new one
+	// async function processFile(file: File) {
+	// 	importFile = file;
+	// 	importResult = null;
+	// 	importError = '';
+	// 	applyCapture = false;
+	// 	validating = true;
+	//
+	// 	try {
+	// 		importData = await readConfigFile(file);
+	// 		validation = await validateConfig(importData);
+	// 	} catch (e) {
+	// 		importError = e instanceof Error ? e.message : 'Failed to read file';
+	// 		validation = null;
+	// 	} finally {
+	// 		validating = false;
+	// 	}
+	// }
+	// OLD CODE END
 	async function processFile(file: File) {
+		const current = ++generation;
 		importFile = file;
 		importResult = null;
 		importError = '';
 		applyCapture = false;
+		validation = null;
+		importBody = null;
 		validating = true;
 
 		try {
-			importData = await readConfigFile(file);
-			validation = await validateConfig(importData);
+			const { text, data } = await readConfigFile(file);
+			if (current !== generation) return;
+			const body = restoreBody(text, data);
+			const result = await validateConfig(body);
+			if (current !== generation) return;
+			validation = result;
+			importBody = body;
 		} catch (e) {
+			if (current !== generation) return;
 			importError = e instanceof Error ? e.message : 'Failed to read file';
 			validation = null;
 		} finally {
-			validating = false;
+			if (current === generation) validating = false;
 		}
 	}
 
 	async function handleImport() {
-		if (!importData) return;
+		// OLD CODE: if (!importData) return;
+		if (!importBody) return;
 
 		importing = true;
 		importError = '';
 
 		try {
 			// OLD CODE: importResult = await importConfig(importData);
-			importResult = await importConfig(importData, applyCapture && validation?.capture_restart === true);
+			// OLD CODE: importResult = await importConfig(importData, applyCapture && validation?.capture_restart === true);
+			importResult = await importConfig(importBody, applyCapture && validation?.capture_restart === true);
 			// review M2: the pages that word things by capture mode read it again
 			if (importResult.applied?.includes('capture_mode_config')) void refreshCaptureMode();
 			if (!importResult.success) {
@@ -165,11 +208,14 @@
 	}
 
 	function resetImport() {
+		generation++;
 		importFile = null;
 		validation = null;
 		importResult = null;
 		importError = '';
-		importData = null;
+		// OLD CODE: importData = null;
+		importBody = null;
+		validating = false;
 	}
 </script>
 
@@ -218,8 +264,16 @@ OLD CODE END -->
 		</div>
 
 		{#if exportMessage}
+			<!-- OLD CODE START — NET-344: no warn style for a backup that left out acknowledgements
 			<div class={['notice', exportError ? 'is-error' : 'is-ok']} role={exportError ? 'alert' : 'status'}>
 				<Icon name={exportError ? 'warn' : 'check'} />{exportMessage}
+			</div>
+			OLD CODE END -->
+			<div
+				class={['notice', exportError ? 'is-error' : exportLeftOut ? 'is-warn' : 'is-ok']}
+				role={exportError ? 'alert' : 'status'}
+			>
+				<Icon name={exportError || exportLeftOut ? 'warn' : 'check'} /><span>{exportMessage}</span>
 			</div>
 		{/if}
 	</Card>
@@ -253,7 +307,8 @@ OLD CODE END -->
 				<span class="mono">{importFile.name}</span>
 				<!-- OLD CODE: {(importFile.size / 1024).toFixed(1)} KB (NET-166: 1024-based under a decimal label) -->
 				<span class="dim num">{(importFile.size / 1000).toFixed(1)} KB</span>
-				<button class="btn" type="button" onclick={resetImport}>Remove</button>
+				<!-- OLD CODE: <button class="btn" type="button" onclick={resetImport}>Remove</button> (NET-344: a restore's result must stay under its own file) -->
+				<button class="btn" type="button" onclick={resetImport} disabled={importing}>Remove</button>
 			</div>
 
 			{#if validating}
@@ -314,7 +369,8 @@ OLD CODE END -->
 
 					{#if validation.is_valid}
 						<div class="form-actions">
-							<button class="btn primary" type="button" onclick={handleImport} disabled={importing}>
+							<!-- OLD CODE: disabled={importing} (NET-344: only the body validated for this selection is sent) -->
+							<button class="btn primary" type="button" onclick={handleImport} disabled={importing || !importBody}>
 								{importing ? 'Importing…' : 'Apply configuration'}
 							</button>
 						</div>

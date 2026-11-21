@@ -225,27 +225,8 @@ class RetentionConfigManager:
         Raises:
             ValueError: If any value fails validation.
         """
-        # Validate individual field ranges first
-        validate_config(new_config)
-
         with self._lock:
-            # Merge new values onto current config (partial updates)
-            merged = self._merge_config(new_config)
-
-            # Validate cross-field constraints on the MERGED result to catch
-            # partial updates that create invalid combinations (e.g. lowering
-            # emergency_threshold below the existing disk_threshold)
-            merged_dict = {
-                # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
-                # "disk_threshold_percent": int(merged.disk_threshold * 100),
-                # OLD CODE END
-                "disk_threshold_percent": round(merged.disk_threshold * 100),
-                # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
-                # "emergency_threshold_percent": int(merged.emergency_threshold * 100),
-                # OLD CODE END
-                "emergency_threshold_percent": round(merged.emergency_threshold * 100),
-            }
-            validate_config(merged_dict)
+            merged = self.checked_merge(new_config)
             self._config = merged
             self._write_json(merged)
             self._sync_env(merged)
@@ -369,6 +350,36 @@ class RetentionConfigManager:
             )
             / 100.0,
         )
+
+    def checked_merge(self, new_config: dict) -> RetentionConfig:
+        """``new_config`` merged onto the current config, with every check save() runs before it
+        writes; touches no file. NET-344: a backup's preflight runs it too, so the two can't drift.
+
+        Raises:
+            ValueError: If any value fails validation (TypeError or AttributeError for input
+                that isn't the right shape).
+        """
+        # Validate individual field ranges first
+        validate_config(new_config)
+
+        # Merge new values onto current config (partial updates)
+        merged = self._merge_config(new_config)
+
+        # Validate cross-field constraints on the MERGED result to catch
+        # partial updates that create invalid combinations (e.g. lowering
+        # emergency_threshold below the existing disk_threshold)
+        merged_dict = {
+            # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+            # "disk_threshold_percent": int(merged.disk_threshold * 100),
+            # OLD CODE END
+            "disk_threshold_percent": round(merged.disk_threshold * 100),
+            # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+            # "emergency_threshold_percent": int(merged.emergency_threshold * 100),
+            # OLD CODE END
+            "emergency_threshold_percent": round(merged.emergency_threshold * 100),
+        }
+        validate_config(merged_dict)
+        return merged
 
     def _merge_config(self, new_config: dict) -> RetentionConfig:
         """Merge a partial config dict onto the current config.

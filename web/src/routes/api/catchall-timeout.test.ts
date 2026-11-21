@@ -141,6 +141,14 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 		expect((await pending).status).toBe(200);
 	});
 
+	it('lets a 25 s backup validation answer through (NET-344: up to 16 MiB, every section dry-run)', async () => {
+		slowDaemon(25_000);
+		const url = new URL('https://nettap.local/api/backup/validate');
+		const pending = POST({ url, params: { path: 'backup/validate' }, request: new Request(url, { method: 'POST', body: '{}' }) } as never);
+		await vi.advanceTimersByTimeAsync(25_000);
+		expect((await pending).status).toBe(200);
+	});
+
 	it('would have cut the same answer off at the 10 s default (the check above is real)', async () => {
 		slowDaemon();
 		const pending = GET(event('/api/live/dashboard') as never);
