@@ -2,7 +2,7 @@
 NetTap ConfigBackup — Export/import all NetTap settings.
 
 Gathers capture mode config, storage retention, notification channels (without
-their secrets), notification rules and quiet hours, device names and pictures, excluded IPs,
+their secrets), notification rules and quiet hours, device names, pictures and details, excluded IPs,
 bandwidth cap, home location, alert acknowledgements and suppressions into a
 single JSON-serializable dict. Includes version stamp for compatibility checking.
 
@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from services import alert_intelligence, owner_tz, quiet_hours
+from services.backup_devices import restore_devices
 
 # NET-344: the encoding and the content check live in their own modules; their public names are
 # re-exported here (`as` marks a re-export), so callers keep importing from config_backup
@@ -121,7 +122,13 @@ _VALID_SECTIONS = {
     "alert_suppressions",
     # NET-330: quiet hours, with the owner's zone they were set in ({..., "tz"})
     "notification_quiet",
+    # NET-320: watch time, group, owner and notes ({MAC: entry})
+    "device_details",
 }
+
+DETAILS_UNREADABLE = (
+    "Device details on this NetTap are unreadable; fix that before restoring them."
+)
 
 
 class ConfigBackup:
@@ -139,17 +146,22 @@ class ConfigBackup:
     #     # DeviceCustomStore: the owner's device names, icons and photos (NET-200)
     #     self._device_custom = device_custom
     # OLD CODE END
+    # OLD CODE: def __init__(self, config_paths=None, device_custom=None, notification_hub=None)
+    # (NET-320: plus the device details store)
     def __init__(
         self,
         config_paths: dict[str, str] | None = None,
         device_custom: Any = None,
         notification_hub: Any = None,
+        device_details: Any = None,
     ) -> None:
         self._paths = {**_DEFAULT_PATHS, **(config_paths or {})}
         # DeviceCustomStore: the owner's device names, icons and photos (NET-200)
         self._device_custom = device_custom
         # NotificationHub: a restore goes through it, so it is live at once and validated
         self._notification_hub = notification_hub
+        # DeviceDetailsStore: watch time, group, owner and notes (NET-320)
+        self._device_details = device_details
 
     # ------------------------------------------------------------------
     # Export
@@ -232,6 +244,9 @@ class ConfigBackup:
             names, pictures = self._device_custom.export()
             config["sections"]["device_aliases"] = names
             config["sections"]["device_pictures"] = pictures
+        # NET-320: a damaged details file raises StoreUnavailable too, for the same reason
+        if self._device_details is not None:
+            config["sections"]["device_details"] = self._device_details.export()
 
         # Excluded IPs
         config["sections"]["excluded_ips"] = self._read_json(
@@ -393,6 +408,13 @@ class ConfigBackup:
             result["is_valid"] = False
             result["errors"].extend(problems)
 
+        # NET-320: a damaged details file here refuses the whole import too (the section's
+        # content is checked in section_errors)
+        if "device_details" in sections and self._device_details is not None:
+            if not self._device_details.healthy:
+                result["is_valid"] = False
+                result["errors"].append(DETAILS_UNREADABLE)
+
         # A9: restoring a different capture mode restarts capture, so the page asks first
         capture = capture_section(sections.get("capture_mode_config"))
         result["capture_restart"] = bool(capture) and capture != self.current_capture()
@@ -487,33 +509,10 @@ class ConfigBackup:
         #     else:
         #         errors.append("Failed to write device_aliases")
         # OLD CODE END
-        # Device names and pictures: each present section replaces the owner's set, all or nothing
-        device_parts = [
-            s for s in ("device_aliases", "device_pictures") if s in sections
-        ]
-        device_names = sections.get("device_aliases")
-        # OLD CODE: notes: list[str] = [] (A9: created above, the notification notes go first)
-        if "device_aliases" in sections and "device_pictures" not in sections:
-            # A backup from before NET-200: its device_aliases came from the dead baseline
-            # code and is always {}, so replacing with it would wipe every owner's name
-            device_parts.remove("device_aliases")
-            device_names = None
-            notes.append(
-                "This backup was made before device names could be backed up; "
-                "the current device names are kept."
-            )
-        if device_parts and self._device_custom is None:
-            errors.append("Device names and pictures can't be restored here")
-        elif device_parts:
-            try:
-                self._device_custom.restore(
-                    device_names, sections.get("device_pictures")
-                )
-                applied.extend(device_parts)
-            # TypeError too: a malformed backup must never escape after other sections applied
-            except (ValueError, TypeError, RuntimeError, OSError) as exc:
-                logger.error("Device names and pictures not restored: %s", exc)
-                errors.append(f"Device names and pictures not restored: {exc}")
+        # Device names and pictures, then details (NET-320)
+        restore_devices(
+            sections, self._device_custom, self._device_details, applied, errors, notes
+        )
 
         # OLD CODE START — A9: any JSON was written, CIDRs and junk included (the Settings
         # form refuses them), and the running daemon kept its old list

@@ -960,11 +960,23 @@ class DeviceRegistry:
         return self._custom.name_for(device.get("mac")) if self._custom else None
 
     def with_names(self, device: dict) -> dict:
-        """A copy of `device` with display_name, discovered_name and the owner's fields (NET-200)."""
+        """A copy of `device` with display_name, discovered_name and the owner's fields (NET-200).
+
+        The owner's fields are DeviceCustomStore.owner_fields: name, icon, picture and (NET-320)
+        group, owner and watch time. Notes are only on the device pages.
+        """
+        # OLD CODE: else {"custom_name": None, "icon": None, "picture": None} (NET-320: same row shape)
         owner = (
             self._custom.owner_fields(device.get("mac"))
             if self._custom
-            else {"custom_name": None, "icon": None, "picture": None}
+            else {
+                "custom_name": None,
+                "icon": None,
+                "picture": None,
+                "group": None,
+                "owner": None,
+                "watch_after_min": None,
+            }
         )
         return {
             **device,

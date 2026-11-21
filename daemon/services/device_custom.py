@@ -13,6 +13,9 @@ A photo change writes the new content-named file, commits the metadata atomicall
 the in-memory copy, then deletes old-minus-new referenced files. A failure at any step
 leaves the last committed state served; leftovers are orphans for the startup sweep, which
 only runs when the metadata is valid (a damaged file must never cost the owner a photo).
+
+The rows this store presents also carry the owner's group, owner and watch time from the
+separate device_details.json store (NET-320), when one is passed in; this file never holds them.
 """
 
 import base64
@@ -26,10 +29,13 @@ import re
 import tempfile
 import threading
 import unicodedata
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from services.capture_config import write_file_atomic
 from services.device_registry import DeviceRegistry
+
+if TYPE_CHECKING:  # device_details imports this module
+    from services.device_details import DeviceDetailsStore
 
 logger = logging.getLogger("nettap.services.device_custom")
 
@@ -61,6 +67,8 @@ _MAC_RE = re.compile(r"^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$")
 _FILE_RE = re.compile(r"^([0-9a-f]{12})-([0-9a-f]{16})\.(png|jpg|webp)$")
 _TMP_PREFIX = ".photo-"
 _ENTRY_KEYS = {"name", "icon", "photo"}
+# NET-320: the owner's details every row carries (DeviceDetailsStore.row_fields); notes stay off rows
+DETAIL_ROW_KEYS = ("group", "owner", "watch_after_min")
 
 BAD_TYPE = "Pictures must be PNG, JPEG or WebP."
 TOO_BIG = f"The picture is too large (the limit is {PHOTO_MAX_BYTES // 1024} KB)."
@@ -195,9 +203,17 @@ def _check_photo_meta(mac: str, photo: Any) -> None:
 
 
 class DeviceCustomStore:
-    """Owner names, icons and photos, one entry per MAC. Thread-safe."""
+    """Owner names, icons and photos, one entry per MAC. Thread-safe.
 
-    def __init__(self, root: str | None = None) -> None:
+    `details` (NET-320) only adds the owner's group, owner and watch time to the rows this
+    store presents; it is never read for names, so a damaged details file can't cost a name.
+    """
+
+    # OLD CODE: def __init__(self, root: str | None = None) -> None: (NET-320: + details)
+    def __init__(
+        self, root: str | None = None, details: "DeviceDetailsStore | None" = None
+    ) -> None:
+        self._details = details
         root = root or os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data")
         self._meta_path = os.path.join(root, "device_custom.json")
         self._photo_dir = os.path.join(root, "device-pictures")
@@ -378,16 +394,45 @@ class DeviceCustomStore:
         q = query.casefold()
         return [m for m, n in self.names().items() if q and q in n.casefold()]
 
-    def owner_fields(self, mac: Any) -> dict[str, str | None]:
-        """{custom_name, icon, picture} for a response row; all None when there is nothing."""
-        empty: dict[str, str | None] = {
-            "custom_name": None,
-            "icon": None,
-            "picture": None,
-        }
+    # OLD CODE START — NET-320: rows also carry the owner's group, owner and watch time
+    # def owner_fields(self, mac: Any) -> dict[str, str | None]:
+    #     """{custom_name, icon, picture} for a response row; all None when there is nothing."""
+    #     empty: dict[str, str | None] = {
+    #         "custom_name": None,
+    #         "icon": None,
+    #         "picture": None,
+    #     }
+    #     try:
+    #         mac = normalize_mac(mac)
+    #     except ValueError:
+    #         return empty
+    #     with self._lock:
+    #         entry = self._devices.get(mac)
+    #     if not entry:
+    #         return empty
+    # OLD CODE END
+    def owner_fields(self, mac: Any) -> dict[str, Any]:
+        """{custom_name, icon, picture, group, owner, watch_after_min} for a response row.
+
+        Each is None when unset, and all are None for anything that isn't a MAC. The details
+        come first, so a device with details but no name or picture still shows them.
+        """
         try:
             mac = normalize_mac(mac)
         except ValueError:
+            mac = None
+        empty: dict[str, Any] = {
+            "custom_name": None,
+            "icon": None,
+            "picture": None,
+            # row_fields never raises: a non-MAC or a damaged details file gives Nones
+            **(
+                self._details.row_fields(mac)
+                if self._details
+                else dict.fromkeys(DETAIL_ROW_KEYS)
+            ),
+        }
+        if mac is None:
             return empty
         with self._lock:
             entry = self._devices.get(mac)
@@ -398,13 +443,15 @@ class DeviceCustomStore:
             digest = _FILE_RE.match(entry["photo"]["file"]).group(2)
             picture = f"/api/devices/registry/{mac}/picture?v={digest}"
         return {
+            **empty,
             "custom_name": entry.get("name"),
             "icon": entry.get("icon"),
             "picture": picture,
         }
 
     def present(self, row: dict) -> dict:
-        """A copy of a response row (with "mac" and "hostname") showing the owner's name first.
+        """A copy of a response row (with "mac" and "hostname") showing the owner's name first,
+        plus every owner_fields key (NET-320: group, owner and watch time; never notes).
 
         Presentation only: call it after any classification that reads the hostname. When the
         owner's name replaces the hostname, the original stays visible as `discovered_name`.

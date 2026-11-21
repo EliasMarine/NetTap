@@ -241,16 +241,21 @@ def _load_from_env() -> CaptureConfig:
     return config
 
 
-def write_file_atomic(path: str, text: str, mode: int = 0o644) -> None:
+# OLD CODE: def write_file_atomic(path: str, text: str, mode: int = 0o644) -> None:
+def write_file_atomic(
+    path: str, text: str, mode: int = 0o644, encoding: str | None = None
+) -> None:
     """Write ``text`` to ``path`` via a temp file in the same dir and os.replace.
 
-    Readers see either the old file or the new one, never a partial write.
+    Readers see either the old file or the new one, never a partial write. ``encoding``
+    None keeps the locale's (as before); F2 passes "utf-8" because it budgets exact bytes.
     """
     fd, tmp_path = tempfile.mkstemp(
         dir=os.path.dirname(path) or ".", prefix=f".{os.path.basename(path)}."
     )
     try:
-        with os.fdopen(fd, "w") as f:
+        # OLD CODE: with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())

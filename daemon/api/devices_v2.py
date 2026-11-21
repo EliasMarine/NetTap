@@ -47,6 +47,7 @@ from api.time_range import (
 )
 from api.devices import (
     _bandwidth_interval,
+    _details_of,
     _device_category,
     _is_skipped_device_ip,
     _lan_device_buckets,
@@ -405,7 +406,10 @@ def handle_registry_detail(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Device not found: {mac}"}, status=404)
 
     # OLD CODE: device["display_name"] = registry.get_display_name(device) (NET-200: with_names)
-    return web.json_response({"device": registry.with_names(device)})
+    # OLD CODE: return web.json_response({"device": registry.with_names(device)}) (NET-320: + details)
+    # NET-320: all four details (notes included) from one snapshot, over the row's three
+    details = _details_of(request, device.get("mac"))
+    return web.json_response({"device": {**registry.with_names(device), **details}})
 
 
 @in_thread

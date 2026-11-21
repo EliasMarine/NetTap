@@ -41,6 +41,7 @@ from services.config_backup import (
     ConfigBackup,
     capture_section,
 )
+from services.device_custom import StoreUnavailable
 from services.excluded_ips import load_excluded_ips, with_appliance_ip
 
 logger = logging.getLogger("nettap.api.backup")
@@ -51,6 +52,10 @@ FILE_TOO_LARGE = "This file is over the 16 MB restore limit."
 # The app holds {"busy": bool}, set up by register_backup_routes; a dict, since a started app's
 # own keys shouldn't change
 EXPORT_STATE = "backup_export"
+EXPORT_UNREADABLE = (
+    "A device settings file is unreadable, so the backup would be incomplete. "
+    "The daemon log names the file."
+)
 
 
 def _no_constant(name: str) -> None:
@@ -106,6 +111,11 @@ async def _export(backup: ConfigBackup) -> web.Response:
         return public_json({"error": str(exc), "code": "backup_too_large"}, status=413)
     except BackupRefused as exc:
         return public_json({"error": str(exc), "code": exc.code}, status=422)
+    # NET-320: a damaged names, pictures or details file used to reach a 500, which the error
+    # middleware cuts to its generic line, so the owner never saw why
+    except StoreUnavailable as exc:
+        logger.error("Config export refused, a device file is unreadable: %s", exc)
+        return public_json({"error": EXPORT_UNREADABLE}, status=503)
     except Exception as exc:
         logger.error("Error exporting config: %s", exc)
         return web.json_response({"error": f"Config export failed: {exc}"}, status=500)

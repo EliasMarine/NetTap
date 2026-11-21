@@ -136,6 +136,7 @@ from services.malcolm_upgrade import MalcolmUpgrade
 from services.update_executor import UpdateExecutor
 from services.device_registry import DeviceRegistry
 from services.device_custom import DeviceCustomStore
+from services.device_details import DeviceDetailsStore
 from services.unifi_integration import UnifiIntegration
 from services.live_connections import LiveConnectionTracker
 from services.bandwidth_tracker import BandwidthTracker
@@ -1383,7 +1384,10 @@ def create_app(
     # device_registry = DeviceRegistry(client=storage._client)
     # OLD CODE END
     # NET-200: the owner's names and pictures; built first so the registry, IoT and backup share it
-    device_custom = DeviceCustomStore()
+    # OLD CODE: device_custom = DeviceCustomStore() (NET-320: rows also carry the owner's details)
+    # NET-320: watch time, group, owner and notes, in their own file (a rolled-back daemon never reads it)
+    device_details = DeviceDetailsStore()
+    device_custom = DeviceCustomStore(details=device_details)
     # OLD CODE START — NET-200: no owner names
     # device_registry = DeviceRegistry(
     #     client=storage._client, changelog=changelog_service
@@ -1406,7 +1410,8 @@ def create_app(
     if unifi_integration.load_config():
         logger.info("UniFi integration restored from saved config")
     register_devices_v2_routes(app, device_registry, unifi_integration)
-    register_device_custom_routes(app, device_custom)
+    # OLD CODE: register_device_custom_routes(app, device_custom) (NET-320: the details routes)
+    register_device_custom_routes(app, device_custom, device_details)
 
     # Live connection tracking (real-time connection monitor)
     live_tracker = LiveConnectionTracker(client=storage._client)
@@ -1566,8 +1571,11 @@ def create_app(
     # Config backup/restore (export/import all settings)
     # OLD CODE: config_backup = ConfigBackup() (NET-200: names and pictures are backed up)
     # OLD CODE: config_backup = ConfigBackup(device_custom=device_custom) (NET-224: notifications restore through the hub)
+    # OLD CODE: config_backup = ConfigBackup(device_custom=device_custom, notification_hub=notification_hub) (NET-320)
     config_backup = ConfigBackup(
-        device_custom=device_custom, notification_hub=notification_hub
+        device_custom=device_custom,
+        notification_hub=notification_hub,
+        device_details=device_details,
     )
     register_backup_routes(app, config_backup)
 

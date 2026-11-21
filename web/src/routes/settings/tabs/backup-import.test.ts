@@ -174,6 +174,13 @@ describe('Backup restore reports what it did (A9)', () => {
 		expect(await screen.findByText('Restored: Notification rules, Quiet hours')).toBeInTheDocument();
 	});
 
+	it('names the device details section by its label, not its key (F2)', async () => {
+		stub({}, { ...RESULT, applied: ['device_pictures', 'device_details'] });
+		await fireEvent.click(await chooseFile());
+
+		expect(await screen.findByText('Restored: Device pictures, Device details')).toBeInTheDocument();
+	});
+
 	it('says what a backup leaves out', () => {
 		stub({}, RESULT);
 		render(Page);
