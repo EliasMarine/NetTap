@@ -424,4 +424,23 @@ describe('System page figures', () => {
 		const drive = [...document.querySelectorAll('.pipe-item')].find((el) => el.querySelector('.pipe-k')?.textContent?.trim() === 'Drive');
 		expect(drive?.querySelector('.pipe-v')?.textContent?.trim()).toBe('SMART checks pass · 1 warning');
 	});
+
+	it('marks the Drive stage Warning at 74 °C with every other check healthy (NET-348)', async () => {
+		stubReplies({
+			...OK_REPLIES,
+			'/api/smart/health': {
+				...(OK_REPLIES['/api/smart/health'] as object),
+				healthy: true,
+				temperature_c: 74,
+				warnings: ['Temperature 74°C is above the 70°C warning line'],
+			},
+		});
+		render(SystemPage);
+		await screen.findByText('Warnings');
+		const drive = [...document.querySelectorAll('.pipe-item')].find((el) => el.querySelector('.pipe-k')?.textContent?.trim() === 'Drive');
+		expect(drive?.querySelector('.pipe-k')).toHaveClass('is-warn');
+		expect(within(drive as HTMLElement).getByLabelText('Warning')).toBeInTheDocument();
+		expect(within(drive as HTMLElement).queryByLabelText('Healthy')).not.toBeInTheDocument();
+		expect(drive?.querySelector('.pipe-v')?.textContent?.trim()).toBe('SMART checks pass · 1 warning');
+	});
 });

@@ -7,6 +7,7 @@ import type { SuricataRuleFigures } from '$lib/api/drilldown';
 import { LAN_POLICY } from '../../../../../e2e/visual/fixtures/drilldown';
 import { RULE_NAME, SURICATA_RULE, SURICATA_RULE_EMPTY } from '../../../../../e2e/visual/fixtures/suricata-rule';
 import { expectNoNestedInteractive } from '../../../../tests/nested-interactive';
+import { windowWords } from '$lib/utils/drilldown';
 
 // The rule page: every figure links to the Alerts list holding exactly it (signature= this name,
 // on the page's list, over the response's own window), and the explanation links only out to https
@@ -118,7 +119,8 @@ describe('Suricata rule page', () => {
 		render(Page);
 		await loaded();
 		expect([figuresCall().searchParams.get('from'), figuresCall().searchParams.get('to')]).toEqual([from, to]);
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(from, to) })).toHaveAttribute('aria-pressed', 'true');
 		expect(screen.getByText(/^What this rule means, when it fired and which addresses it involved · window /)).toBeInTheDocument();
 		// the links carry the URL's range for their words, beside the response's bounds
 		expect(query(kpi('Alerts').getAttribute('href'))).toEqual({ signature: RULE_NAME, ...WIN, range: '6h', count: '180' });

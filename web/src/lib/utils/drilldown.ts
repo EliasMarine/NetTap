@@ -245,10 +245,12 @@ export interface DrillWindow {
 /** A day and time, as the windows are written ("6 Nov, 13:02"). */
 export const formatWhen = (iso: string | null | undefined): string => formatTime(iso, 'short');
 
-/** A window a link brought (?from=&to=), shown as a "Custom" range. */
+/** A window a link brought (?from=&to=), shown as a range pill named by its window (NET-348). */
 export interface CustomWindow extends DrillWindow {
 	value: 'custom';
-	label: 'Custom';
+	// OLD CODE: label: 'Custom'; (NET-348: every carried window read "Custom", whatever it held)
+	/** The pill's words: "19:02 to 20:02, 20 Nov" (`windowWords`). */
+	label: string;
 	hours: number;
 	words: string;
 }
@@ -286,7 +288,8 @@ export function customRange(from: string | null, to: string | null): CustomWindo
 	if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) return null;
 	return {
 		value: 'custom',
-		label: 'Custom',
+		// OLD CODE: label: 'Custom', (NET-348: the pill names the window it carries)
+		label: windowWords(start.toISOString(), end.toISOString()),
 		hours: (end.getTime() - start.getTime()) / 3_600_000,
 		words: `window ${formatWhen(start.toISOString())} to ${formatWhen(new Date(shownEnd(end.getTime())).toISOString())}`,
 		from: start.toISOString(),
@@ -516,6 +519,9 @@ export function notInBars(unidentified: Unidentified | null | undefined, format:
 	return clauses.length > 0 ? `Not in the bars: ${clauses.join(', and ')}.` : '';
 }
 
+/** TLS records as the protocols endpoint counts them: ssl, leaving out QUIC (`ssl_only`). Shared by every TLS filter. */
+export const TLS_QUERY = 'network.protocol:"ssl" AND NOT network.protocol:"quic"';
+
 /**
  * Log Explorer's conn records behind one bar of /api/traffic/protocols' `services` (NET-249), with
  * the endpoint's whole predicate: ssl leaves out QUIC (`ssl_only`), `unknown` is the records with no
@@ -524,7 +530,8 @@ export function notInBars(unidentified: Unidentified | null | undefined, format:
 export function serviceLogsHref(name: string, win: DrillWindow, excluded: readonly string[], range?: string): string {
 	const query =
 		name === 'ssl'
-			? 'network.protocol:"ssl" AND NOT network.protocol:"quic"'
+			? // OLD CODE: 'network.protocol:"ssl" AND NOT network.protocol:"quic"' (NET-348: shared with Connections' TLS filter)
+				TLS_QUERY
 			: name === 'unknown'
 				? 'NOT _exists_:network.protocol'
 				: `network.protocol:"${name.replace(/["\\]/g, '\\$&')}"`;

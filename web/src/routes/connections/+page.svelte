@@ -23,7 +23,8 @@
 	import { getLiveDashboard } from '$api/live';
 	import { loadFailed } from '$lib/utils/load-failed';
 	// OLD CODE: import { DRILL_RANGES, startRange, type DrillRangeValue } from '$lib/utils/drilldown'; (NET-249: the timeline picks)
-	import { chartTime, connLogsHref, DRILL_RANGES, fmt, pickedTotal, pickWindow, startRange, withCount, type DrillRangeValue, type TimeChart } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime, connLogsHref, DRILL_RANGES, fmt, pickedTotal, pickWindow, startRange, withCount, type DrillRangeValue, type TimeChart } from '$lib/utils/drilldown'; (NET-348: + TLS_QUERY)
+	import { chartTime, connLogsHref, DRILL_RANGES, fmt, pickedTotal, pickWindow, startRange, TLS_QUERY, withCount, type DrillRangeValue, type TimeChart } from '$lib/utils/drilldown';
 	// OLD CODE: import { toTimeChart } from '$lib/utils/chart-pick'; (NET-249 review: and the reply's bucket in words)
 	// OLD CODE: import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick'; (NET-249: one helper for both halves, narrow-page's bucketWords)
 	import { toTimeChart } from '$lib/utils/chart-pick';
@@ -115,7 +116,15 @@
 		{ value: 'timeout', label: 'Timeout' },
 	];
 
-	const PROTOCOL_OPTIONS = ['All', 'TCP', 'UDP', 'ICMP', 'TLS'] as const;
+	// OLD CODE: const PROTOCOL_OPTIONS = ['All', 'TCP', 'UDP', 'ICMP', 'TLS'] as const; (NET-348: one lowercase choice for pills, chart and query)
+	/** 'all', 'tls', or a `network.transport` value as the flow chart names it (tcp, udp, icmp, ipv6-icmp…) */
+	const PROTOCOL_OPTIONS = [
+		{ value: 'all', label: 'All' },
+		{ value: 'tcp', label: 'TCP' },
+		{ value: 'udp', label: 'UDP' },
+		{ value: 'icmp', label: 'ICMP' },
+		{ value: 'tls', label: 'TLS' },
+	];
 
 	// OLD CODE START — the protocol badges and bars took a colour each; the system's tags and bar
 	// lists are one colour (PLAN.md §4.1)
@@ -126,7 +135,7 @@
 	// OLD CODE END
 
 	const RANGE_PILLS = TIME_RANGES.map((r) => ({ value: r.value, label: r.label }));
-	const PROTOCOL_PILLS = PROTOCOL_OPTIONS.map((p) => ({ value: p as string, label: p }));
+	// OLD CODE: const PROTOCOL_PILLS = PROTOCOL_OPTIONS.map((p) => ({ value: p as string, label: p })); (NET-348: derived below, with a pill for a chart-only transport)
 	const AUTO_REFRESH_MS = 15_000;
 
 	// ---------------------------------------------------------------------------
@@ -183,7 +192,9 @@
 	let pageSize = $state(50);
 
 	// Filters
-	let protocolFilter = $state('All');
+	// OLD CODE: let protocolFilter = $state('All'); (NET-348: lowercase, and the flow chart's protocol click sets it too)
+	/** The one protocol choice: the pills, the flow chart's highlight and the query all read it (NET-348) */
+	let protocolFilter = $state('all');
 	let serviceFilter = $state('');
 	let ipFilter = $state('');
 	let countryFilter = $state('');
@@ -191,7 +202,9 @@
 	// OLD CODE START — I2: the "Has alerts" checkbox was never sent to the daemon, so it filtered nothing
 	// let hasAlertsFilter = $state(false);
 	// OLD CODE END
-	let sankeyFilter = $state<{ type: string; id: string } | null>(null);
+	// OLD CODE: let sankeyFilter = $state<{ type: string; id: string } | null>(null); (NET-348: a protocol click sets protocolFilter instead)
+	/** A destination picked on the flow chart; ANDed with the protocol choice */
+	let sankeyFilter = $state<{ type: 'destination'; id: string } | null>(null);
 	/** The flow's destination for sessions with no network owner (the daemon's terms `missing` value). */
 	const UNKNOWN_OWNER = 'Unknown';
 
@@ -222,6 +235,17 @@
 	// ---------------------------------------------------------------------------
 	// Derived
 	// ---------------------------------------------------------------------------
+
+	// NET-348: a transport picked on the chart with no pill of its own (ipv6-icmp) gets one while picked, so All can clear it
+	const protocolPills = $derived(
+		PROTOCOL_OPTIONS.some((o) => o.value === protocolFilter)
+			? PROTOCOL_OPTIONS
+			: [...PROTOCOL_OPTIONS, { value: protocolFilter, label: protocolFilter.toUpperCase() }],
+	);
+	/** The flow chart's highlight: the picked destination, else the protocol choice when the chart has it (TLS isn't a transport) */
+	const flowSelected = $derived(
+		sankeyFilter ?? (protocolFilter === 'all' || protocolFilter === 'tls' ? null : { type: 'protocol', id: protocolFilter }),
+	);
 
 	// OLD CODE START — #145: sorting moved to the daemon; this ordered one page of 50 rows
 	// /** A port as text (asString drops numbers); '' when missing. */
@@ -544,9 +568,21 @@
 		return isIpAddress(text) ? text.trim() : undefined;
 	}
 
+	/**
+	 * A protocol choice as a query clause (NET-348): a transport on the field the flow chart buckets,
+	 * TLS as the protocols endpoint counts it. A bare word matched the text in any field.
+	 */
+	function protocolClause(choice: string): string | null {
+		if (choice === 'all') return null;
+		if (choice === 'tls') return `(${TLS_QUERY})`;
+		return `network.transport:"${choice.replace(/["\\]/g, '\\$&')}"`;
+	}
+
 	function buildSearchQuery(): string {
 		const parts: string[] = [];
-		if (protocolFilter !== 'All') parts.push(protocolFilter.toLowerCase());
+		// OLD CODE: if (protocolFilter !== 'All') parts.push(protocolFilter.toLowerCase()); (NET-348: a bare word, and the chart's protocol was a second one)
+		const protocol = protocolClause(protocolFilter);
+		if (protocol) parts.push(protocol);
 		if (serviceFilter.trim()) parts.push(serviceFilter.trim());
 		// OLD CODE START — NET-160: free text matched the address in any field, and an IPv6 colon is
 		// query syntax; loadTable sends it as the structured `ip` filter instead
@@ -554,16 +590,21 @@
 		// OLD CODE END
 		// Part of an address typed in the box ("192.168.1") still searches as text, as before
 		if (ipFilter.trim() && !structuredIp(ipFilter)) parts.push(ipFilter.trim());
-		// Apply sankey filter
-		if (sankeyFilter) {
-			if (sankeyFilter.type === 'source') parts.push(`source.ip:${sankeyFilter.id}`);
-			else if (sankeyFilter.type === 'protocol') parts.push(sankeyFilter.id.toLowerCase());
-			// OLD CODE START — I11: "Unknown" is the daemon's name for no owner, so it matched 0 sessions
-			// else if (sankeyFilter.type === 'destination') parts.push(`destination.as.full:"${sankeyFilter.id}"`);
-			// OLD CODE END
-			else if (sankeyFilter.type === 'destination')
-				parts.push(sankeyFilter.id === UNKNOWN_OWNER ? 'NOT _exists_:destination.as.full' : `destination.as.full:"${sankeyFilter.id}"`);
-		}
+		// OLD CODE START — NET-348: a source click navigates away and a protocol click sets protocolFilter, so the
+		// flow's filter is a destination only; UDP on the chart plus TCP in the pills matched nothing
+		// // Apply sankey filter
+		// if (sankeyFilter) {
+		// 	if (sankeyFilter.type === 'source') parts.push(`source.ip:${sankeyFilter.id}`);
+		// 	else if (sankeyFilter.type === 'protocol') parts.push(sankeyFilter.id.toLowerCase());
+		// 	// OLD CODE START — I11: "Unknown" is the daemon's name for no owner, so it matched 0 sessions
+		// 	// else if (sankeyFilter.type === 'destination') parts.push(`destination.as.full:"${sankeyFilter.id}"`);
+		// 	// OLD CODE END
+		// 	else if (sankeyFilter.type === 'destination')
+		// 		parts.push(sankeyFilter.id === UNKNOWN_OWNER ? 'NOT _exists_:destination.as.full' : `destination.as.full:"${sankeyFilter.id}"`);
+		// }
+		// OLD CODE END
+		if (sankeyFilter)
+			parts.push(sankeyFilter.id === UNKNOWN_OWNER ? 'NOT _exists_:destination.as.full' : `destination.as.full:"${sankeyFilter.id}"`);
 		return parts.join(' ');
 	}
 
@@ -779,7 +820,13 @@
 			goto($ipHref(id));
 			return;
 		}
-		// Protocol + Destination: toggle table filter (existing behavior)
+		// NET-348: a protocol is the page's one protocol choice; clicking it again goes back to All
+		if (type === 'protocol') {
+			setProtocolFilter(protocolFilter === id ? 'all' : id);
+			return;
+		}
+		// OLD CODE: // Protocol + Destination: toggle table filter (existing behavior) (NET-348: destinations only)
+		// Destination: toggle the table filter
 		if (sankeyFilter?.type === type && sankeyFilter?.id === id) {
 			sankeyFilter = null; // toggle off
 		} else {
@@ -915,7 +962,8 @@
 		// if (urlIp) ipFilter = urlIp;
 		// OLD CODE END
 		const urlProtocol = $page.url.searchParams.get('protocol');
-		if (urlProtocol) protocolFilter = urlProtocol;
+		// OLD CODE: if (urlProtocol) protocolFilter = urlProtocol; (NET-348: the choice is lowercase)
+		if (urlProtocol) protocolFilter = urlProtocol.toLowerCase();
 
 		// OLD CODE START: fetchAll().then(() => { initialized = true; }); OLD CODE END
 		void refresh.run();
@@ -1097,7 +1145,7 @@
 				destinations={sankey.nodes.destinations}
 				links={sankey.links}
 				names={deviceNames}
-				selected={sankeyFilter}
+				selected={flowSelected}
 				onNodeClick={handleSankeyNodeClick}
 			/>
 			{#if sankeyFailed}
@@ -1141,7 +1189,8 @@
 		<div class="toolbar">
 			<SearchField id="ip-filter" label="Filter by IP address" placeholder="IP address, such as 192.168.1.100" size="toolbar" bind:value={ipFilter} onkeydown={applyOnEnter} />
 			<SearchField id="service-filter" label="Filter by service" placeholder="Service: dns, http, tls…" size="toolbar" bind:value={serviceFilter} onkeydown={applyOnEnter} />
-			<Pills options={PROTOCOL_PILLS} value={protocolFilter} onchange={setProtocolFilter} ariaLabel="Protocol" />
+			<!-- OLD CODE: <Pills options={PROTOCOL_PILLS} value={protocolFilter} onchange={setProtocolFilter} ariaLabel="Protocol" /> (NET-348: + a chart-only transport's pill) -->
+			<Pills options={protocolPills} value={protocolFilter} onchange={setProtocolFilter} ariaLabel="Protocol" />
 			<Pills options={STATE_FILTERS} value={stateFilter} onchange={setStateFilter} ariaLabel="Connection state" />
 			<!-- OLD CODE START — I2: never sent to the daemon, so it filtered nothing
 			<label class="check-row">

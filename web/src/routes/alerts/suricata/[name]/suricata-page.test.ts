@@ -7,6 +7,7 @@ import type { SuricataCategoryFigures } from '$lib/api/drilldown';
 import { LAN_POLICY } from '../../../../../e2e/visual/fixtures/drilldown';
 import { SURICATA_CATEGORY, SURICATA_CATEGORY_EMPTY } from '../../../../../e2e/visual/fixtures/suricata-category';
 import { expectNoNestedInteractive } from '../../../../tests/nested-interactive';
+import { windowWords } from '$lib/utils/drilldown';
 
 // NET-160 slice 2b-2: every figure on the page links to the Alerts list that holds exactly it,
 // over the response's own window, and says when a list is not the whole set
@@ -90,7 +91,8 @@ describe('Suricata category page', () => {
 		render(Page);
 		await loaded();
 		expect([figuresCall().searchParams.get('from'), figuresCall().searchParams.get('to')]).toEqual([FROM, TO]);
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(FROM, TO) })).toHaveAttribute('aria-pressed', 'true');
 		expect(screen.getByText(/Alerts per hour · window /)).toBeInTheDocument();
 		// the links carry the URL's range for their words, beside the response's bounds
 		// OLD CODE: …toEqual({ suricata_category: NAME, from: WIN.from, to: WIN.to, range: '6h' }) (section D: each link carries the figure it opens)

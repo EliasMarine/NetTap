@@ -499,6 +499,14 @@
 	// 	selectedDomain = selectedDomain === domain ? null : domain;
 	// }
 	// OLD CODE END
+	/** The scroll-to-section timer; cleared on destroy, when `document` may be gone (NET-348, as on PCAP). */
+	let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Scroll to a section once the page has drawn it; a newer scroll replaces one still waiting. */
+	function scrollSoon(id: string) {
+		clearTimeout(scrollTimer);
+		scrollTimer = setTimeout(() => document.getElementById(id)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 50);
+	}
+
 	/** Pick a domain in one of the lists (again to clear it): its askers, over that list's window */
 	function selectDomain(domain: string, source: DomainSource) {
 		if (selected?.domain === domain) {
@@ -508,7 +516,8 @@
 		selected = { domain, source, ...(listWindow[source] ?? getTimeRange()) };
 		askers = null;
 		void loadAskers().catch(() => {});
-		setTimeout(() => document.getElementById('domain-askers')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 50);
+		// OLD CODE: setTimeout(() => document.getElementById('domain-askers')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 50); (NET-348: never cleared, so it ran after teardown)
+		scrollSoon('domain-askers');
 	}
 
 	function clearPick() {
@@ -550,9 +559,12 @@
 		deviceIpInput = ip;
 		selectedDeviceIp = ip;
 		lookupDevice();
-		setTimeout(() => {
-			document.getElementById('device-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-		}, 50);
+		// OLD CODE START — NET-348: never cleared, so it ran after teardown ("document is not defined" in CI)
+		// setTimeout(() => {
+		// 	document.getElementById('device-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		// }, 50);
+		// OLD CODE END
+		scrollSoon('device-section');
 	}
 
 	// OLD CODE START — DataTable owns the header toggles; the device table reports its sort below
@@ -709,6 +721,7 @@
 		// });
 		// OLD CODE END
 		// OLD CODE: refresh.run(); (NET-249: the view effect runs the first load)
+		return () => clearTimeout(scrollTimer);
 	});
 </script>
 

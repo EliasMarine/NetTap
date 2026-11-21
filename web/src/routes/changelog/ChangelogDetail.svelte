@@ -2,7 +2,7 @@
   ChangelogDetail.svelte (NET-272): one changelog row's details, below the table.
   - Device rows: what it did over the loaded window, counted per address, and its top
     destinations from its busiest matched address (never the address it joined at).
-  - Links keep the loaded window; the MAC page is the current overview.
+  - Links keep the loaded window and say so, with the address they search; the MAC page is the current overview.
   - The page calls `focus()` after opening it; Esc inside it, or Close, calls `onclose`.
 -->
 <script lang="ts">
@@ -131,9 +131,15 @@
 		{/each}
 
 		<ul class="links">
+			<!-- OLD CODE START — NET-348: the words named neither the address searched (the busiest of the row's) nor the window
 			{#if trafficIp}
 				<li><a class="link" href="/devices/{encodeURIComponent(trafficIp)}?{windowQuery(win)}">This device in this range</a></li>
 				<li><a class="link" href={logsHrefForIp(trafficIp, range, win)}>Its records in this range</a></li>
+			{/if}
+			OLD CODE END -->
+			{#if trafficIp}
+				<li><a class="link" href="/devices/{encodeURIComponent(trafficIp)}?{windowQuery(win)}">{trafficIp} in this range, {windowWords(win.from, win.to)}</a></li>
+				<li><a class="link" href={logsHrefForIp(trafficIp, range, win)}>Records for {trafficIp}, {windowWords(win.from, win.to)}</a></li>
 			{/if}
 			{#if row.mac}
 				<li><a class="link" href="/devices/mac/{encodeURIComponent(row.mac)}">Device overview (now, not this range)</a></li>

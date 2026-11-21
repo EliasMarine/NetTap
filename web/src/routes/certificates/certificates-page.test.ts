@@ -7,6 +7,9 @@ import type { CertificateOverview, CertSite } from '$lib/api/certificates';
 import { OVERVIEW, OVERVIEW_EMPTY } from '../../../e2e/visual/fixtures/certificates';
 import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+import { windowWords } from '$lib/utils/drilldown';
+/** Any range pill named by a carried window (`windowWords`): none should show here (NET-348). */
+const NO_WINDOW_PILL = /^(\d\d:\d\d(:\d\d)? to |\d{1,2} \w{3}, \d\d:\d\d to |at \d\d:\d\d:\d\d, )/;
 
 // NET-160: the page reads ?site=&server=&from=&to= from the URL
 const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
@@ -178,7 +181,8 @@ describe('Certificates page — drill-down filter', () => {
 			site: 'www.example.com',
 			server: '203.0.113.10',
 		});
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords('2026-10-20T08:00:00Z', '2026-10-21T08:00:00Z') })).toHaveAttribute('aria-pressed', 'true');
 		expect(await screen.findByText(/Showing only the site www.example.com served by 203.0.113.10/)).toBeInTheDocument();
 		expect(screen.getByRole('link', { name: 'Show all certificates' })).toHaveAttribute('href', '/certificates');
 		await vi.waitFor(() => expect(kpi('Certificates seen')).toHaveTextContent(/window 20 Oct, \d\d:\d\d to 21 Oct, \d\d:\d\d/));
@@ -191,7 +195,8 @@ describe('Certificates page — drill-down filter', () => {
 		render(CertificatesPage);
 		await vi.waitFor(() => expect(overviewCalls().length).toBe(1));
 		expect(Object.fromEntries(overviewCalls()[0].searchParams)).toMatchObject({ from: '2026-10-20T08:00:00.000Z', to: '2026-10-20T08:00:00.000Z' });
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords('2026-10-20T08:00:00.000Z', '2026-10-20T08:00:00.000Z') })).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	it('opens the one matching site, linking its name to the domain page', async () => {
@@ -247,7 +252,8 @@ describe('Certificates page — drill-down filter', () => {
 		await vi.waitFor(() => expect(overviewCalls().length).toBe(1));
 		const q = overviewCalls()[0].searchParams;
 		expect(Date.parse(q.get('to')!) - Date.parse(q.get('from')!)).toBe(168 * 3_600_000);
-		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
+		expect(screen.queryByRole('button', { name: NO_WINDOW_PILL })).not.toBeInTheDocument();
 	});
 
 	// NET-192 PR 4: the default is 7d, the fourth range, found by value

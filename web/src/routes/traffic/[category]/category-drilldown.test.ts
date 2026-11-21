@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { goto } from '$app/navigation';
 import CategoryPage from './+page.svelte';
+import { windowWords } from '$lib/utils/drilldown';
 
 // NET-249 slice 2 (T9, plan §1a): the category's bandwidth chart asks for the owner's buckets, a
 // pick narrows this page to the picked window (Custom) with the bytes picked, a Custom window
@@ -119,7 +120,8 @@ describe('Traffic category — a Custom window from the URL (NET-249 §1a)', () 
 		}
 		expect(asked('/api/traffic/bandwidth')).toHaveLength(0);
 		expect(chartCall().searchParams.get('interval')).toBe('1m');
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(F, T) })).toHaveAttribute('aria-pressed', 'true');
 		expect(kpi('Total bandwidth')).toHaveTextContent(/Window /);
 		expect(kpi('Total bandwidth')).not.toHaveTextContent(/vs previous/);
 		expect(kpi('Share of network')).toHaveTextContent(/Of all traffic in the window /);
@@ -134,7 +136,8 @@ describe('Traffic category — a Custom window from the URL (NET-249 §1a)', () 
 		expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/traffic/streaming');
 		await vi.waitFor(() => expect(asked('/api/traffic/bandwidth')).toHaveLength(1));
 		expect(chartCall().searchParams.get('interval')).toBe('5m');
-		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
+		expect(screen.queryByRole('button', { name: windowWords(F, T) })).not.toBeInTheDocument();
 	});
 
 	it('an invalid window falls back to the default range', async () => {

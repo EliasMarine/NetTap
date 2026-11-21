@@ -58,12 +58,13 @@ export interface StorageFoot {
 	detail: string;
 }
 
-/** "41% used" and "549 GB free · 90-day retention"; retention only when the daemon reports it. */
+/** "41% used" and "549 GB free · 90-day log and alert retention"; retention only when the daemon reports it. */
 export function storageFoot(status: Loaded<StorageStatus>): StorageFoot | null {
 	if (!status || status === 'failed' || !Number.isFinite(status.disk_usage_percent)) return null;
 	const percent = Math.min(100, Math.max(0, Math.round(status.disk_usage_percent)));
 	const parts = Number.isFinite(status.disk_free_bytes) ? [`${formatBytes(status.disk_free_bytes)} free`] : [];
 	const hot = (status.retention as { hot_days?: unknown } | null)?.hot_days;
-	if (typeof hot === 'number' && Number.isFinite(hot)) parts.push(`${hot}-day retention`);
+	// OLD CODE: if (typeof hot === 'number' && Number.isFinite(hot)) parts.push(`${hot}-day retention`); (NET-348: said what is kept that long)
+	if (typeof hot === 'number' && Number.isFinite(hot)) parts.push(`${hot}-day log and alert retention`);
 	return { percent, used: `${percent}% used`, detail: parts.join(' · ') };
 }

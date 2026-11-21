@@ -99,8 +99,10 @@ describe('Home — real zeros and failed counts', () => {
 		stubDaemon({ '/api/traffic/summary': summary });
 		await refreshPage();
 
-		expect(await screen.findByText("Couldn't refresh the alert count; showing the last figures loaded.")).toBeInTheDocument();
+		// OLD CODE: expect(await screen.findByText("Couldn't refresh the alert count; showing the last figures loaded.")).toBeInTheDocument(); (NET-348: the note says when)
+		expect(await screen.findByText(/^Couldn't refresh the alert count; showing figures from \d\d:\d\d\.$/)).toBeInTheDocument();
 		expect(cardValue('Alerts')?.startsWith('37')).toBe(true);
-		expect(screen.getByText("Couldn't refresh the severity summary; showing the last figures loaded.")).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText("Couldn't refresh the severity summary; showing the last figures loaded.")).toBeInTheDocument(); (NET-348)
+		expect(screen.getByText(/^Couldn't refresh the severity summary; showing figures from \d\d:\d\d\.$/)).toBeInTheDocument();
 	});
 });

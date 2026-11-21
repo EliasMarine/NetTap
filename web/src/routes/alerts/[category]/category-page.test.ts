@@ -5,6 +5,9 @@ import { goto } from '$app/navigation';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
+import { windowWords } from '$lib/utils/drilldown';
+/** Any range pill named by a carried window (`windowWords`): none should show here (NET-348). */
+const NO_WINDOW_PILL = /^(\d\d:\d\d(:\d\d)? to |\d{1,2} \w{3}, \d\d:\d\d to |at \d\d:\d\d:\d\d, )/;
 
 // OLD CODE START — NET-185: the page reads its window from the URL, so tests move it
 // vi.mock('$app/stores', () => ({
@@ -309,7 +312,8 @@ describe('Alert category page — the window in its URL', () => {
 		// OLD CODE END
 		// 12 hours: the 24h range's 5-minute slots (bucketFor)
 		expect(asked('/api/alerts/categories/scan/timeline')[0].searchParams.get('interval')).toBe('5m');
-		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true'); (NET-348: the pill is named by its window)
+		expect(screen.getByRole('button', { name: windowWords(from, to) })).toHaveAttribute('aria-pressed', 'true');
 		const bar = new URL((await screen.findByRole('link', { name: /ET SCAN Nmap/ })).getAttribute('href')!, 'http://localhost');
 		expect([bar.searchParams.get('from'), bar.searchParams.get('to'), bar.searchParams.get('range')]).toEqual([from, to, '7d']);
 	});
@@ -322,7 +326,8 @@ describe('Alert category page — the window in its URL', () => {
 		const [u] = asked('/api/alerts/categories/scan');
 		expect((Date.parse(u.searchParams.get('to')!) - Date.parse(u.searchParams.get('from')!)) / 3_600_000).toBe(168);
 		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
-		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)
+		expect(screen.queryByRole('button', { name: NO_WINDOW_PILL })).not.toBeInTheDocument();
 		screen.getByRole('button', { name: '1h' }).click();
 		expect(goto).toHaveBeenCalledWith('/alerts/scan?range=1h', { replaceState: true, keepFocus: true, noScroll: true });
 	});

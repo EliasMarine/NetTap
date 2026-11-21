@@ -4,6 +4,7 @@ import ChangelogDetail from './ChangelogDetail.svelte';
 import { joinChangelog, MISSING_TEXT, PER_ADDRESS_NOTE } from './changelog-rows';
 import type { ChangelogEvent } from '$lib/api/changelog';
 import type { Device, DeviceListResponse } from '$lib/api/devices';
+import { windowWords } from '$lib/utils/drilldown';
 
 const WIN = { from: '2026-11-13T11:00:00.000Z', to: '2026-11-13T12:00:00.000Z' };
 const event = (over: Partial<ChangelogEvent> = {}): ChangelogEvent => ({
@@ -49,7 +50,9 @@ describe('ChangelogDetail (NET-272)', () => {
 		render(ChangelogDetail, { row: rowOf(event(), list([])), win: WIN, range: '1h', onclose: () => {} });
 		expect(screen.getByText(MISSING_TEXT['no-figures'])).toBeInTheDocument();
 		expect(screen.getByText('No destinations: no traffic figures for this device in this range.')).toBeInTheDocument();
-		expect(screen.queryByRole('link', { name: 'This device in this range' })).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('link', { name: 'This device in this range' })).not.toBeInTheDocument(); (NET-348: the links name their address and window)
+		expect(screen.queryByRole('link', { name: / in this range, / })).not.toBeInTheDocument();
+		expect(screen.queryByRole('link', { name: /^Records for / })).not.toBeInTheDocument();
 		expect(screen.getByRole('link', { name: /Device overview/ })).toHaveAttribute('href', '/devices/mac/aa%3Abb%3Acc%3Add%3Aee%3A01');
 		expect(screen.queryByText(PER_ADDRESS_NOTE)).not.toBeInTheDocument();
 		expect(fetch).not.toHaveBeenCalled();
@@ -65,6 +68,25 @@ describe('ChangelogDetail (NET-272)', () => {
 		expect(screen.getByText(/The device at 192\.168\.1\.10 forwards other devices' traffic/)).toBeInTheDocument();
 		expect(screen.getByText('4.0 MB')).toBeInTheDocument();
 		expect(screen.getByText('Apple')).toBeInTheDocument();
+		expect(await screen.findByText('No destinations for connections it started in this range.')).toBeInTheDocument();
+	});
+
+	it("a two-address row's links name the address they search, its busiest, and the loaded window (NET-348)", async () => {
+		stubDetail(async () => ({ ok: true, body: { device: { top_destinations: [] } } }));
+		const row = rowOf(event(), list([
+			device({ ip: '192.168.1.10', total_bytes: 100 }),
+			device({ ip: '192.168.1.233', total_bytes: 9000 }),
+		]));
+		expect(row.trafficIps).toEqual(['192.168.1.233', '192.168.1.10']);
+		render(ChangelogDetail, { row, win: WIN, range: '1h', onclose: () => {} });
+		const words = windowWords(WIN.from, WIN.to);
+		expect(screen.getByRole('link', { name: `192.168.1.233 in this range, ${words}` })).toHaveAttribute(
+			'href',
+			`/devices/192.168.1.233?from=${encodeURIComponent(WIN.from)}&to=${encodeURIComponent(WIN.to)}`,
+		);
+		const records = screen.getByRole('link', { name: `Records for 192.168.1.233, ${words}` }).getAttribute('href')!;
+		expect(records).toContain('source.ip%3A%22192.168.1.233%22');
+		expect(screen.queryByRole('link', { name: /192\.168\.1\.10\b/ })).not.toBeInTheDocument();
 		expect(await screen.findByText('No destinations for connections it started in this range.')).toBeInTheDocument();
 	});
 

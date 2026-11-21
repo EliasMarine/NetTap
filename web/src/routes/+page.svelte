@@ -138,6 +138,12 @@
 		| 'trendAlerts' | 'health' | 'smart' | 'smartSummary' | 'devices' | 'capture' | 'captureStats';
 	// #96: a failed request keeps the last good figures and says so; it never shows 0 B or "no data"
 	let failed = $state<Partial<Record<Source, boolean>>>({});
+	/**
+	 * NET-348: when each source's figures on screen landed (ms), so a stale note says how old they are.
+	 * A range change clears every range-dependent figure, so whatever is kept is for the selected range;
+	 * links keep using the window inside each kept reply.
+	 */
+	let loadedAt = $state<Partial<Record<Source, number>>>({});
 
 	// The Alerts KPI and the gauge read the shared snapshot, so Home, Alerts and the sidebar agree (§4.1)
 	const snapshot = $derived($alertSnapshots[span.hours]);
@@ -163,6 +169,8 @@
 				if (guard.current(g)) {
 					write(value);
 					failed = { ...failed, [source]: false };
+					// current(g) holds only while no range change started a newer load, so this is the selected range's
+					loadedAt = { ...loadedAt, [source]: Date.now() };
 				}
 				return true;
 			},
@@ -235,10 +243,16 @@
 			settle(guard, g, 'trendAlerts', getAlertTimeline(trendQuery), (v) => (trendAlerts = v.buckets), () => (trendAlerts = null)),
 			settle(guard, g, 'health', getSystemHealth(), (v) => (systemHealth = v), () => (systemHealth = null)),
 			// OLD CODE: settle(guard, g, 'smart', getSmartAlerts({ ...win, limit: 10 }), (v) => (smartAlerts = v.alerts), () => (smartAlerts = [])), (slice 2b-1: the rows keep their window)
+			// OLD CODE START — NET-348: a failed refresh blanked the groups; they stay, with a stale note
+			// settle(guard, g, 'smart', getSmartAlerts({ ...win, limit: 10 }), (v) => {
+			// 	smartAlerts = v.alerts;
+			// 	smartWindow = { from: v.from, to: v.to, range: r };
+			// }, () => (smartAlerts = [])),
+			// OLD CODE END
 			settle(guard, g, 'smart', getSmartAlerts({ ...win, limit: 10 }), (v) => {
 				smartAlerts = v.alerts;
 				smartWindow = { from: v.from, to: v.to, range: r };
-			}, () => (smartAlerts = [])),
+			}),
 			settle(guard, g, 'smartSummary', getSmartAlertSummary(win), (v) => (smartAlertSummary = v), () => (smartAlertSummary = null)),
 			// OLD CODE START — the device cards needed every device's traffic; they moved to /devices
 			// getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: DEVICE_LIST_LIMIT }),
@@ -277,6 +291,10 @@
 		deviceCountReply = null;
 		// OLD CODE: prevAlertCount = null; (NET-228)
 		topDevices = [];
+		// NET-348: the alert groups are range-dependent too; kept, they would stand in for this range
+		smartAlerts = [];
+		smartWindow = null;
+		smartAlertSummary = null;
 		failed = {};
 		handle.run();
 	}
@@ -561,14 +579,14 @@
 	// OLD CODE END
 	const bandwidthSub = $derived(
 		failed.summary
-			? loadFailed('traffic totals', trafficSummary !== null)
+			? loadFailed('traffic totals', trafficSummary !== null, loadedAt.summary)
 			: trafficSummary
 				? upDownLocal(trafficSummary, formatBytes)
 				: 'Loading…',
 	);
 	const connectionsSub = $derived(
 		failed.summary
-			? loadFailed('connection totals', trafficSummary !== null)
+			? loadFailed('connection totals', trafficSummary !== null, loadedAt.summary)
 			: trafficSummary
 				? `Top protocol: ${trafficSummary.top_protocol}`
 				: 'Loading…',
@@ -587,7 +605,7 @@
 	// OLD CODE END
 	const alertsSub = $derived(
 		alertCountFailed
-			? loadFailed('the alert count', alertCount !== null)
+			? loadFailed('the alert count', alertCount !== null, snapshot?.at)
 			: !alertCount
 				? 'Loading…'
 				: alertCount.counts.total === 0
@@ -599,7 +617,7 @@
 	// OLD CODE: ? 'Devices seen on the network' in every mode (NET-225)
 	const devicesSub = $derived(
 		failed.deviceCount
-			? loadFailed('the device count', deviceCount !== null)
+			? loadFailed('the device count', deviceCount !== null, loadedAt.deviceCount)
 			: deviceCount !== null
 				? bridgeMode
 					? "In bridge mode devices share the router's IPv4 address"
@@ -827,8 +845,13 @@ OLD CODE END -->
 	<div><span class="chip is-ok">{newDeviceCount} new today</span></div>
 {/snippet}
 
+<!-- OLD CODE START — NET-348: the note never said how old the kept figures were
 {#snippet staleNote(what: string)}
 	<p class="notice is-warn stale" role="status"><Icon name="warn" /><span>{loadFailed(what, true)}</span></p>
+{/snippet}
+OLD CODE END -->
+{#snippet staleNote(what: string, at: number | undefined)}
+	<p class="notice is-warn stale" role="status"><Icon name="warn" /><span>{loadFailed(what, true, at)}</span></p>
 {/snippet}
 
 <div class="grid">
@@ -907,7 +930,7 @@ OLD CODE END -->
 				onpick={(i, j) => goto(momentHref(bandwidth, i, j, range))}
 			/>
 			<p class="card-sub pick-hint">Click a point or drag across the chart to see that moment.</p>
-			{#if failed.bandwidth}{@render staleNote('bandwidth over time')}{/if}
+			{#if failed.bandwidth}{@render staleNote('bandwidth over time', loadedAt.bandwidth)}{/if}
 		{:else if failed.bandwidth}
 			<CardState state="error" title={loadFailed('bandwidth over time')} message="Check that the daemon is running on the System page, then try again." onaction={retry} />
 		{:else if loading}
@@ -919,7 +942,7 @@ OLD CODE END -->
 
 	<Card title="Network protocols" sub="Connections by protocol · {windowText}" class="c-4">
 		{#if protocolTotal > 0 || services.length > 0}
-			{#if failed.protocols}{@render staleNote('network protocols')}{/if}
+			{#if failed.protocols}{@render staleNote('network protocols', loadedAt.protocols)}{/if}
 			<Donut
 				items={protocolItems}
 				centreLabel="connections"
@@ -948,7 +971,7 @@ OLD CODE END -->
 
 	<Card title="Traffic categories" sub="Bytes to internet services · {windowText} · local traffic isn't counted" class="c-4">
 		{#if categories.length > 0}
-			{#if failed.categories}{@render staleNote('traffic categories')}{/if}
+			{#if failed.categories}{@render staleNote('traffic categories', loadedAt.categories)}{/if}
 			<BarList items={categoryItems} />
 		{:else if failed.categories}
 			<CardState state="error" title={loadFailed('traffic categories')} message="Check that the daemon is running on the System page, then try again." onaction={retry} />
@@ -962,7 +985,7 @@ OLD CODE END -->
 	<Card title="Top devices" sub="By bytes · {windowText}" class="c-4">
 		{#snippet actions()}<a class="link" href="/devices">View all devices</a>{/snippet}
 		{#if deviceItems.length > 0}
-			{#if failed.devices}{@render staleNote('top devices')}{/if}
+			{#if failed.devices}{@render staleNote('top devices', loadedAt.devices)}{/if}
 			<DeviceList items={deviceItems} />
 		{:else if failed.devices}
 			<CardState state="error" title={loadFailed('top devices')} message="Check that the daemon is running on the System page, then try again." onaction={retry} />
@@ -978,7 +1001,7 @@ OLD CODE END -->
 
 	<Card title="Alert summary" sub="By severity · {windowText}{toReview}" class="c-4">
 		{#if alertCount}
-			{#if alertCountFailed}{@render staleNote('the severity summary')}{/if}
+			{#if alertCountFailed}{@render staleNote('the severity summary', snapshot?.at)}{/if}
 			<SeverityGauge buckets={severityBuckets(alertCount.counts)} total={alertCount.counts.total} ariaLabel={gaugeAria} />
 		{:else if alertCountFailed}
 			<CardState state="error" title="Couldn't load the severity summary: the request failed." message="Check that the daemon is running on the System page, then try again." onaction={retry} />
@@ -987,6 +1010,7 @@ OLD CODE END -->
 		{/if}
 		<div class="groups">
 			{#if smartAlerts.length > 0}
+				{#if failed.smart}{@render staleNote('the alert groups', loadedAt.smart)}{/if}
 				{#if smartAlertSummary && Object.keys(smartAlertSummary.categories ?? {}).length > 0}
 					<div class="chips">
 						{#each Object.entries(smartAlertSummary.categories ?? {}) as [key, cat] (key)}

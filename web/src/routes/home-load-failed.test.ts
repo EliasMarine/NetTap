@@ -71,7 +71,8 @@ describe('Home — failed traffic requests (#96)', () => {
 		// Home's own Refresh button moved to the top bar, which calls the registered loader
 		await refreshPage();
 
-		expect(await screen.findByText("Couldn't refresh traffic categories; showing the last figures loaded.")).toBeInTheDocument();
+		// OLD CODE: expect(await screen.findByText("Couldn't refresh traffic categories; showing the last figures loaded.")).toBeInTheDocument(); (NET-348: the note says when)
+		expect(await screen.findByText(/^Couldn't refresh traffic categories; showing figures from \d\d:\d\d\.$/)).toBeInTheDocument();
 		expect(screen.getByText('Streaming')).toBeInTheDocument();
 	});
 });

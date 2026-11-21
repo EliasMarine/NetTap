@@ -32,9 +32,24 @@
 	const uid = $props.id();
 	let { options, value = $bindable(), onchange, ariaLabel, mode = 'toggle', idPrefix = uid, disabled = false }: Props = $props();
 
+	/** The pill track, in every mode (named for tabs, which came first) */
 	let tablist = $state<HTMLElement>();
 	// Roving tabindex: the selected tab, or the first when none is selected
 	const focusIndex = $derived(Math.max(0, options.findIndex((o) => o.value === value)));
+
+	// NET-348: on a phone the track scrolls sideways with no scrollbar (a11y.css 5), so a selected pill past
+	// its edge, like a carried window's, was out of sight. Scroll the track only: no focus move, no page scroll.
+	// Only on mount and a new selection, so a track someone scrolled by hand isn't pulled back on a re-render.
+	$effect(() => {
+		void value;
+		const track = tablist;
+		const pill = track?.querySelector<HTMLElement>('[aria-pressed="true"], [aria-selected="true"], [aria-current="page"]');
+		if (!track || !pill) return;
+		const t = track.getBoundingClientRect();
+		const p = pill.getBoundingClientRect();
+		if (p.right > t.right) track.scrollLeft += p.right - t.right;
+		else if (p.left < t.left) track.scrollLeft -= t.left - p.left;
+	});
 
 	function select(next: T) {
 		if (next === value) return;
@@ -75,13 +90,13 @@
 		{/each}
 	</div>
 {:else if mode === 'nav'}
-	<nav class="pills" aria-label={ariaLabel}>
+	<nav class="pills" aria-label={ariaLabel} bind:this={tablist}>
 		{#each options as option (option.value)}
 			<a class="pill" href={option.href} aria-current={option.value === value ? 'page' : undefined}>{option.label}</a>
 		{/each}
 	</nav>
 {:else}
-	<div class="pills" role="group" aria-label={ariaLabel}>
+	<div class="pills" role="group" aria-label={ariaLabel} bind:this={tablist}>
 		{#each options as option (option.value)}
 			<button class="pill" type="button" aria-pressed={option.value === value} {disabled} onclick={() => select(option.value)}
 				>{option.label}</button
