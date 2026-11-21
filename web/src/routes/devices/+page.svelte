@@ -38,6 +38,9 @@
 	import { ipv6ListNotes } from '$lib/utils/ipv6-coverage';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
+	// OLD CODE: import { getWatchedDevices, type WatchedDevicesResponse } from '$api/devices-watched'; (review L1: the list reloads on its own)
+	import { WatchedList } from './watched-list.svelte';
+	import WatchedDevicesCard from './WatchedDevicesCard.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
@@ -151,6 +154,9 @@
 	let registryDevices = $state<RegistryDevice[]>([]);
 	// NET-296: By type said a failed registry; now the banner's own notice does
 	let registryFailed = $state(false);
+	// NET-331: the Watched devices card's list, loaded with the rest; a failed refresh keeps the last one
+	// OLD CODE: let watched = $state<WatchedDevicesResponse | null>(null); let watchedFailed = $state(false); (review L1/M4)
+	const watched = new WatchedList();
 	const isMirrorMode = $derived(captureMode?.mode === 'mirror');
 	// NET-225: post-NAT, every device's IPv4 traffic carries the router's address
 	const isBridgeMode = $derived(captureMode?.mode === 'bridge');
@@ -344,10 +350,12 @@
 			loadedWindow = '';
 		}
 		// OLD CODE: const [[listRes, newRes], { mode: modeRes, registry: registryRes }] = await Promise.all([ … loadRegistry(), ]); (NET-182: and the pipeline's health)
-		const [[listRes, newRes], { mode: modeRes, registry: registryRes }, checked] = await Promise.all([
+		// OLD CODE: const [[listRes, newRes], { mode: modeRes, registry: registryRes }, checked] = await Promise.all([ (NET-331: + the watched list)
+		const [[listRes, newRes, watchedRes], { mode: modeRes, registry: registryRes }, checked] = await Promise.all([
 			Promise.allSettled([
 				getDevices({ ...win, sort: 'bytes', order: 'desc', limit: LIST_LIMIT }).then(checkedReading),
 				getNewDeviceCount(new Date(Date.now() - DAY).toISOString()),
+				watched.load(),
 			]),
 			loadRegistry(),
 			readHealth(),
@@ -357,6 +365,7 @@
 
 		if (newRes.status === 'fulfilled') newCount = newRes.value.count;
 		newFailed = newRes.status === 'rejected';
+		// OLD CODE: if (watchedRes.status === 'fulfilled') watched = watchedRes.value; watchedFailed = …; (review L1: WatchedList keeps the newest read)
 		if (listRes.status === 'fulfilled') {
 			const { devices, total, online_total, online_since, as_of, from, to } = listRes.value;
 			loaded = { devices, total, online_total, online_since, as_of, from, to, words: shownWords };
@@ -372,7 +381,8 @@
 		registryFailed = registryRes?.status === 'rejected';
 		loading = false;
 
-		return outcome([listRes, newRes, modeRes, ...(registryRes ? [registryRes] : [])]);
+		// OLD CODE: return outcome([listRes, newRes, modeRes, ...(registryRes ? [registryRes] : [])]); (NET-331)
+		return outcome([listRes, newRes, watchedRes, modeRes, ...(registryRes ? [registryRes] : [])]);
 	}
 
 	// OLD CODE: /** A range pill: … the link's exact window (Custom) goes; the URL's tab stays. */ (NET-296: no tabs)
@@ -1013,6 +1023,9 @@ OLD CODE END -->
 	{/if}
 </div>
 OLD CODE END -->
+
+<!-- OLD CODE: <WatchedDevicesCard data={watched} failed={watchedFailed} bridge={isBridgeMode} onreload={() => refresh.run()} /> (review L1: the card reloads only its list) -->
+<WatchedDevicesCard data={watched.data} error={watched.error} bridge={isBridgeMode} onreload={watched.reload} />
 
 <style>
 	/* OLD CODE START — NET-296: By type's group styles (inner comments written (* … *))

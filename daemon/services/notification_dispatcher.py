@@ -36,6 +36,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from services import watch_events
 from services.capture_config import write_file_atomic
 from services.notification_hub import (
     SEVERITY_LEVELS,
@@ -79,6 +80,8 @@ TITLE_CHARS = 256
 DATA_CAP_LINE_CHARS = 140
 # data cap warnings a channel queue keeps; past it the oldest held one goes (plan §4.3)
 MAX_DATA_CAP = 12
+# F5 (NET-331): a sent message's unshown items of these wait for the next one, not "and N more"
+CARRY_OVER = {"data_cap", watch_events.EVENT}
 _CAP_SEVERITY = {"80": 3, "100": 2, "projected": 3}
 _CAP_TITLE = {
     "80": "Data cap: 80% used",
@@ -380,6 +383,9 @@ def event_item(entry: dict) -> dict | None:
     # OLD CODE: if entry.get("type") != "new_device": (NET-339: data cap warnings too)
     if entry.get("type") == "data_cap":
         return _data_cap_item(entry)
+    # F5 (NET-331): a watched device went offline or came back
+    if entry.get("type") in (watch_events.OFFLINE, watch_events.ONLINE):
+        return watch_events.watch_item(entry)
     if entry.get("type") != "new_device":
         return None
     data = entry.get("data") or {}
@@ -404,10 +410,15 @@ def event_item(entry: dict) -> dict | None:
 
 
 def _trim(queue: list[dict]) -> tuple[list[dict], int]:
-    """The queue within MAX_EVENTS, oldest out first, and how many went. Never a data cap
-    warning: cap_queue bounds those, and dropping one would lose it for good."""
+    """The queue within MAX_EVENTS, oldest out first, and how many went. Never a CARRY_OVER
+    item, since dropping one would lose it for good. cap_queue bounds data cap warnings, and
+    watch items are one per watched MAC (at most 50)."""
     over = max(0, len(queue) - MAX_EVENTS)
-    gone = set([n for n, e in enumerate(queue) if e.get("event") != "data_cap"][:over])
+    # OLD CODE: gone = set([n for n, e in enumerate(queue) if e.get("event") != "data_cap"][:over])
+    # (F5 security L1: a new-device flood dropped an "Offline" the catch-up guard was holding)
+    gone = set(
+        [n for n, e in enumerate(queue) if e.get("event") not in CARRY_OVER][:over]
+    )
     return [e for n, e in enumerate(queue) if n not in gone], len(gone)
 
 
@@ -545,13 +556,15 @@ def _after_send(
     events: list[dict], due: list[dict], rendered: list[dict]
 ) -> list[dict]:
     """The event queue after a send that worked: what it didn't carry stays (held by quiet hours
-    or kept by cap_queue), and so do the due data cap warnings it couldn't show. Other due events
-    it didn't show were counted in its "and N more" (NET-339's rule)."""
+    or kept by cap_queue), and so do the due CARRY_OVER items it couldn't show (data cap warnings,
+    and F5's one item per watched device). Other due events it didn't show were counted in its
+    "and N more" (NET-339's rule)."""
     shown = {i.get("sig") for i in rendered}
+    # OLD CODE: if e.get("event") != "data_cap" or e.get("sig") in shown (F5: watch items too)
     sent = {
         e.get("sig")
         for e in due
-        if e.get("event") != "data_cap" or e.get("sig") in shown
+        if e.get("event") not in CARRY_OVER or e.get("sig") in shown
     }
     return [e for e in events if e.get("sig") not in sent]
 
@@ -653,11 +666,21 @@ class AlertDispatcher:
             return False
         return True
 
-    async def _take_events(self, queues: dict, now: datetime) -> tuple[dict, int]:
-        """The channels' event queues with this poll's journal page admitted, and the seq read up to."""
+    # OLD CODE: async def _take_events(self, queues: dict, now: datetime) -> tuple[dict, int]:
+    # (F5: + whether the read reached the journal's end)
+    async def _take_events(self, queues: dict, now: datetime) -> tuple[dict, int, bool]:
+        """The channels' event queues with this poll's journal page admitted, the seq read up to,
+        and whether the read reached the journal's end (F5: only then do watch items go)."""
         seq = self._events["journal_seq"]
         if self._journal is None:
-            return queues, seq
+            return queues, seq, True
+        # F5 (round 5 #7, round 6 #3): an unreadable journal is not a reset. Its load is tried
+        # again here; until it works, neither the cursor nor the replay floor moves
+        if not self._journal.available and not await asyncio.to_thread(
+            self._journal.reload
+        ):
+            logger.warning("Notification events: the journal can't be read, will retry")
+            return queues, seq, False
         if self._journal.last_seq < seq:
             # the journal restarted its numbering (deleted or unreadable): `seq > N` would skip
             # the next N events, so read it from the start, a day back, as after a lost state
@@ -674,7 +697,8 @@ class AlertDispatcher:
             logger.warning(
                 "Notification events: the journal read failed, will retry (%s)", exc
             )
-            return queues, seq
+            # OLD CODE: return queues, seq (F5)
+            return queues, seq, False
         for entry in entries:
             item = event_item(entry)
             recorded = _when(entry.get("recorded_at"))
@@ -682,6 +706,9 @@ class AlertDispatcher:
                 self._replay_floor and recorded and recorded < self._replay_floor
             ):
                 continue
+            if item.get("watch_mac"):
+                # F5: one queued item per device, the newest, taken off every channel first
+                queues = watch_events.without_device(queues, item["watch_mac"])
             for cid in self._hub.channels_for(item["event"], item["severity"]):
                 old = queues.get(cid, _NO_EVENTS)
                 # OLD CODE START — NET-339: the oldest went first, a data cap warning too
@@ -700,7 +727,9 @@ class AlertDispatcher:
                     **queues,
                     cid: {"events": queue, "overflow": old.get("overflow", 0) + over},
                 }
-        return queues, entries[-1]["seq"] if entries else seq
+        # OLD CODE: return queues, entries[-1]["seq"] if entries else seq
+        # (F5: a full page may have more behind it, so it isn't the end; round 5 #8)
+        return queues, entries[-1]["seq"] if entries else seq, len(entries) < INTAKE
 
     # --- one poll ----------------------------------------------------------
 
@@ -776,7 +805,8 @@ class AlertDispatcher:
             now, any(st.get("pending") for st in old.values())
         )
         # NET-319: this poll's journal events join their channels' queues
-        queues, seq = await self._take_events(
+        # OLD CODE: queues, seq = await self._take_events( (F5: + caught_up)
+        queues, seq, caught_up = await self._take_events(
             {
                 cid: st
                 for cid, st in self._events.get("channels", {}).items()
@@ -808,6 +838,7 @@ class AlertDispatcher:
                     items or [],
                     now,
                     queues.get(cid, _NO_EVENTS),
+                    caught_up,
                 )
                 for cid in targets
             )
@@ -846,9 +877,11 @@ class AlertDispatcher:
         items: list[dict],
         now: datetime,
         ev: dict = _NO_EVENTS,
+        caught_up: bool = True,
     ) -> tuple[dict, dict]:
         """The channel's next (alert state, event queue) after sending it what is new for it,
-        or queueing it. Events ride in the same message as alerts and are never given up."""
+        or queueing it. Events ride in the same message as alerts and are never given up.
+        F5: watch items wait unless this poll's journal read reached its end (`caught_up`)."""
         # a rule turned off since the event was queued takes it out, as for alerts
         events = [
             e
@@ -864,6 +897,16 @@ class AlertDispatcher:
         # flagged, for the release. The window is read now, after the slow reads (Codex r1 #6)
         hold = self._hold_now()
         due_events = [e for e in offered if _due(e, hold)]
+        # F5 catch-up guard (round 4 #7, round 5 #8): a watch item goes only after a read that
+        # reached the journal's end, so an "Offline" never goes ahead of its journalled "Back online"
+        deferred = (
+            set()
+            if caught_up
+            else {
+                e.get("sig") for e in due_events if e.get("event") == watch_events.EVENT
+            }
+        )
+        due_events = [e for e in due_events if e.get("sig") not in deferred]
         # every queued event, also one cap_queue keeps for another cap: it waited the night too
         held_sigs = {e.get("sig") for e in events if not _due(e, hold)}
         # OLD CODE: events = [{**e, "held": True} if e.get("sig") in held_sigs else e for e in events]
@@ -1033,8 +1076,15 @@ class AlertDispatcher:
                 # OLD CODE: if candidates or events or slow (NET-339: offered, not held)
                 # OLD CODE: if candidates or offered or slow (NET-330: a held-only poll cleared a
                 # refusal throttle, so a critical at 22:01 retried the refused password; Codex r3 #4)
+                # OLD CODE: if candidates or due_events or held_alerts or held_sigs or slow
+                # (F5: a poll with only deferred watch items keeps a refusal throttle too)
                 "retry_at": st.get("retry_at")
-                if candidates or due_events or held_alerts or held_sigs or slow
+                if candidates
+                or due_events
+                or held_alerts
+                or held_sigs
+                or deferred
+                or slow
                 else None,
                 **today,
             }, waiting

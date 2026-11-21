@@ -1074,7 +1074,8 @@ class NotificationHub:
             if rule_id not in self._rules:
                 return False
             # OLD CODE: if rule_id == nc.QUICK_NEWDEVICE: (NET-339: the data cap rule too)
-            if rule_id in (nc.QUICK_NEWDEVICE, nc.QUICK_DATACAP):
+            # OLD CODE: if rule_id in (nc.QUICK_NEWDEVICE, nc.QUICK_DATACAP): (F5: every fixed rule)
+            if rule_id in nc._EVENT_RULES:
                 # NET-319: absent means "never chose" and comes back on; deleting is turning off
                 rule = {**self._rules[rule_id], "enabled": False}
                 self._commit(self._channels, {**self._rules, rule_id: rule})

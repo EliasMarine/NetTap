@@ -205,3 +205,69 @@ def test_an_opt_out_before_any_channel_survives_a_restart_and_the_first_channel(
     assert restarted.channels_for("new_device", 4) == []
     assert restarted.channels_for("data_cap", 4) == []
     assert restarted.channels_for("alert", 2) == [nc.QUICK_WEBHOOK]
+
+
+# --- F5 (NET-331): the same fixed-rule switch for watched devices ------------------------
+
+
+def test_watched_devices_are_on_by_default_at_low_and_routed(tmp_path, env_file):
+    hub = _hub(tmp_path, env_file)
+    assert _quick(hub)["watched_device"] is True
+    assert hub.channels_for("watched_device", 4) == [nc.QUICK_WEBHOOK]
+
+
+def test_an_existing_setup_gets_the_watched_rule_on_when_it_has_a_channel():
+    channels = {nc.QUICK_WEBHOOK: {"id": nc.QUICK_WEBHOOK, "type": "webhook"}}
+    rules = nc.with_default_event_rules(channels, {}, "2026-11-20T00:00:00+00:00")
+    assert rules[nc.QUICK_WATCHED] == {
+        "id": nc.QUICK_WATCHED,
+        "event_type": "watched_device",
+        "channels": [nc.QUICK_WEBHOOK],
+        "min_severity": 4,
+        "enabled": True,
+        "created_at": "2026-11-20T00:00:00+00:00",
+    }
+
+
+def test_a_quick_save_keeps_and_sets_the_watched_switch(tmp_path, env_file):
+    hub = _hub(tmp_path, env_file)
+    _quick(hub)
+    assert _quick(hub, watched_device=False)["watched_device"] is False
+    assert hub.channels_for("watched_device", 2) == []
+    # the other fixed rules are untouched
+    assert hub.channels_for("new_device", 4) == [nc.QUICK_WEBHOOK]
+    assert hub.channels_for("data_cap", 4) == [nc.QUICK_WEBHOOK]
+    # left out keeps the off, and so does a restart
+    assert _quick(hub)["watched_device"] is False
+    again = _hub(tmp_path, env_file)
+    assert again.get_quick_settings()["watched_device"] is False
+    assert _quick(again, watched_device=True)["watched_device"] is True
+    assert again.channels_for("watched_device", 4) == [nc.QUICK_WEBHOOK]
+    with pytest.raises(ValueError, match="watched_device"):
+        _quick(again, watched_device="yes")
+
+
+def test_deleting_the_watched_rule_stays_off_until_the_switch_turns_it_on(
+    tmp_path, env_file
+):
+    hub = _hub(tmp_path, env_file)
+    _quick(hub)
+    assert hub.delete_rule(nc.QUICK_WATCHED) is True
+    assert hub.channels_for("watched_device", 2) == []
+    again = _hub(tmp_path, env_file)  # the load default must not turn it back on
+    assert again.get_quick_settings()["watched_device"] is False
+    assert again.channels_for("watched_device", 2) == []
+    assert _quick(again, watched_device=True)["watched_device"] is True
+    assert again.channels_for("watched_device", 2) == [nc.QUICK_WEBHOOK]
+
+
+def test_a_custom_channel_only_setup_routes_watched_devices_by_its_own_rule(
+    tmp_path, env_file
+):
+    hub = _hub(tmp_path, env_file)
+    cid = hub.configure("webhook", {"url": "https://hooks.example.net/y"})["id"]
+    body = {"event_type": "watched_device", "min_severity": 4, "channels": [cid]}
+    assert nc.validate_rule(body, {cid}) is None
+    hub.add_rule("watched_device", [cid], 4)
+    assert nc.QUICK_WATCHED not in {r["id"] for r in hub.get_rules()}
+    assert hub.channels_for("watched_device", 4) == [cid]

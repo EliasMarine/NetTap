@@ -10,6 +10,7 @@ One compact UTF-8 format is written, budgeted and read back, so a write that fit
 reopens. A file that can't be trusted latches the store off until the daemon restarts.
 """
 
+import contextlib
 import copy
 import json
 import logging
@@ -17,6 +18,7 @@ import os
 import re
 import threading
 import unicodedata
+from collections.abc import Iterator
 from typing import Any
 
 from services.capture_config import write_file_atomic
@@ -256,6 +258,19 @@ class DeviceDetailsStore:
     def row_fields(self, mac: Any) -> dict[str, Any]:
         """{group, owner, watch_after_min} for list rows; notes stay on the device pages."""
         return {k: v for k, v in self.get(mac).items() if k != "notes"}
+
+    @contextlib.contextmanager
+    def watch_is(self, mac: Any, after_min: int) -> Iterator[bool]:
+        """Hold the store's lock and yield whether `mac` is still watched at `after_min`.
+
+        NET-331: the watched-devices job saves a transition inside this, so a watch edit lands
+        either before (the transition is dropped) or after it, never in between. The body must
+        not call the store: its lock isn't re-entrant. A damaged store yields False.
+        """
+        mac = strict_mac(mac)
+        with self._lock:
+            entry = self._devices.get(mac, {})
+            yield self._problem is None and entry.get("watch_after_min") == after_min
 
     # ------------------------------------------------------------------
     # Backup

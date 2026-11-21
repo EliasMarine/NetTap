@@ -173,7 +173,8 @@ async def handle_put_config(request: web.Request) -> web.Response:
 
     Body: {min_severity: 1-4, email: {enabled, recipients}, webhook: {enabled, url}}. A blank
     url keeps the saved one; off keeps a channel's settings for when it comes back on.
-    Optional: new_device, data_cap and quiet ({enabled, start, end, critical_through}, NET-330);
+    Optional: new_device, data_cap, watched_device (F5) and quiet ({enabled, start, end,
+    critical_through}, NET-330);
     each left out keeps what is saved.
     """
     hub: NotificationHub = request.app["notification_hub"]

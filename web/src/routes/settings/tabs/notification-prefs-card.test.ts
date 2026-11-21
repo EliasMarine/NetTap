@@ -324,3 +324,47 @@ describe('Notification preferences: quiet hours (F8)', () => {
 		expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
 	});
 });
+
+// NET-331: "Tell me when a watched device goes offline or comes back" is on by default and saved as `watched_device`
+const watchedSwitch = () => screen.getByRole('switch', { name: 'Tell me when a watched device goes offline or comes back' });
+
+describe('Notification preferences: watched devices (NET-331)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('loads the saved setting', async () => {
+		stubConfig({ ...CONFIG, watched_device: false });
+		renderCard();
+		await loaded();
+
+		expect(watchedSwitch()).not.toBeChecked();
+		expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+	});
+
+	it('reads a config that never set it as on', async () => {
+		stubConfig(CONFIG);
+		renderCard();
+		await loaded();
+
+		expect(watchedSwitch()).toBeChecked();
+	});
+
+	it('marks the form unsaved when switched, and saves it in the same PUT as the others', async () => {
+		const fn = stubConfig({ ...CONFIG, new_device: true, data_cap: true, watched_device: true });
+		renderCard();
+		await loaded();
+
+		await fireEvent.click(watchedSwitch());
+		expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+
+		await screen.findByText('Notification settings saved.');
+		const puts = fn.mock.calls.filter(([, init]) => init?.method === 'PUT');
+		expect(puts).toHaveLength(1);
+		expect(JSON.parse(String(puts[0][1]?.body))).toMatchObject({ new_device: true, data_cap: true, watched_device: false });
+		expect(watchedSwitch()).not.toBeChecked();
+		expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+	});
+});

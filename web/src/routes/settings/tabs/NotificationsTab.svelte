@@ -189,6 +189,7 @@
 	const eventTypes = [
 		{ value: 'new_device', label: 'New device' },
 		{ value: 'data_cap', label: 'Data cap' },
+		{ value: 'watched_device', label: 'Watched device' },
 		{ value: 'alert', label: 'Alert' },
 		{ value: 'anomaly', label: 'Anomaly' },
 		{ value: 'storage_warning', label: 'Storage warning' },
@@ -204,12 +205,15 @@
 	// OLD CODE START — F6 (NET-339): data cap warnings come from the event journal too
 	// const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert' || e.value === 'new_device');
 	// OLD CODE END
-	const ruleEventTypes = eventTypes.filter((e) => ['alert', 'new_device', 'data_cap'].includes(e.value));
+	// OLD CODE: const ruleEventTypes = eventTypes.filter((e) => ['alert', 'new_device', 'data_cap'].includes(e.value)); (NET-331: watched devices too)
+	const ruleEventTypes = eventTypes.filter((e) => ['alert', 'new_device', 'data_cap', 'watched_device'].includes(e.value));
 	// The daemon sends new-device events at medium (3) and a rule fires only at or below its minimum, so a
 	// new-device rule takes 4 (All), as the daemon's own quick rule does; the form doesn't offer the choice
 	const NEW_DEVICE_MIN_SEVERITY = 4;
 	/** F6: data cap warnings are medium or high, so their rule takes 4 (All) the same way; no severity field for either */
-	const fixedSeverity = (type: string) => type === 'new_device' || type === 'data_cap';
+	// OLD CODE: const fixedSeverity = (type: string) => type === 'new_device' || type === 'data_cap'; (NET-331)
+	/** NET-331: "Offline" is high (2) and "Back online" low (4), so a watched-device rule takes 4 (All) too */
+	const fixedSeverity = (type: string) => type === 'new_device' || type === 'data_cap' || type === 'watched_device';
 
 	// OLD CODE START — the page refresh contract (PLAN §5.5): every load goes through refresh.run()
 	// // Load data on mount

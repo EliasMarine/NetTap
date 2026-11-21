@@ -39,6 +39,8 @@
 	let newDevice = $state(true);
 	// F6 (NET-339): data cap warnings too, on unless turned off
 	let dataCap = $state(true);
+	// NET-331: watched devices going offline and coming back, on unless turned off
+	let watchedDevice = $state(true);
 	// F8 (NET-330): quiet hours. The daemon's default is off, 22:00 to 07:00, critical alerts through.
 	const QUIET_DEFAULT = { enabled: false, start: '22:00', end: '07:00', critical_through: true };
 	let quietEnabled = $state(QUIET_DEFAULT.enabled);
@@ -64,9 +66,10 @@
 	// OLD CODE: JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl]); (NET-319: and new devices)
 	// OLD CODE: JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice]); (F6: and data cap warnings)
 	// OLD CODE: JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice, dataCap]); (F8: and quiet hours)
+	// OLD CODE: …newDevice, dataCap, quietEnabled, quietStart, quietEnd, quietCritical]); (NET-331: and watched devices)
 	const notifForm = () =>
 		JSON.stringify([
-			severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice, dataCap,
+			severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl, newDevice, dataCap, watchedDevice,
 			quietEnabled, quietStart, quietEnd, quietCritical,
 		]);
 	// the blank form until the load lands, so nothing reads as unsaved while it loads
@@ -130,6 +133,7 @@
 		webhook?: { enabled?: boolean; has_url?: boolean; url_hint?: string };
 		new_device?: boolean;
 		data_cap?: boolean;
+		watched_device?: boolean;
 		quiet?: { enabled?: boolean; start?: string; end?: string; critical_through?: boolean };
 		tz?: string;
 		tz_set?: boolean;
@@ -137,6 +141,7 @@
 		severityThreshold = SEVERITY_VALUES[(data.min_severity ?? 2) - 1] ?? 'high';
 		newDevice = data.new_device ?? true;
 		dataCap = data.data_cap ?? true;
+		watchedDevice = data.watched_device ?? true;
 		// F8: a daemon from before quiet hours sends neither field, which reads as off with the defaults
 		quietEnabled = data.quiet?.enabled ?? QUIET_DEFAULT.enabled;
 		quietStart = data.quiet?.start || QUIET_DEFAULT.start;
@@ -228,6 +233,7 @@
 					webhook: { enabled: webhookEnabled, url: webhookUrl.trim() },
 					new_device: newDevice,
 					data_cap: dataCap,
+					watched_device: watchedDevice,
 					quiet: { enabled: quietEnabled, start: quietStart, end: quietEnd, critical_through: quietCritical },
 				}),
 			});
@@ -372,6 +378,17 @@
 			</div>
 		</div>
 
+		<!-- NET-331: watched devices going offline and coming back reach the same webhook and email -->
+		<div class="switch-row">
+			<input type="checkbox" role="switch" class="switch" id="watched-device-toggle" bind:checked={watchedDevice} aria-describedby="watched-device-toggle-help" />
+			<div>
+				<label class="label" for="watched-device-toggle">Tell me when a watched device goes offline or comes back</label>
+				<p class="field-help" id="watched-device-toggle-help">
+					A message when a device you watch goes quiet for longer than its time, and when it is heard again, through the webhook and email below, whatever the severity threshold. Choose Watch on a device's page.
+				</p>
+			</div>
+		</div>
+
 		<!-- F8 (NET-330): quiet hours hold every channel's messages overnight, then send one -->
 		<div class="switch-row">
 			<input
@@ -385,7 +402,8 @@
 			/>
 			<div>
 				<label class="label" for="quiet-toggle">Hold notifications overnight</label>
-				<p class="field-help" id="quiet-toggle-help">Alerts, new devices and data cap warnings wait, then arrive as one message when quiet hours end.</p>
+				<!-- OLD CODE: <p class="field-help" id="quiet-toggle-help">Alerts, new devices and data cap warnings wait, then arrive as one message when quiet hours end.</p> (NET-331) -->
+				<p class="field-help" id="quiet-toggle-help">Alerts, new devices, data cap warnings and watched devices wait, then arrive as one message when quiet hours end.</p>
 			</div>
 		</div>
 

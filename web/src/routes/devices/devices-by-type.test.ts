@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import Page from './+page.svelte';
 import { BRIDGE_NO_DEVICES } from '$api/capture';
+import { WATCH_BRIDGE_NOTE } from '$api/devices-watched';
 // OLD CODE: import { expectNoNestedInteractive } from '../../tests/nested-interactive'; (NET-296: only the By type list test used it)
 
 // By type: Home's device cards, moved here (PLAN.md §3, §5.6). The first describe is
@@ -386,7 +387,10 @@ describe('Devices — mirror mode and the registry', () => {
 	it('shows a loading state while the requests are pending', async () => {
 		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
 		render(Page);
-		expect(screen.getByRole('status')).toHaveTextContent('Loading devices');
+		// OLD CODE: expect(screen.getByRole('status')).toHaveTextContent('Loading devices'); (NET-331: the Watched devices card loads too)
+		const statuses = screen.getAllByRole('status').map((s) => s.textContent);
+		expect(statuses).toContainEqual(expect.stringContaining('Loading devices'));
+		expect(statuses).toContainEqual(expect.stringContaining('Loading watched devices'));
 	});
 });
 // OLD CODE START — NET-296: By type's list (one table per type, sorting, figures, photos) is gone
@@ -693,7 +697,10 @@ describe('Devices — inline bridge mode', () => {
 		expect(await screen.findByText('No devices to show in inline bridge mode')).toBeInTheDocument();
 		expect(screen.queryByText('No devices seen yet.')).not.toBeInTheDocument();
 		// the page-wide note and the empty state both give the reason
-		expect(screen.getByRole('note')).toHaveTextContent(BRIDGE_NO_DEVICES);
+		// OLD CODE: expect(screen.getByRole('note')).toHaveTextContent(BRIDGE_NO_DEVICES); (NET-331: the Watched devices card's place says why it is hidden)
+		const [pageNote, watchNote] = screen.getAllByRole('note');
+		expect(pageNote).toHaveTextContent(BRIDGE_NO_DEVICES);
+		expect(watchNote).toHaveTextContent(WATCH_BRIDGE_NOTE);
 		expect(screen.getAllByText(BRIDGE_NO_DEVICES)).toHaveLength(2);
 
 		// OLD CODE START — NET-296: By type's bridge-mode message

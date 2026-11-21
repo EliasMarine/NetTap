@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import * as devices from '$api/devices';
 import * as registry from '$api/devices-registry';
+import * as watched from '$api/devices-watched';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 
@@ -46,6 +47,11 @@ vi.mock('$api/devices-registry', async (original) => ({
 	...(await original<typeof import('$api/devices-registry')>()),
 	setDeviceName: vi.fn(),
 	clearDeviceName: vi.fn(),
+}));
+// NET-331: the watch saves through the same page callback
+vi.mock('$api/devices-watched', async (original) => ({
+	...(await original<typeof import('$api/devices-watched')>()),
+	setWatch: vi.fn(),
 }));
 
 const MAC = 'd0:21:f9:5e:35:32';
@@ -267,5 +273,120 @@ describe('IP device page — Rename and Change picture (NET-201)', () => {
 		await refreshing;
 		expect(h1()).toHaveTextContent('Study');
 		expect(hostname()).toHaveTextContent('desk');
+	});
+});
+
+// NET-331: Watch on the IP page. The observed MAC can be an 8-octet DHCP chaddr, which the details
+// route refuses, so every save goes to F2's registry_mac; the reply's watch (null included) is laid
+// over the device through the same guard as a name, so reopening the panel shows what was saved.
+describe('IP device page — Watch (NET-331)', () => {
+	const LONG_MAC = 'd0:21:f9:5e:35:32:00:01';
+	const REGISTRY_MAC = 'D0:21:F9:5E:35:32';
+	const savedWatch = (watch_after_min: number | null) =>
+		({ mac: REGISTRY_MAC, custom_name: null, icon: null, picture: null, display_name: 'laptop', discovered_name: 'laptop', watch_after_min }) as never;
+	const watchBox = () => screen.getByLabelText('Tell me when it goes quiet for') as HTMLSelectElement;
+	const chosen = () => watchBox().selectedOptions[0].textContent;
+
+	async function pick(label: string) {
+		await fireEvent.click(await screen.findByRole('button', { name: 'Watch' }));
+		const option = Array.from(watchBox().options).find((o) => o.textContent === label)!;
+		await fireEvent.change(watchBox(), { target: { value: option.value } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+	}
+
+	beforeEach(() => {
+		vi.mocked(devices.getDeviceCategories).mockResolvedValue({ categories: [] } as never);
+		vi.mocked(devices.getDevicePorts).mockResolvedValue({ ports: [] } as never);
+		vi.mocked(devices.getDeviceRiskScore).mockResolvedValue({ score: 12, level: 'low', factors: [] } as never);
+		vi.mocked(devices.getDeviceConnections).mockResolvedValue({ connections: [], page: 1, total_pages: 0, total: 0 } as never);
+	});
+	afterEach(() => {
+		vi.clearAllMocks();
+		page.set(IP);
+	});
+
+	it('saves by registry_mac, not the observed 8-octet MAC, and reopening shows the saved time', async () => {
+		vi.mocked(devices.getDeviceDetail).mockResolvedValue(detail({ mac: LONG_MAC, registry_mac: REGISTRY_MAC, watch_after_min: null }) as never);
+		vi.mocked(watched.setWatch).mockResolvedValue(savedWatch(240));
+		render(Page);
+		await pick('4 hours');
+		expect(await screen.findByText('Watch saved.')).toBeInTheDocument();
+		expect(watched.setWatch).toHaveBeenCalledWith(REGISTRY_MAC, 240);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+		expect(chosen()).toBe('4 hours');
+	});
+
+	it('clears the watch, and reopening shows Off', async () => {
+		vi.mocked(devices.getDeviceDetail).mockResolvedValue(detail({ registry_mac: REGISTRY_MAC, watch_after_min: 60 }) as never);
+		vi.mocked(watched.setWatch).mockResolvedValue(savedWatch(null));
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Watch' }));
+		expect(chosen()).toBe('1 hour');
+		await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+		await pick('Off');
+		expect(await screen.findByText('Watch turned off.')).toBeInTheDocument();
+		expect(watched.setWatch).toHaveBeenCalledWith(REGISTRY_MAC, null);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+		expect(chosen()).toBe('Off');
+	});
+
+	it('keeps the saved watch when a refresh that began before the save lands after it', async () => {
+		vi.mocked(devices.getDeviceDetail).mockResolvedValue(detail({ registry_mac: REGISTRY_MAC, watch_after_min: null }) as never);
+		vi.mocked(watched.setWatch).mockResolvedValue(savedWatch(15));
+		render(Page);
+		await screen.findByRole('button', { name: 'Watch' });
+
+		const stale = deferred<unknown>();
+		vi.mocked(devices.getDeviceDetail).mockReturnValueOnce(stale.promise as never);
+		const refreshing = refreshPage();
+		await pick('15 minutes');
+		await screen.findByText('Watch saved.');
+		stale.resolve(detail({ registry_mac: REGISTRY_MAC, watch_after_min: null }));
+		await refreshing;
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Watch' }));
+		expect(chosen()).toBe('15 minutes');
+	});
+
+	// review L4: no registry MAC, no watch; the observed MAC is never a watch target
+	it('hides Watch for a device with no registry MAC, keeping Rename and Change picture', async () => {
+		vi.mocked(devices.getDeviceDetail).mockResolvedValue(detail({ mac: LONG_MAC, registry_mac: null }) as never);
+		render(Page);
+		expect(await screen.findByRole('button', { name: 'Rename' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Change picture' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Watch' })).not.toBeInTheDocument();
+	});
+
+	// review M5: the same-device guard, for a watch
+	it("keeps each device's own watch when a save for the first lands after moving to the second", async () => {
+		vi.mocked(devices.getDeviceDetail).mockImplementation(async (ip: string) =>
+			(ip === IP2
+				? detail({ ip: IP2, mac: MAC2, registry_mac: MAC2.toUpperCase(), watch_after_min: 30 })
+				: detail({ registry_mac: REGISTRY_MAC, watch_after_min: null })) as never,
+		);
+		const saveA = deferred<never>();
+		vi.mocked(watched.setWatch).mockReturnValueOnce(saveA.promise);
+		render(Page);
+		await pick('1 day'); // A's save hangs
+
+		page.set(IP2);
+		await vi.waitFor(() => expect(screen.getByText('MAC').nextElementSibling).toHaveTextContent(MAC2));
+		saveA.resolve(savedWatch(1440));
+		await new Promise((r) => setTimeout(r, 0)); // the save's callbacks have all run
+		await fireEvent.click(await screen.findByRole('button', { name: 'Watch' }));
+		expect(chosen()).toBe('30 minutes');
+		expect(watched.setWatch).toHaveBeenCalledWith(REGISTRY_MAC, 1440);
+	});
+
+	it('saves a name by registry_mac too, the same six-octet key the name route files it under', async () => {
+		vi.mocked(devices.getDeviceDetail).mockResolvedValue(detail({ mac: LONG_MAC, registry_mac: REGISTRY_MAC }) as never);
+		vi.mocked(registry.setDeviceName).mockResolvedValue(saved('Study', REGISTRY_MAC));
+		render(Page);
+		await screen.findByRole('button', { name: 'Rename' });
+		await rename('Study');
+		await vi.waitFor(() => expect(h1()).toHaveTextContent('Study'));
+		expect(registry.setDeviceName).toHaveBeenCalledWith(REGISTRY_MAC, 'Study');
 	});
 });
