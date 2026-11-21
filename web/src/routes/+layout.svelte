@@ -209,10 +209,19 @@
 		focusables()[0]?.focus();
 	}
 
-	function closeNav(returnFocus = true) {
+	// OLD CODE START — NET-349: <main> is inert while the menu is open, so focus waits for it to clear
+	// function closeNav(returnFocus = true) {
+	// 	if (!navOpen) return;
+	// 	navOpen = false;
+	// 	if (returnFocus) menuButton?.focus();
+	// }
+	// OLD CODE END
+	async function closeNav(returnFocus = true) {
 		if (!navOpen) return;
 		navOpen = false;
-		if (returnFocus) menuButton?.focus();
+		if (!returnFocus) return;
+		await tick();
+		menuButton?.focus();
 	}
 
 	function onKeydown(e: KeyboardEvent) {
@@ -267,7 +276,8 @@
 				onnavigate={() => closeNav(false)}
 				bind:sidebarEl
 			/>
-			<main class="main" id="main" tabindex="-1">
+			<!-- OLD CODE: <main class="main" id="main" tabindex="-1"> (NET-349: phones show search now, and ⌘K must not reach behind the open menu) -->
+			<main class="main" id="main" tabindex="-1" inert={navOpen}>
 				<div class="m-top">
 					<a class="brand" href="/" aria-label="NetTap home"><BrandMark /></a>
 					<span class="m-title">{pageTitle(page.url.pathname)}</span>

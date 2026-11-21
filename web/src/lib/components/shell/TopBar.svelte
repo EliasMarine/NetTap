@@ -247,7 +247,8 @@
 			{#if $pageRefresh.status === 'partial'}
 				<span class="chip is-warn">Some data failed to refresh</span>
 			{/if}
-			<span>{updatedText($pageRefresh.updatedAt, now)}</span>
+			<!-- OLD CODE: <span>{updatedText($pageRefresh.updatedAt, now)}</span> (NET-349: phones hide it, a11y.css 10) -->
+			<span class="updated">{updatedText($pageRefresh.updatedAt, now)}</span>
 			<button
 				class="icon-btn"
 				type="button"

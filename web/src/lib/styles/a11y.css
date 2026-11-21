@@ -73,3 +73,16 @@ html:has(.app.nav-open) { overflow: hidden; }
 .card.col > .donut-wrap { flex: 1 0 auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(160px, 1fr) auto; align-items: stretch; }
 .card.col > .donut-wrap > .donut-box { position: relative; width: 100%; }
 .card.col > .donut-wrap > .donut-box > svg { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; }
+
+/* 10. bundle.css:429 hides .topbar on phones, and with it global search and the notification
+       inbox; the phone menu carries neither (NET-349, owner's audit at 400 px). The bar shows again
+       under .m-top: search fills the row beside Refresh and the bell, and when the warning chips
+       don't fit, the right-hand group wraps to a row of its own and wraps inside itself, bell last
+       at the right edge. The "Updated" text and the ⌘K hint give way on phones. */
+@container app (max-width: 760px) {
+  .topbar { display: flex; flex-wrap: wrap; }
+  .topbar .search-box { flex: 1 1 calc(var(--sp-8) * 6); min-width: 0; }
+  .topbar .search kbd, .topbar .updated { display: none; }
+  .topbar .top-right { flex-wrap: wrap; justify-content: flex-end; min-width: 0; max-width: 100%; }
+  .topbar .top-right .chip { max-width: 100%; white-space: normal; }
+}

@@ -235,7 +235,8 @@
 OLD CODE END -->
 
 <div class="grid">
-	<Card title="Export configuration" sub="One JSON file · every NetTap setting" class="c-6">
+	<!-- OLD CODE: <Card title="Export configuration" sub="One JSON file · every NetTap setting" class="c-6"> (NET-349: the card then lists what it leaves out) -->
+	<Card title="Export configuration" sub="One JSON file · the settings listed below" class="c-6">
 		<!-- OLD CODE START — A9: "all NetTap settings", though it skipped capture mode and retention
 		<p class="card-text">
 			Download all NetTap settings as a JSON file. Includes capture mode, retention policies,

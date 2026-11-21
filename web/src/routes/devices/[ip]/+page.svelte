@@ -47,7 +47,8 @@
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
-	import type { RegistryDevice } from '$api/devices-registry';
+	// OLD CODE: import type { RegistryDevice } from '$api/devices-registry'; (NET-349: a quiet window asks the registry who holds the address now)
+	import { searchRegistry, type RegistryDevice } from '$api/devices-registry';
 	import DeviceCustomise from '$components/DeviceCustomise.svelte';
 	import LiveBandwidthCard from '$components/LiveBandwidthCard.svelte';
 	import DeviceCompareCard from '$components/DeviceCompareCard.svelte';
@@ -147,6 +148,27 @@
 	let connectionsFailed = $state(false);
 	/** ip|range of the figures on screen (not reactive: only the loader reads it) */
 	let loadedView = '';
+
+	// NET-349: a window with no connections has no MAC or name, so the page says why and names the
+	// registry's device at the address now, when exactly one holds it. The page never takes its name or Watch:
+	// the address may have been another device's in that window.
+	type QuietMatch = 'pending' | 'unknown' | 'none' | 'several' | RegistryDevice;
+	/** The quiet window on screen and what the registry said about its address; null when the window had traffic */
+	let quiet = $state<{ ip: string; from: string; to: string; match: QuietMatch } | null>(null);
+	/** The daemon's search returns at most this many devices, so a full page may leave out the one that holds the address */
+	const REGISTRY_SEARCH_CAP = 50;
+
+	/** Who the registry lists at `ip` now; never rejects. The search is a wildcard, so only an exact address counts. */
+	async function registryMatch(ip: string): Promise<QuietMatch> {
+		try {
+			const found = await searchRegistry(ip);
+			if (found.length >= REGISTRY_SEARCH_CAP) return 'several';
+			const exact = found.filter((d) => d.ips?.includes(ip));
+			return exact.length === 1 ? exact[0] : exact.length === 0 ? 'none' : 'several';
+		} catch {
+			return 'unknown';
+		}
+	}
 
 	// NET-201: Rename and Change picture, as on the MAC page. Saves are kept per MAC, so a detail
 	// read before a save (a refresh, a range change) gets the save laid over it, not the old name.
@@ -444,6 +466,7 @@
 			categories = [];
 			ports = [];
 			riskLoaded = false;
+			quiet = null;
 		}
 		const connectionsLoad = fetchConnections(1, s, ip);
 		// OLD CODE: const results = await Promise.allSettled([ …, getSystemHealth()]); (review L7: the health beside them, outside the page's own results)
@@ -475,6 +498,10 @@
 			bandwidthChart = from && to ? toTimeChart({ from, to, interval }, d.bandwidth_series.map((p) => p.timestamp), d.bandwidth_series.map((p) => p.bytes)) : null;
 			bandwidthInterval = interval;
 			loadedView = view;
+			// NET-349: the reply's own window, else the one this load asked for (never the live span)
+			// OLD CODE: quiet = !d.mac && d.connection_count === 0 ? { ip, ...(from && to ? { from, to } : s), match: 'pending' } : null; (NET-349 review: every refresh dropped the registry link until a new lookup came back)
+			const known = quiet?.ip === ip && quiet.match !== 'pending' && quiet.match !== 'unknown' ? quiet.match : 'pending';
+			quiet = !d.mac && d.connection_count === 0 ? { ip, ...(from && to ? { from, to } : s), match: known } : null;
 		}
 		deviceFailed = deviceRes.status === 'rejected';
 		if (catRes.status === 'fulfilled') categories = catRes.value.categories;
@@ -500,7 +527,15 @@
 		riskFailed = riskRes.status === 'rejected';
 		loading = false;
 
-		const connectionsRes = await connectionsLoad;
+		// NET-349: accepted by this load's generation, not by comparing objects ($state proxies break ===);
+		// a failed refresh keeps the last snapshot, and asks again only if that one never got its answer
+		const matchLoad = quiet?.match === 'pending'
+			? registryMatch(ip).then((match) => {
+					if (guard.current(g) && quiet) quiet = { ...quiet, match };
+				})
+			: undefined;
+		// OLD CODE: const connectionsRes = await connectionsLoad; (NET-349: the registry lookup settles before the load reports)
+		const [connectionsRes] = await Promise.all([connectionsLoad, matchLoad]);
 		if (!guard.current(g)) return 'skipped';
 		return outcome([...results, connectionsRes]);
 	}
@@ -901,6 +936,24 @@ OLD CODE END -->
 			{#if device?.ip}<button class="btn" type="button" aria-expanded={comparing} onclick={toggleCompare}>Compare periods</button>{/if}
 		</div>
 	</div>
+	<!-- NET-349: a quiet window loses the name and Watch, so say why and point to the registry's device -->
+	{#if quiet && quiet.ip === deviceIp}
+		{@const match = quiet.match}
+		{@const empty = `No connections recorded for this address between ${formatDate(quiet.from)} and ${formatDate(quiet.to)}`}
+		<p class="notice quiet-note" role="status">
+			<Icon name="empty" />
+			<span>
+				{#if typeof match === 'object'}
+					{empty}. The device registry lists {match.display_name} at this address now.
+					<a href="/devices/mac/{encodeURIComponent(match.mac)}">Open {match.display_name}'s page</a>
+				{:else if match === 'pending'}
+					{empty}.
+				{:else}
+					{empty}, so NetTap can't tell which device used it.
+				{/if}
+			</span>
+		</p>
+	{/if}
 	{#if device && device.ip}
 		<!-- NET-201: the owner's name and picture, as on the MAC page; they are kept by MAC, so a device without one has no buttons -->
 		{#if device.mac}
@@ -1235,6 +1288,7 @@ OLD CODE END -->
 	/* OLD CODE: .note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); } (NET-192 PR 4: its stale notes are the amber notice) */
 	.load-note { margin-bottom: var(--sp-3); }
 	.pick-note { margin-top: var(--sp-2); }
+	.quiet-note { margin-top: var(--sp-4); }
 	.chart-note { color: var(--text-2); font-size: var(--text-sm); margin: var(--sp-3) 0 0; }
 	.sa-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 	.sa { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }

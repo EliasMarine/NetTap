@@ -53,6 +53,16 @@
 	function failed(what: string): void {
 		actionError = `Couldn't ${what}: the request failed.`;
 	}
+	// NET-349: the drawer is modal, so its own failures show inside it, kept per investigation so a
+	// late failure from one never replaces or shows in another's
+	let drawerErrors = $state<Record<string, string>>({});
+	function drawerFailed(id: string, what: string): void {
+		drawerErrors = { ...drawerErrors, [id]: `Couldn't ${what}: the request failed.` };
+	}
+	function dismissDrawerError(id: string): void {
+		const { [id]: _gone, ...rest } = drawerErrors;
+		drawerErrors = rest;
+	}
 	let activeFilter = $state<StatusFilter>('all');
 
 	// The investigation whose details are open beside the table
@@ -79,12 +89,14 @@
 	}
 
 	async function handleDrawerStatusChange(id: string, status: string) {
-		if (!(await updateInvestigation(id, { status }))) failed('change the status');
+		// OLD CODE: if (!(await updateInvestigation(id, { status }))) failed('change the status'); (NET-349: behind the modal drawer)
+		if (!(await updateInvestigation(id, { status }))) drawerFailed(id, 'change the status');
 		refresh.run();
 	}
 
 	async function handleDrawerNoteAdded(id: string, noteText: string) {
-		if (!(await addNote(id, noteText))) failed('save the note');
+		// OLD CODE: if (!(await addNote(id, noteText))) failed('save the note'); (NET-349: behind the modal drawer)
+		if (!(await addNote(id, noteText))) drawerFailed(id, 'save the note');
 		refresh.run();
 	}
 
@@ -634,6 +646,14 @@
 		{/if}
 	{/snippet}
 	{#snippet actions()}
+		{@const openId = drawerInvestigation?.id}
+		{#if openId && drawerErrors[openId]}
+			<div class="notice is-error" role="alert">
+				<Icon name="warn" />
+				<span class="grow">{drawerErrors[openId]}</span>
+				<button class="btn" onclick={() => dismissDrawerError(openId)}>Dismiss</button>
+			</div>
+		{/if}
 		<button class="btn" onclick={closeDrawer}>Close</button>
 	{/snippet}
 </DetailDrawer>

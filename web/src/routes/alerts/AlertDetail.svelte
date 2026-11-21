@@ -18,7 +18,8 @@
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	// OLD CODE: import { alertAdvice, alertExplanation, alertLevel, alertTitle, logExplorerHref } from './alert-view'; (slice 2b-2)
 	// OLD CODE: import { alertAdvice, alertExplanation, alertLevel, alertTitle, linkedSuricataCategory, logExplorerHref } from './alert-view'; (NET-308)
-	import { alertAdvice, alertExplanation, alertLevel, alertTitle, investigationFor, linkedSuricataCategory, logExplorerHref, openedInvestigations } from './alert-view';
+	// OLD CODE: import { alertAdvice, alertExplanation, alertLevel, alertTitle, investigationFor, linkedSuricataCategory, logExplorerHref, openedInvestigations } from './alert-view'; (NET-349: + dnsNamesOf)
+	import { alertAdvice, alertExplanation, alertLevel, alertTitle, dnsNamesOf, investigationFor, linkedSuricataCategory, logExplorerHref, openedInvestigations } from './alert-view';
 	import { createInvestigation } from '$api/investigations';
 	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (slice 2b-2)
 	// OLD CODE: import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown'; (the rule name opens the rule page)
@@ -54,6 +55,7 @@
 	const explanation = $derived(alertExplanation(alert));
 	const hasSignatureId = $derived(Boolean(alert.alert?.signature_id));
 	const suricataCategory = $derived(linkedSuricataCategory(alert));
+	const dnsNames = $derived(dnsNamesOf(alert));
 
 	async function act(action: () => Promise<void>) {
 		error = '';
@@ -125,6 +127,11 @@
 		</dd>
 		<dt>Protocol</dt>
 		<dd class="mono">{alert.proto ? alert.proto.toUpperCase() : '—'}</dd>
+		<!-- NET-349: the name a DNS alert looked up, which was only under Raw JSON -->
+		{#if dnsNames.length}
+			<dt>DNS name</dt>
+			<dd class="mono wrap">{dnsNames.join(', ')}</dd>
+		{/if}
 		<dt>Category</dt>
 		<!-- OLD CODE: <dd>{alert.alert?.category || '—'}</dd> (slice 2b-2: its page, over the default 24 hours, as the drawer's other links) -->
 		<!-- OLD CODE: <dd>{#if suricataCategory}<a … (NET-191: no category page for activity) -->

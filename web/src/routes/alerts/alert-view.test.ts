@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Alert } from '$api/alerts';
-import { alertAdvice, alertLevel, alertTitle, groupAlerts, groupCategoryLinked, investigationFor, linkedSuricataCategory, logExplorerHref, shortSeen } from './alert-view';
+import { alertAdvice, alertLevel, dnsNamesOf, alertTitle, groupAlerts, groupCategoryLinked, investigationFor, linkedSuricataCategory, logExplorerHref, shortSeen } from './alert-view';
 
 const alert = (id: string, over: { sev?: number; sig?: string; sid?: number; cat?: string; src?: string; ts?: string } = {}): Alert => ({
 	_id: id,
@@ -116,5 +116,32 @@ describe('linkedSuricataCategory and groupCategoryLinked', () => {
 		expect(groupCategoryLinked(rows, 'Misc')).toBe(false);
 		expect(groupCategoryLinked(rows, 'Absent')).toBe(false);
 		expect(groupCategoryLinked([tagged('e', undefined, ['Uncategorised'])], 'Uncategorised')).toBe(false);
+	});
+});
+
+// NET-349: the owner's audit found a DNS alert's name only under Raw JSON
+describe('dnsNamesOf', () => {
+	const withDns = (dns: unknown): Alert => ({ _id: 'd', _index: 'i', timestamp: '', acknowledged: false, suricata: { dns } });
+
+	it('reads eve v3 queries, as the G11 stores them', () => {
+		expect(dnsNamesOf(withDns({ version: 3, type: 'request', queries: [{ rrtype: 'AAAA', rrname: 'ntp2.aliyun.com' }] }))).toEqual(['ntp2.aliyun.com']);
+	});
+
+	it('reads a v2 request, a v2 response and a v1 record', () => {
+		expect(dnsNamesOf(withDns({ query: [{ rrname: 'a.example' }] }))).toEqual(['a.example']);
+		expect(dnsNamesOf(withDns({ type: 'answer', answer: { rrname: 'b.example', rdata: '192.0.2.1' } }))).toEqual(['b.example']);
+		expect(dnsNamesOf(withDns({ type: 'query', rrname: 'c.example' }))).toEqual(['c.example']);
+	});
+
+	it('drops non-strings and blanks, removes duplicates and keeps five', () => {
+		const queries = [{ rrname: 'x.example' }, { rrname: 'x.example' }, { rrname: 7 }, { rrname: ' ' }, null, 'bare'];
+		expect(dnsNamesOf(withDns({ queries }))).toEqual(['x.example']);
+		const many = Array.from({ length: 8 }, (_, i) => ({ rrname: `n${i}.example` }));
+		expect(dnsNamesOf(withDns({ queries: many }))).toHaveLength(5);
+	});
+
+	it('is empty for an alert without DNS', () => {
+		expect(dnsNamesOf({ _id: 'n', _index: 'i', timestamp: '', acknowledged: false })).toEqual([]);
+		expect(dnsNamesOf(withDns('not an object'))).toEqual([]);
 	});
 });

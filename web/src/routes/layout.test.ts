@@ -517,6 +517,22 @@ describe('layout phone menu', () => {
 		expect(nav.contains(document.activeElement)).toBe(true);
 	});
 
+	// NET-349: phones show the search field now, and ⌘K must not pull focus behind the open menu
+	it('makes the page behind the open menu inert, and clears it before focus returns', async () => {
+		const { container } = renderLayout();
+		const { button, done } = openMenu();
+		await done;
+		await tick();
+		// Svelte sets the inert property; browsers reflect it to the attribute, jsdom doesn't know it
+		const main = container.querySelector<HTMLElement>('main#main')!;
+		expect(main.inert).toBe(true);
+		expect(main.contains(screen.getByRole('navigation', { name: 'Main' }))).toBe(false);
+		await fireEvent.keyDown(window, { key: 'Escape' });
+		await tick();
+		expect(main.inert).toBe(false);
+		expect(document.activeElement).toBe(button);
+	});
+
 	it('closes on Escape and returns focus to the menu button', async () => {
 		const { container } = renderLayout();
 		const { button, done } = openMenu();

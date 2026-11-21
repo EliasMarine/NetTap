@@ -54,7 +54,7 @@ async function openTimeline() {
 	await flush();
 	await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
 	await flush();
-	const panel = screen.getByRole('complementary', { name: 'Detail panel' });
+	const panel = screen.getByRole('dialog');
 	await fireEvent.click(within(panel).getByRole('button', { name: 'Timeline' }));
 	return panel;
 }

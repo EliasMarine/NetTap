@@ -383,13 +383,15 @@
 		color: var(--text-3);
 	}
 
+	/* OLD CODE START — NET-349: pinned at the top of the app, it covered the bell once phones show the top bar
+	@container app (max-width: 760px) {
+		.notification-dropdown { position: fixed; top: var(--sp-8); left: var(--sp-4); right: var(--sp-4); width: auto; }
+	}
+	OLD CODE END */
+	/* On phones it still opens under the bell, as wide as the app allows */
 	@container app (max-width: 760px) {
 		.notification-dropdown {
-			position: fixed;
-			top: var(--sp-8);
-			left: var(--sp-4);
-			right: var(--sp-4);
-			width: auto;
+			width: min(360px, calc(100cqw - 2 * var(--sp-4)));
 		}
 	}
 </style>

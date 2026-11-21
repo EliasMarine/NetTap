@@ -144,6 +144,17 @@ export async function getRegistryDevice(mac: string): Promise<RegistryDevice | n
 }
 
 /**
+ * NET-349: the registry's devices matching `q`. The daemon matches it as a wildcard on IPs, MAC,
+ * hostnames, vendor and names, at most 50 devices, so `192.168.1.5` also finds `.50`. Throws on failure.
+ */
+export async function searchRegistry(q: string): Promise<RegistryDevice[]> {
+	const res = await fetch(`/api/devices/registry/search?${new URLSearchParams({ q })}`);
+	if (!res.ok) throw new Error(`Registry search failed: HTTP ${res.status}`);
+	const data = await res.json();
+	return data?.devices ?? [];
+}
+
+/**
  * Get traffic data for a specific device by MAC address.
  * Resolves null only when the registry has no such device (404); any other failure throws.
  */

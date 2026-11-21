@@ -65,6 +65,21 @@ export function linkedSuricataCategory(alert: Alert): string | null {
 	return shown && alert.alert?.rule_category?.includes(shown) ? shown : null;
 }
 
+const MAX_DNS_NAMES = 5;
+
+/**
+ * The names a DNS alert looked up (NET-349), from the stored Suricata record: eve v3 lists
+ * `dns.queries[]`, v2 a request's `dns.query[]` or a response's `dns.answer`, v1 a bare `dns.rrname`.
+ */
+export function dnsNamesOf(alert: Alert): string[] {
+	const suricata = alert.suricata as { dns?: Record<string, unknown> } | undefined;
+	const dns = suricata?.dns;
+	if (!dns || typeof dns !== 'object') return [];
+	const entries = [dns.queries, dns.query, dns.answer, dns].flatMap((v) => (Array.isArray(v) ? v : [v]));
+	const names = entries.map((e) => (e && typeof e === 'object' ? text((e as { rrname?: unknown }).rrname) : null));
+	return [...new Set(names.filter((n): n is string => !!n))].slice(0, MAX_DNS_NAMES);
+}
+
 /** A "By category" heading links only when every loaded alert under it carries its title in rule.category. */
 export function groupCategoryLinked(alerts: readonly Alert[], title: string): boolean {
 	const members = alerts.filter((a) => (text(a.alert?.category) ?? 'Uncategorised') === title);

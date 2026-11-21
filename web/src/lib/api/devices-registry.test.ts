@@ -10,6 +10,7 @@ import {
 	setDevicePicture,
 	clearDevicePicture,
 	DEVICE_ICONS,
+	searchRegistry,
 } from './devices-registry';
 
 // NET-158: the "New" chip read is_new (cleared on the device's next update), so it rarely
@@ -190,6 +191,36 @@ describe('devices-registry API client', () => {
 
 			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
 			expect(url).toContain('AA%3ABB%3ACC%3ADD%3AEE%3AFF');
+		});
+	});
+
+	// -- searchRegistry (NET-349) ---------------------------------------------
+
+	describe('searchRegistry', () => {
+		it('asks the search route with the query encoded and returns its devices', async () => {
+			const found = [{ mac: 'AA:BB:CC:DD:EE:FF', ips: ['192.168.1.5'], display_name: 'UnraidBeast' }];
+			mockFetchSuccess({ query: '192.168.1.5', devices: found, count: 1 });
+
+			const result = await searchRegistry('192.168.1.5 &x');
+
+			expect(result).toEqual(found);
+			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(url).toBe('/api/devices/registry/search?q=192.168.1.5+%26x');
+		});
+
+		it('returns an empty list when the reply has no devices', async () => {
+			mockFetchSuccess({ query: 'x', count: 0 });
+			expect(await searchRegistry('x')).toEqual([]);
+		});
+
+		it('throws on HTTP error', async () => {
+			mockFetchFailure(502);
+			await expect(searchRegistry('192.168.1.5')).rejects.toThrow('HTTP 502');
+		});
+
+		it('rejects on network error', async () => {
+			mockFetchReject();
+			await expect(searchRegistry('192.168.1.5')).rejects.toThrow();
 		});
 	});
 
