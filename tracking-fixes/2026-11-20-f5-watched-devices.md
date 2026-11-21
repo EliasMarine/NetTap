@@ -1,12 +1,6 @@
 # NET-331: "device went offline" alerts (roadmap #5)
 
-**Status (2026-11-20, paused at the usage limit):** built and staged on `feature/f5-watched-devices`, not committed. All four reviews are in and their fixes applied: security had no blocking findings, Python said Ship, TypeScript had no High, and ponytail said Ship. A final full test run was started.
-**Remaining:**
-1. `/deep-review` (mandatory; the run was interrupted at stage 1, no report written);
-2. `/verify`;
-3. commit, PR, `gh pr checks`, and a squash-merge from this worktree without `--delete-branch`;
-4. on the G11: pull main, then `bash scripts/remote/deploy-watched-devices.sh`;
-5. Linear NET-331 Done, memory, and a distill.
+**Status:** DONE. PR #343 was squash-merged as `0a2c7f57` on 2026-11-20 and deployed on the G11 the same night with `deploy-watched-devices.sh`; every check passed. Linear NET-331 is Done. The owner check (unplugging a smart plug) is still owed.
 
 **Plan:** `plans/2026-11-20-f5-watched-devices.md`. Codex reviewed it for the owner's six-round cap without approving (18, 14, 13, 12, 10 and 5 findings). The design converged on one clock, a precise D4 and one queued item per device. The remaining disagreements are network-level ambiguities, documented as limits in plan §4. Implementation went ahead on the final revision, under the owner's standing rule. The log is `plans/2026-11-20-f5-watched-devices.review-log.md`.
 
@@ -58,6 +52,23 @@ Final run on the staged change (2026-11-20):
 - **Web vitest:** 5,944 passed (435 files).
 - **svelte-check:** 0 errors (2 old drawer warnings).
 - **Other checks:** check:colors clean; ruff check and format clean; shellcheck clean; the verifier printed `WATCHED-DEVICES-OK`.
+
+## G11 deploy (2026-11-21 04:22 UTC)
+
+- **Images:** daemon `736a77c7ca1e`, web `b50f6b2c14a8`, both healthy, and the running images are the ones built.
+- **Production, read only:**
+  - a natural `watched-devices` run at 04:22:37 with no error (7 ms, no watches yet);
+  - `/api/devices/watched` returns a fresh check (`skipped: null`);
+  - the notification config carries `watched_device`.
+- **Live probe** (mirror on `enp4s0`, real index, temporary stores):
+  - the presence search over 10 watches answered on 9/9 shards;
+  - 3 originators and 3 responders, all `up` with `seen_at` within a second of the capture time;
+  - bucket keys lower case;
+  - an unused locally administered MAC stayed `unknown`;
+  - negative case inconclusive (no early-start, recent-end device).
+  - A cosmetic gap: the probe prints `ended ?` for each sample. It reads `event.end` from the raw hit without handling Malcolm's field shape; the job's aggregation is unaffected.
+- **Isolated verifier:** `WATCHED-DEVICES-OK`, with every step row, crash case, skip and refused reply.
+- **Memory:** the settled daemon VmRSS went from 423 to 262 MB.
 
 ## Over-engineering review (/ponytail-review)
 
