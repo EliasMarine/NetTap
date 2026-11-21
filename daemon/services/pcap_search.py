@@ -63,7 +63,8 @@ _CONTAINER_PCAP_MOUNT = "/pcap"
 # Display filter validation — reject shell metacharacters.
 # We allow & and | because Wireshark display filters use && (AND) and || (OR).
 # Commands use asyncio.create_subprocess_exec (no shell), so pipes aren't dangerous.
-_FILTER_FORBIDDEN = re.compile(r"[;`$]")
+# OLD CODE: _FILTER_FORBIDDEN = re.compile(r"[;`$]") (NET-347 review: line breaks and NUL, as packet search refuses them)
+_FILTER_FORBIDDEN = re.compile(r"[;`$\x00\r\n]")
 
 # Supported PCAP file extensions
 _PCAP_EXTENSIONS = {".pcap", ".pcapng", ".cap"}
@@ -81,6 +82,7 @@ _TIMEOUT_EXIT_CODES = {124, 137}  # coreutils timeout: TERM, then KILL
 # NET-347: a new search compiles its filter, lists its files and installs its job within
 # this many seconds, below the web proxy's 60 s for /api/pcap/search; past it, nothing starts
 _SEARCH_START_SECONDS = 45
+_CHECK_BUDGET_SECONDS = 20
 # The count's docker exec ends within its timeout + 5 s (timeout -k 5). The host waits that
 # long plus a margin, and only then gives up on a wedged docker client.
 _HOST_CAP_EXTRA_SECONDS = 60
@@ -555,6 +557,10 @@ class PcapSearchService:
         except TimeoutError:
             raise SearchStartExpired(_START_EXPIRED) from None
         try:
+            # the check can take 20 s (5 s slot wait, 10 s job, 5 s grace); without that left,
+            # say so now rather than answer after the web proxy has given up
+            if deadline - time.monotonic() < _CHECK_BUDGET_SECONDS:
+                raise SearchStartExpired(_START_EXPIRED)
             job = self._search_job
             if job is not None and job["key"] == key:
                 return  # installed by the start this one waited behind
@@ -735,9 +741,10 @@ class PcapSearchService:
                 lines[0] += chunk.count(b"\n")
 
         async def sample_stderr() -> str:
-            kept = bytearray()
+            kept = b""
             while chunk := await proc.stderr.read(_READ_CHUNK):
-                kept += chunk[: max(0, _STDERR_SAMPLE - len(kept))]
+                # the tail: TShark's "cut short" or error line comes after any warnings
+                kept = (kept + chunk)[-_STDERR_SAMPLE:]
             return kept.decode(errors="replace")
 
         try:
@@ -754,7 +761,9 @@ class PcapSearchService:
             # if this error ever shows up in the log.
             with contextlib.suppress(ProcessLookupError):  # it ended just now
                 proc.kill()
-            await proc.wait()
+            # communicate, not wait: nothing reads the pipes any more, and a full pipe buffer
+            # keeps wait() from returning (container_exec._stop drains for the same reason)
+            await proc.communicate()
             logger.error("docker exec for %s did not end; gave up on it", pcap_file)
             return FileCount(lines[0], "timed_out")
         return _classify_read(

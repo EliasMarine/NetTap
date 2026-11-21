@@ -10,6 +10,7 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -1097,6 +1098,10 @@ class TestSearchAdmission:
         assert service._search_job["key"][0] == "dns"
         await service._search_task
         assert (await service.search_progress("dns"))["complete"] is True
+        # the refused start let go of the start lock: another search starts at once
+        monkeypatch.setattr(pcap_search_mod, "_check_download_filter", AsyncMock())
+        await asyncio.wait_for(service.search_progress("http"), 1)
+        assert service._search_job["key"][0] == "http"
 
     @pytest.mark.asyncio
     async def test_starts_install_in_arrival_order(
@@ -1319,3 +1324,53 @@ class TestJobNeverStalls:
         done = await service.search_progress("dns")
         assert done["complete"] is True
         assert done["failed"] == 3 and "temporarily unavailable" in done["error"]
+
+
+@pytest.mark.parametrize("bad", ["dns\nhttp", "dns\r\nx", "dns\x00"])
+def test_line_breaks_and_nul_are_refused(tmp_path, bad):
+    # NET-347 review: the same rule as packet search's _check_filter_text
+    valid, err = PcapSearchService(pcap_dir=str(tmp_path)).validate_bpf_filter(bad)
+    assert not valid and "forbidden" in err
+
+
+class TestReviewFollowUps:
+    @pytest.mark.asyncio
+    async def test_a_host_cap_kill_returns_while_tshark_is_still_printing(
+        self, service, monkeypatch
+    ):
+        # a full pipe buffer would keep wait() from returning; communicate() drains it
+        code = "import sys\nwhile True:\n    sys.stdout.write('1\\n' * 4096); sys.stderr.write('w' * 4096)"
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _real_process(code))
+        monkeypatch.setattr(pcap_search_mod, "_HOST_CAP_EXTRA_SECONDS", 1)
+        read = await asyncio.wait_for(
+            service._count_file("/x.pcap", "dns", 0), timeout=20
+        )
+        assert read.outcome == "timed_out" and read.matches > 0
+
+    @pytest.mark.asyncio
+    async def test_cut_short_after_many_warnings_is_still_truncated(
+        self, service, monkeypatch
+    ):
+        code = (
+            "import sys; sys.stderr.write('tshark: warning\\n' * 1000); "
+            "sys.stderr.write('tshark: The file appears to have been cut short in the middle of a packet.\\n'); "
+            "print(1); sys.exit(2)"
+        )
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _real_process(code))
+        read = await asyncio.wait_for(
+            service._count_file("/x.pcap", "dns", 300), timeout=20
+        )
+        assert read == pcap_search_mod.FileCount(1, "truncated")
+
+    @pytest.mark.asyncio
+    async def test_a_start_without_time_left_for_the_check_installs_nothing(
+        self, service, fake_tshark, monkeypatch
+    ):
+        monkeypatch.setattr(pcap_search_mod, "_CHECK_BUDGET_SECONDS", 1000)
+        with pytest.raises(pcap_search_mod.SearchStartExpired):
+            await service.search_progress("dns")
+        assert service._search_job is None and fake_tshark.checked == []
+        monkeypatch.setattr(pcap_search_mod, "_CHECK_BUDGET_SECONDS", 0)
+        await asyncio.wait_for(
+            service.search_progress("dns"), 1
+        )  # the lock was released

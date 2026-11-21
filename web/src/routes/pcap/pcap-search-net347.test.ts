@@ -211,3 +211,52 @@ describe('PCAP search: Download filtered waits for the filter check', () => {
 		expect(downloadButton()).toBeDisabled();
 	});
 });
+
+describe('PCAP search: review follow-ups', () => {
+	it('shows Try again only beside the failed search, not a later error', async () => {
+		vi.mocked(api.getPcapFiles).mockResolvedValue({ count: 1, files: [FILE] });
+		vi.mocked(api.searchPcaps).mockRejectedValue(new PcapRequestError('The packet reader is busy; try again in a moment.', 503));
+		vi.mocked(api.previewPcap).mockRejectedValue(new Error('Preview failed'));
+		await searchFor('dns');
+		expect(await screen.findByRole('button', { name: 'Try again' })).toBeInTheDocument();
+
+		await fireEvent.click(await screen.findByText('a.pcap'));
+		await screen.findAllByText('Preview failed');
+		const notice = screen.getAllByRole('alert').find((n) => n.textContent?.includes('Preview failed'));
+		expect(notice && within(notice).queryByRole('button', { name: 'Try again' })).toBeFalsy();
+	});
+
+	it('keeps Download filtered off when a late check answer is for older text', async () => {
+		let answer!: (v: { ok: true; filter: string }) => void;
+		vi.mocked(api.checkPcapFilter)
+			.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+			.mockReturnValue(new Promise(() => {}));
+		render(Page);
+		await type('dns');
+		await vi.waitFor(() => expect(api.checkPcapFilter).toHaveBeenCalledWith('dns'));
+		await type('dns and udp');
+		answer({ ok: true, filter: 'dns' });
+		await new Promise((r) => setTimeout(r, 0));
+		expect(downloadButton()).toBeDisabled();
+	});
+
+	it('gives the reason when the only failed files are rows with matches', async () => {
+		vi.mocked(api.searchPcaps).mockResolvedValue(
+			done({ files_full: 0, failed: 1, error: 'tshark: The file appears to be damaged or corrupt.', count: 1, results: [{ ...FILE, matching_packets: 4, outcome: 'failed' }] }),
+		);
+		await searchFor('dns');
+
+		expect(await screen.findByText('at least 4')).toBeInTheDocument();
+		expect(screen.getByText('The first read error: tshark: The file appears to be damaged or corrupt.')).toBeInTheDocument();
+	});
+
+	it("names the preview's own filter when it finds nothing", async () => {
+		vi.mocked(api.searchPcaps).mockResolvedValue(done({ count: 1, results: [{ ...FILE, matching_packets: 7, outcome: 'full' }] }));
+		await searchFor('dns');
+		await type('http');
+		const results = await screen.findByRole('table', { name: /search results|matching/i });
+		await fireEvent.click(within(results).getByText('a.pcap'));
+
+		expect(await screen.findByText('No packets to display matching filter "dns".')).toBeInTheDocument();
+	});
+});

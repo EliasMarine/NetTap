@@ -47,8 +47,32 @@
   - Mutation check: removing the stale-preview guard fails its test.
 - Device: see the deploy output (added after the run).
 
+## Reviews (PR #346)
+- `/deep-review`: no findings.
+- `/ponytail-review`:
+  - Fixed: the file being written no longer reads as missed, and the kill race.
+  - Withdrawn: the wrapper still serves `search()`.
+- Security-engineer: no issues. Took I-1: the validator now refuses NUL, CR and LF, as packet search does.
+- TypeScript reviewer, fixed:
+  - "Try again" only shows beside its own error.
+  - An empty preview names its own filter.
+  - The failure reason shows when the only failed files had matches.
+  - The filter check keys on the trimmed text.
+  - Teardown drops late previews and checks.
+  - Body-shape guard on error replies.
+  - Tests for the proxy timeouts.
+- TypeScript reviewer, skipped: aborting stale checks. The daemon doesn't cancel on disconnect, so an abort frees no slot.
+- Python reviewer, fixed:
+  - The host-cap kill drains both pipes (`communicate()`), so it can't hang on a full buffer.
+  - stderr keeps its tail.
+  - A start that gets the lock with under 20 s left expires at once.
+  - `verify_pcap_search.py` retries 503s, and its reference read is bounded inside the container.
+  - A test that a refused start releases the lock.
+- CI's `check:e2e` (erasableSyntaxOnly) refused a constructor parameter property. Added `npm run check:e2e` to the local gates.
+
 ## Lessons
 - Cancelling an asyncio wait on `docker exec` does not stop the process in the container.
+- After killing a subprocess whose pipes nobody reads, use `communicate()`, not `wait()`: a full pipe buffer keeps `wait()` from returning.
 - A count that reads all of stdout can't report what it saw when the read is stopped. Stream it.
 
 ## Next steps

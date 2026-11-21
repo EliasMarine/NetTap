@@ -109,23 +109,22 @@ export async function getPcapFiles(
 	return res.json();
 }
 
-/**
- * Search PCAPs by BPF filter.
- */
 /** A failed PCAP request, with its HTTP status (NET-347: 400 is TShark refusing the filter). */
 export class PcapRequestError extends Error {
-	constructor(
-		message: string,
-		readonly status: number,
-	) {
+	readonly status: number;
+
+	// No parameter property: e2e's tsconfig has erasableSyntaxOnly
+	constructor(message: string, status: number) {
 		super(message);
 		this.name = 'PcapRequestError';
+		this.status = status;
 	}
 }
 
 async function requestError(res: Response, fallback: string): Promise<PcapRequestError> {
-	const data = await res.json().catch(() => ({}));
-	return new PcapRequestError(data.error || `${fallback}: ${res.status}`, res.status);
+	const data = await res.json().catch(() => null);
+	const message = typeof data?.error === 'string' && data.error ? data.error : `${fallback}: ${res.status}`;
+	return new PcapRequestError(message, res.status);
 }
 
 // OLD CODE START — NET-347: the error dropped the status, so a refused filter looked like any failure
@@ -144,7 +143,7 @@ async function requestError(res: Response, fallback: string): Promise<PcapReques
 // 	return res.json();
 // }
 // OLD CODE END
-/** Start or poll a background search; a 400 is TShark refusing the filter, and starts nothing. */
+/** Search PCAPs with a display filter: start or poll the background search. A 400 is TShark refusing the filter, and starts nothing. */
 export async function searchPcaps(
 	filter: string,
 	opts: { from?: string; to?: string } = {}

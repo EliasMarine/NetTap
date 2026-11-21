@@ -122,7 +122,8 @@
 	type Submitted = { filter: string; from: string; to: string };
 	let submitted = $state<Submitted | null>(null);
 	/** A search that failed to start for a reason other than the filter: "Try again" resends it as it was */
-	let retrySearch = $state<Submitted | null>(null);
+	// OLD CODE: let retrySearch = $state<Submitted | null>(null); (review: the button showed beside later, unrelated errors)
+	let retrySearch = $state<{ search: Submitted; message: string } | null>(null);
 	/** TShark's refusal of a submitted filter, shown under the field while it still holds that text */
 	let filterError = $state<{ text: string; message: string } | null>(null);
 	/** NET-347: the check that enables Download filtered, for the text it checked */
@@ -578,17 +579,18 @@
 				if (bpfFilter === search.filter) filterError = { text: search.filter, message: e.message };
 				else error = `The filter "${search.filter}" was refused: ${e.message}`;
 			} else {
-				retrySearch = search;
 				error = e instanceof Error ? e.message : 'Search failed';
+				retrySearch = { search, message: error };
 			}
 		} finally {
 			if (run === searchRun) loading = false;
 		}
 	}
 
+	const trimmedFilter = $derived(bpfFilter.trim());
 	/** NET-347: Download filtered stays off until TShark accepts the text in the box (checked 500 ms after typing stops). */
 	$effect(() => {
-		const text = bpfFilter.trim();
+		const text = trimmedFilter;
 		const run = ++checkRun;
 		if (!text) {
 			filterCheck = null;
@@ -615,12 +617,13 @@
 	const fieldError = $derived(
 		filterError?.text === bpfFilter
 			? filterError.message
-			: filterCheck?.state === 'invalid' && filterCheck.text === bpfFilter.trim()
+			: filterCheck?.state === 'invalid' && filterCheck.text === trimmedFilter
 				? (filterCheck.message ?? '')
 				: '',
 	);
+	const checkUnknown = $derived(filterCheck?.state === 'unknown' && filterCheck.text === trimmedFilter);
 	const downloadReady = $derived(
-		filterCheck !== null && filterCheck.text === bpfFilter.trim() && (filterCheck.state === 'ok' || filterCheck.state === 'unknown'),
+		filterCheck !== null && filterCheck.text === trimmedFilter && (filterCheck.state === 'ok' || filterCheck.state === 'unknown'),
 	);
 
 	/** Rows whose read stopped before the end of the file: their counts are a minimum */
@@ -638,6 +641,7 @@
 			full: p.full,
 			total: p.total,
 			early: early.length,
+			earlyFailed,
 			unreadFailed: Math.max(0, p.failed - earlyFailed),
 			unreadTimedOut: Math.max(0, p.timedOut - earlyTimedOut),
 			truncated: p.truncated,
@@ -876,7 +880,8 @@
 		// loadFiles().then(() => { initialized = true; });
 		// OLD CODE END
 		refresh.run();
-		return () => { searchRun++; clearTimeout(scrollTimer); };
+		// OLD CODE: return () => { searchRun++; clearTimeout(scrollTimer); }; (review: a late preview set a timer after teardown)
+		return () => { searchRun++; previewRun++; checkRun++; clearTimeout(scrollTimer); };
 	});
 </script>
 
@@ -1008,7 +1013,7 @@
 					bind:value={bpfFilter}
 					onkeydown={(e) => e.key === 'Enter' && runSearch()}
 					aria-invalid={fieldError ? 'true' : undefined}
-					aria-describedby={fieldError ? 'pcap-filter-error' : undefined}
+					aria-describedby={fieldError ? 'pcap-filter-error' : checkUnknown ? 'pcap-filter-help' : undefined}
 				/>
 			</div>
 			<!-- 2026-11-02: never disabled; a background search can take many minutes, so a new
@@ -1023,8 +1028,8 @@
 		</div>
 		{#if fieldError}
 			<p id="pcap-filter-error" class="field-error filter-error" role="alert">{fieldError}</p>
-		{:else if filterCheck?.state === 'unknown' && filterCheck.text === bpfFilter.trim()}
-			<p class="field-help">Couldn't check the filter just now. Download filtered checks it again before it starts.</p>
+		{:else if checkUnknown}
+			<p id="pcap-filter-help" class="field-help">Couldn't check the filter just now. Download filtered checks it again before it starts.</p>
 		{/if}
 		<div class="toolbar">
 			<label class="word" for="pcap-download-from">Download from</label>
@@ -1057,8 +1062,8 @@
 		<!-- OLD CODE: <p class="notice is-error c-12" role="alert"><Icon name="warn" />{error}</p> (NET-347: a search that failed to start can be resent as it was) -->
 		<p class="notice is-error c-12" role="alert">
 			<Icon name="warn" /><span>{error}</span>
-			{#if retrySearch}
-				<button class="btn" type="button" onclick={() => retrySearch && runSearch(retrySearch)}>Try again</button>
+			{#if retrySearch?.message === error}
+				<button class="btn" type="button" onclick={() => retrySearch && runSearch(retrySearch.search)}>Try again</button>
 			{/if}
 		</p>
 	{/if}
@@ -1112,6 +1117,9 @@
 						{/if}
 						{#if coverage.unreadFailed > 0}
 							<p>{coverage.unreadFailed === 1 ? "1 file couldn't be searched" : `${coverage.unreadFailed} files couldn't be searched`}{searchProgress?.error ? `: ${searchProgress.error}` : '.'}</p>
+						{/if}
+						{#if coverage.unreadFailed === 0 && coverage.earlyFailed > 0 && searchProgress?.error}
+							<p>The first read error: {searchProgress.error}</p>
 						{/if}
 						{#if coverage.unreadTimedOut > 0}
 							<p>{timedOutNote(coverage.unreadTimedOut)}</p>
@@ -1181,7 +1189,7 @@
 		{:else if previewTimedOut}
 			<p class="notice is-warn"><Icon name="warn" />No matching packets in the part of this file read within 45 seconds. The file is large; try a smaller file or a narrower time range.</p>
 		{:else}
-			<CardState state="empty" icon="pcap" title="No packets to display{bpfFilter ? ` matching filter "${bpfFilter}"` : ''}." message="Try another file, or clear the display filter." />
+			<CardState state="empty" icon="pcap" title="No packets to display{previewFilter ? ` matching filter "${previewFilter}"` : ''}." message="Try another file, or clear the display filter." />
 		{/if}
 	</Card>
 

@@ -32,6 +32,7 @@ WRITER_LAG_S = (
 TRIES = 3
 READ_TIMEOUT_S = 300  # one reference read, the same allowance as a search read
 SEARCH_DEADLINE_S = 25 * 60
+BUSY_TRIES = 6  # 503s are retried for up to 30 s
 FAILED = []
 
 TOKEN_FILE = "/run/nettap-auth/daemon-token"
@@ -47,7 +48,7 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
-def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+def call_once(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
     req = urllib.request.Request(
         API + path,
         data=None if body is None else json.dumps(body).encode(),
@@ -62,6 +63,16 @@ def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
             return exc.code, json.load(exc)
         except ValueError:
             return exc.code, {}
+
+
+def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    """A request, tried again while the daemon answers 503 (reader busy, or a start ran late)."""
+    for _ in range(BUSY_TRIES):
+        status, reply = call_once(method, path, body)
+        if status != 503:
+            break
+        time.sleep(5)
+    return status, reply
 
 
 def query(**params: str) -> str:
@@ -92,6 +103,11 @@ def reference_count(relative_path: str, display_filter: str) -> int | None:
                 "docker",
                 "exec",
                 "nettap-tshark",
+                # ends TShark in the container too, not just the docker client
+                "timeout",
+                "-k",
+                "5",
+                str(READ_TIMEOUT_S),
                 "tshark",
                 "-r",
                 f"/pcap/{relative_path}",
@@ -104,7 +120,7 @@ def reference_count(relative_path: str, display_filter: str) -> int | None:
             ],
             check=False,
             capture_output=True,
-            timeout=READ_TIMEOUT_S,
+            timeout=READ_TIMEOUT_S + 30,
         )
     except subprocess.TimeoutExpired:
         print(f"     {relative_path}: the reference read took over {READ_TIMEOUT_S} s")
