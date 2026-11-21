@@ -12,6 +12,7 @@ PCAP directory is configurable via PCAP_DIR env var (default: /opt/nettap/pcap).
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -22,6 +23,7 @@ import shlex
 # OLD CODE END
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -76,6 +78,17 @@ _MAX_CONCURRENT_TSHARK = 2
 # tshark needs ~120 MiB plus about the file's size: past the container's 1 GiB it is killed.
 _SEARCH_FILE_TIMEOUT = 300
 _TIMEOUT_EXIT_CODES = {124, 137}  # coreutils timeout: TERM, then KILL
+# NET-347: a new search compiles its filter, lists its files and installs its job within
+# this many seconds, below the web proxy's 60 s for /api/pcap/search; past it, nothing starts
+_SEARCH_START_SECONDS = 45
+# The count's docker exec ends within its timeout + 5 s (timeout -k 5). The host waits that
+# long plus a margin, and only then gives up on a wedged docker client.
+_HOST_CAP_EXTRA_SECONDS = 60
+_READ_CHUNK = 64 * 1024
+# Bytes of TShark's stderr kept for the message; the rest is still read and dropped
+_STDERR_SAMPLE = 4096
+# TShark's message for a file that ends mid-packet: still being written, or left by a crash
+_CUT_SHORT = "cut short in the middle of a packet"
 
 # "Download filtered" (NET-189). One deadline for the whole request, below the web
 # proxy's 300 s (undici's header and body timeouts).
@@ -120,6 +133,20 @@ _FILTERED_PREVIEW_SCRIPT = (
 # OLD CODE END
 
 
+class SearchStartExpired(Exception):
+    """A new search could not compile its filter and list its files in time (NET-347)."""
+
+
+@dataclass(frozen=True)
+class FileCount:
+    """One file's search read (NET-347). `matches` is what TShark printed before the read
+    ended: exact for "full", a lower bound otherwise."""
+
+    matches: int
+    outcome: str  # "full" | "truncated" | "timed_out" | "failed"
+    error: str | None = None
+
+
 class PcapSearchService:
     """Search and filter captured PCAP files."""
 
@@ -143,6 +170,13 @@ class PcapSearchService:
         self._search_seq = 0
         self._search_job: dict[str, Any] | None = None
         self._search_task: asyncio.Task | None = None
+        # NET-347: starts install one at a time, in arrival order
+        self._start_lock = asyncio.Lock()
+        # NET-347: one background read at a time across every search job (a replaced job's
+        # last read finishes; two full-file reads can't share the container's 1 GiB)
+        self._count_lock = asyncio.Lock()
+        # A replaced job's task runs on to its next file boundary; asyncio holds tasks weakly
+        self._search_tasks: set[asyncio.Task] = set()
 
     def contains(self, path: str) -> bool:
         """True when path, with ".." and symlinks resolved, is inside the PCAP directory.
@@ -279,6 +313,212 @@ class PcapSearchService:
 
         return matching
 
+    # OLD CODE START — NET-347: the search job (no filter compile before scanning; a replaced
+    # job was cancelled mid-read, freeing its slot while TShark ran on in the container; a
+    # count read all of stdout into memory and kept a nonzero exit's output as a full read)
+    # async def search_progress(
+    #     self,
+    #     bpf_filter: str,
+    #     from_ts: str | None = None,
+    #     to_ts: str | None = None,
+    # ) -> dict[str, Any]:
+    #     """Start a background search for these params, or report the one running.
+    #
+    #     A call with different params replaces the running job. Files are checked
+    #     newest first and matches appear as they are found.
+    #     """
+    #     key = (bpf_filter, from_ts, to_ts)
+    #     if self._search_job is None or self._search_job["key"] != key:
+    #         valid, err = self.validate_bpf_filter(bpf_filter)
+    #         if not valid:
+    #             raise ValueError(f"Invalid display filter: {err}")
+    #         # OLD CODE START — PR 2 (reliability): the file walk ran on the request loop
+    #         # if self._search_task is not None:
+    #         #     self._search_task.cancel()
+    #         # pcaps = self.get_available_pcaps(from_ts, to_ts)
+    #         # OLD CODE END
+    #         pcaps = await run_blocking(self.get_available_pcaps, from_ts, to_ts)
+    #         # Another poll may have started this search while the files were listed
+    #         job = self._search_job
+    #         if job is not None and job["key"] == key:
+    #             return await self.search_progress(bpf_filter, from_ts, to_ts)
+    #         if self._search_task is not None:
+    #             self._search_task.cancel()
+    #         self._search_seq += 1
+    #         self._search_job = {
+    #             "id": self._search_seq,
+    #             "key": key,
+    #             "results": (),
+    #             "files_checked": 0,
+    #             "files_total": len(pcaps),
+    #             "timed_out": 0,
+    #             "failed": 0,
+    #             "error": None,
+    #             "complete": not pcaps,
+    #             # #137: sizes and time so far, for the page's estimate (no assumed rate)
+    #             "bytes_total": sum(p["size_bytes"] for p in pcaps),
+    #             "bytes_checked": 0,
+    #             "started": time.monotonic(),
+    #             "finished": None if pcaps else time.monotonic(),
+    #         }
+    #         self._search_task = (
+    #             asyncio.create_task(
+    #                 self._run_search_job(self._search_seq, pcaps, bpf_filter)
+    #             )
+    #             if pcaps
+    #             else None
+    #         )
+    #     job = self._search_job
+    #     return {
+    #         "filter": bpf_filter,
+    #         "count": len(job["results"]),
+    #         "results": list(job["results"]),
+    #         "files_checked": job["files_checked"],
+    #         "files_total": job["files_total"],
+    #         "complete": job["complete"],
+    #         "timed_out": job["timed_out"],
+    #         # #96: files tshark couldn't read, and the first reason, so they aren't "no match"
+    #         "failed": job["failed"],
+    #         "error": job["error"],
+    #         "bytes_total": job["bytes_total"],
+    #         "bytes_checked": job["bytes_checked"],
+    #         "seconds_elapsed": round(
+    #             (job["finished"] or time.monotonic()) - job["started"]
+    #         ),
+    #     }
+    #
+    # async def _run_search_job(
+    #     self, job_id: int, pcaps: list[dict[str, Any]], bpf_filter: str
+    # ) -> None:
+    #     for pcap in pcaps:
+    #         # OLD CODE START — #96: a file tshark couldn't read counted as "no match"
+    #         # count = await self._count_matching_packets(
+    #         #     pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
+    #         # )
+    #         # OLD CODE END
+    #         error = None
+    #         try:
+    #             count = await self._count_matching_packets(
+    #                 pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
+    #             )
+    #         except Exception as exc:
+    #             count, error = 0, str(exc)
+    #         job = self._search_job
+    #         if job is None or job["id"] != job_id:
+    #             return  # replaced by a newer search
+    #         found = ({**pcap, "matching_packets": count},) if count else ()
+    #         self._search_job = {
+    #             **job,
+    #             "results": job["results"] + found,
+    #             "files_checked": job["files_checked"] + 1,
+    #             "timed_out": job["timed_out"] + (count is None),
+    #             "failed": job["failed"] + (error is not None),
+    #             "error": job["error"] or error,
+    #             "bytes_checked": job["bytes_checked"] + pcap["size_bytes"],
+    #         }
+    #     job = self._search_job
+    #     if job is not None and job["id"] == job_id:
+    #         self._search_job = {**job, "complete": True, "finished": time.monotonic()}
+    #
+    # async def _count_matching_packets(
+    #     self, pcap_file: str, bpf_filter: str, timeout: int = 45
+    # ) -> int | None:
+    #     """Count packets matching BPF filter in a PCAP file; None if it timed out.
+    #
+    #     Raises RuntimeError when tshark couldn't read the file (#96).
+    #
+    #     Runs tshark inside the nettap-tshark container via docker exec.
+    #     Uses asyncio.create_subprocess_exec (argument-list form, no shell).
+    #     A semaphore limits concurrent docker exec operations.
+    #     """
+    #     container_path = self._to_container_path(pcap_file)
+    #     cmd = [
+    #         "docker",
+    #         "exec",
+    #         _TSHARK_CONTAINER,
+    #         # background searches share the container's 1 CPU with previews and
+    #         # analysis; lowest priority keeps those inside the web proxy's timeout
+    #         "nice",
+    #         "-n",
+    #         "19",
+    #         "tshark",
+    #         "-r",
+    #         container_path,
+    #         "-Y",
+    #         bpf_filter,
+    #         "-T",
+    #         "fields",
+    #         "-e",
+    #         "frame.number",
+    #     ]
+    #     try:
+    #         async with self._semaphore:
+    #             logger.debug("Running: %s", " ".join(shlex.quote(c) for c in cmd))
+    #             proc = await asyncio.create_subprocess_exec(
+    #                 *bounded_exec(cmd, timeout),
+    #                 stdout=asyncio.subprocess.PIPE,
+    #                 stderr=asyncio.subprocess.PIPE,
+    #             )
+    #             started = time.monotonic()
+    #             stdout, stderr = await asyncio.wait_for(
+    #                 proc.communicate(), timeout=timeout + 10
+    #             )
+    #
+    #         # #137: a KILL before timeout's own deadline is the kernel's OOM killer, not a timeout
+    #         if proc.returncode == 137 and time.monotonic() - started < timeout:
+    #             try:
+    #                 size = f" ({round(os.path.getsize(pcap_file) / 1_000_000)} MB)"
+    #             except OSError:  # pruned meanwhile
+    #                 size = ""
+    #             logger.warning("tshark ran out of memory reading %s", pcap_file)
+    #             raise RuntimeError(
+    #                 f"tshark ran out of memory reading {os.path.basename(pcap_file)}{size}"
+    #             )
+    #         if proc.returncode in _TIMEOUT_EXIT_CODES:
+    #             logger.warning("tshark timed out counting packets in %s", pcap_file)
+    #             return None
+    #
+    #         lines = stdout.decode(errors="replace").strip().split("\n")
+    #         count = len([line for line in lines if line.strip()])
+    #         # a file still being written can end mid-packet: keep what tshark printed
+    #         # OLD CODE START — #96: a failed read (bad filter, container down) was "0 matches"
+    #         # if proc.returncode != 0 and not count:
+    #         #     logger.debug("tshark filter count failed for %s: %s", pcap_file, ...)
+    #         # return count
+    #         # OLD CODE END
+    #         if proc.returncode != 0 and not count:
+    #             err = stderr.decode(errors="replace").strip()
+    #             logger.warning("tshark filter count failed for %s: %s", pcap_file, err)
+    #             raise RuntimeError(err or f"tshark exited with code {proc.returncode}")
+    #         return count
+    #
+    #     except asyncio.TimeoutError:
+    #         logger.warning("tshark timed out counting packets in %s", pcap_file)
+    #         return None
+    #     # OLD CODE START — #96: docker missing or any other error read as "0 matches"
+    #     # except FileNotFoundError:
+    #     #     logger.error("docker not found in PATH")
+    #     #     return 0
+    #     # except Exception as exc:
+    #     #     logger.error("Error counting packets in %s: %s", pcap_file, exc)
+    #     #     return 0
+    #     # OLD CODE END
+    #     except FileNotFoundError as exc:
+    #         raise RuntimeError("docker not found in PATH") from exc
+    # OLD CODE END
+
+    async def check_filter(self, bpf_filter: str) -> None:
+        """Compile the filter in TShark, holding one reader slot (NET-347).
+
+        ValueError with TShark's own message when it refuses the filter, ReaderBusy when no
+        slot comes free in 5 s, anything else when the check couldn't run.
+        """
+        valid, err = self.validate_bpf_filter(bpf_filter)
+        if not valid:
+            raise ValueError(f"Invalid display filter: {err}")
+        async with reader_slot(self._semaphore, _DOWNLOAD_SLOT_WAIT_SECONDS):
+            await _check_download_filter(bpf_filter)
+
     async def search_progress(
         self,
         bpf_filter: str,
@@ -287,57 +527,91 @@ class PcapSearchService:
     ) -> dict[str, Any]:
         """Start a background search for these params, or report the one running.
 
-        A call with different params replaces the running job. Files are checked
-        newest first and matches appear as they are found.
+        A call with different params replaces the running job once its filter compiles
+        (NET-347: a refused filter starts nothing). Files are checked newest first and
+        matches appear as they are found.
         """
         key = (bpf_filter, from_ts, to_ts)
         if self._search_job is None or self._search_job["key"] != key:
-            valid, err = self.validate_bpf_filter(bpf_filter)
-            if not valid:
-                raise ValueError(f"Invalid display filter: {err}")
-            # OLD CODE START — PR 2 (reliability): the file walk ran on the request loop
-            # if self._search_task is not None:
-            #     self._search_task.cancel()
-            # pcaps = self.get_available_pcaps(from_ts, to_ts)
-            # OLD CODE END
-            pcaps = await run_blocking(self.get_available_pcaps, from_ts, to_ts)
-            # Another poll may have started this search while the files were listed
+            await self._start_search(key)
+        return self._progress(bpf_filter)
+
+    async def _start_search(self, key: tuple[str, str | None, str | None]) -> None:
+        """Install a job for `key`, one start at a time (NET-347).
+
+        The check, the file walk and the install all happen under `_start_lock`, so starts
+        install in arrival order and a slow earlier start can't overwrite a later one. A
+        refused, busy, failed or late start installs nothing.
+        """
+        bpf_filter, from_ts, to_ts = key
+        valid, err = self.validate_bpf_filter(bpf_filter)
+        if not valid:
+            raise ValueError(f"Invalid display filter: {err}")
+        deadline = time.monotonic() + _SEARCH_START_SECONDS
+        try:
+            await asyncio.wait_for(
+                self._start_lock.acquire(), timeout=_SEARCH_START_SECONDS
+            )
+        except TimeoutError:
+            raise SearchStartExpired(_START_EXPIRED) from None
+        try:
             job = self._search_job
             if job is not None and job["key"] == key:
-                return await self.search_progress(bpf_filter, from_ts, to_ts)
-            if self._search_task is not None:
-                self._search_task.cancel()
-            self._search_seq += 1
-            self._search_job = {
-                "id": self._search_seq,
-                "key": key,
-                "results": (),
-                "files_checked": 0,
-                "files_total": len(pcaps),
-                "timed_out": 0,
-                "failed": 0,
-                "error": None,
-                "complete": not pcaps,
-                # #137: sizes and time so far, for the page's estimate (no assumed rate)
-                "bytes_total": sum(p["size_bytes"] for p in pcaps),
-                "bytes_checked": 0,
-                "started": time.monotonic(),
-                "finished": None if pcaps else time.monotonic(),
-            }
-            self._search_task = (
-                asyncio.create_task(
-                    self._run_search_job(self._search_seq, pcaps, bpf_filter)
-                )
-                if pcaps
-                else None
+                return  # installed by the start this one waited behind
+            await self.check_filter(bpf_filter)
+            pcaps = await run_blocking(self.get_available_pcaps, from_ts, to_ts)
+            if time.monotonic() > deadline:
+                raise SearchStartExpired(_START_EXPIRED)
+            self._install_job(key, pcaps)
+        finally:
+            self._start_lock.release()
+
+    def _install_job(
+        self, key: tuple[str, str | None, str | None], pcaps: list[dict[str, Any]]
+    ) -> None:
+        # The replaced job is not cancelled: it stops before its next file, and the read it
+        # has in flight keeps its slot until TShark exits (NET-347)
+        self._search_seq += 1
+        now = time.monotonic()
+        self._search_job = {
+            "id": self._search_seq,
+            "key": key,
+            "results": (),
+            "files_checked": 0,
+            "files_total": len(pcaps),
+            # NET-347: how each file's read ended, so the page can say what was covered
+            "files_full": 0,
+            "files_truncated": 0,
+            "timed_out": 0,
+            "failed": 0,
+            "error": None,
+            "complete": not pcaps,
+            # #137: sizes and time so far, for the page's estimate (no assumed rate)
+            "bytes_total": sum(p["size_bytes"] for p in pcaps),
+            "bytes_checked": 0,
+            "started": now,
+            "finished": None if pcaps else now,
+        }
+        self._search_task = None
+        if pcaps:
+            task = asyncio.create_task(
+                self._run_search_job(self._search_seq, pcaps, key[0])
             )
+            self._search_tasks.add(task)
+            task.add_done_callback(self._search_tasks.discard)
+            self._search_task = task
+
+    def _progress(self, bpf_filter: str) -> dict[str, Any]:
         job = self._search_job
+        assert job is not None
         return {
             "filter": bpf_filter,
             "count": len(job["results"]),
             "results": list(job["results"]),
             "files_checked": job["files_checked"],
             "files_total": job["files_total"],
+            "files_full": job["files_full"],
+            "files_truncated": job["files_truncated"],
             "complete": job["complete"],
             "timed_out": job["timed_out"],
             # #96: files tshark couldn't read, and the first reason, so they aren't "no match"
@@ -350,49 +624,77 @@ class PcapSearchService:
             ),
         }
 
+    def _is_current(self, job_id: int) -> bool:
+        job = self._search_job
+        return job is not None and job["id"] == job_id
+
     async def _run_search_job(
         self, job_id: int, pcaps: list[dict[str, Any]], bpf_filter: str
     ) -> None:
         for pcap in pcaps:
-            # OLD CODE START — #96: a file tshark couldn't read counted as "no match"
-            # count = await self._count_matching_packets(
-            #     pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
-            # )
-            # OLD CODE END
-            error = None
-            try:
-                count = await self._count_matching_packets(
-                    pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
-                )
-            except Exception as exc:
-                count, error = 0, str(exc)
+            # One background read at a time, then a shared reader slot; a job replaced while
+            # it waited never launches TShark
+            async with self._count_lock, self._semaphore:
+                if not self._is_current(job_id):
+                    return
+                try:
+                    read = await self._count_file(
+                        pcap["file"], bpf_filter, _SEARCH_FILE_TIMEOUT
+                    )
+                except Exception as exc:  # #96: a read that couldn't run is a failed file, not a stalled job
+                    logger.warning("Couldn't search %s: %s", pcap["file"], exc)
+                    read = FileCount(0, "failed", str(exc))
+            if not self._is_current(job_id):
+                return
             job = self._search_job
-            if job is None or job["id"] != job_id:
-                return  # replaced by a newer search
-            found = ({**pcap, "matching_packets": count},) if count else ()
+            found = (
+                ({**pcap, "matching_packets": read.matches, "outcome": read.outcome},)
+                if read.matches
+                else ()
+            )
             self._search_job = {
                 **job,
                 "results": job["results"] + found,
                 "files_checked": job["files_checked"] + 1,
-                "timed_out": job["timed_out"] + (count is None),
-                "failed": job["failed"] + (error is not None),
-                "error": job["error"] or error,
+                "files_full": job["files_full"] + (read.outcome == "full"),
+                "files_truncated": job["files_truncated"]
+                + (read.outcome == "truncated"),
+                "timed_out": job["timed_out"] + (read.outcome == "timed_out"),
+                "failed": job["failed"] + (read.outcome == "failed"),
+                "error": job["error"] or read.error,
                 "bytes_checked": job["bytes_checked"] + pcap["size_bytes"],
             }
-        job = self._search_job
-        if job is not None and job["id"] == job_id:
-            self._search_job = {**job, "complete": True, "finished": time.monotonic()}
+        if self._is_current(job_id):
+            self._search_job = {
+                **self._search_job,
+                "complete": True,
+                "finished": time.monotonic(),
+            }
 
     async def _count_matching_packets(
         self, pcap_file: str, bpf_filter: str, timeout: int = 45
     ) -> int | None:
-        """Count packets matching BPF filter in a PCAP file; None if it timed out.
+        """Count packets matching the filter in a file; None if it timed out.
 
-        Raises RuntimeError when tshark couldn't read the file (#96).
+        Raises RuntimeError when tshark couldn't read the file (#96). Holds a reader slot.
+        """
+        async with self._semaphore:
+            read = await self._count_file(pcap_file, bpf_filter, timeout)
+        if read.outcome == "timed_out":
+            return None
+        if read.outcome == "failed":
+            raise RuntimeError(read.error)
+        return read.matches
 
-        Runs tshark inside the nettap-tshark container via docker exec.
-        Uses asyncio.create_subprocess_exec (argument-list form, no shell).
-        A semaphore limits concurrent docker exec operations.
+    async def _count_file(
+        self, pcap_file: str, bpf_filter: str, timeout: int
+    ) -> FileCount:
+        """Read one file with the filter and count the matching frames. The caller holds a
+        reader slot, and this returns only once the docker exec has ended (NET-347).
+
+        Runs tshark inside the nettap-tshark container via docker exec, argument-list form
+        (no shell). Both pipes are read as the data arrives, so the count printed so far
+        survives a timeout or a read error, and a full stderr pipe can't stall TShark.
         """
         container_path = self._to_container_path(pcap_file)
         cmd = [
@@ -405,6 +707,8 @@ class PcapSearchService:
             "-n",
             "19",
             "tshark",
+            # NET-347: flush each match, so a read that is stopped still reports what it found
+            "-l",
             "-r",
             container_path,
             "-Y",
@@ -414,60 +718,48 @@ class PcapSearchService:
             "-e",
             "frame.number",
         ]
+        logger.debug("Running: %s", " ".join(shlex.quote(c) for c in cmd))
         try:
-            async with self._semaphore:
-                logger.debug("Running: %s", " ".join(shlex.quote(c) for c in cmd))
-                proc = await asyncio.create_subprocess_exec(
-                    *bounded_exec(cmd, timeout),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                started = time.monotonic()
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout + 10
-                )
+            proc = await asyncio.create_subprocess_exec(
+                *bounded_exec(cmd, timeout),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError:
+            return FileCount(0, "failed", "docker not found in PATH")
+        started = time.monotonic()
+        lines = [0]  # whole lines printed so far: one per matching frame
 
-            # #137: a KILL before timeout's own deadline is the kernel's OOM killer, not a timeout
-            if proc.returncode == 137 and time.monotonic() - started < timeout:
-                try:
-                    size = f" ({round(os.path.getsize(pcap_file) / 1_000_000)} MB)"
-                except OSError:  # pruned meanwhile
-                    size = ""
-                logger.warning("tshark ran out of memory reading %s", pcap_file)
-                raise RuntimeError(
-                    f"tshark ran out of memory reading {os.path.basename(pcap_file)}{size}"
-                )
-            if proc.returncode in _TIMEOUT_EXIT_CODES:
-                logger.warning("tshark timed out counting packets in %s", pcap_file)
-                return None
+        async def count_stdout() -> None:
+            while chunk := await proc.stdout.read(_READ_CHUNK):
+                lines[0] += chunk.count(b"\n")
 
-            lines = stdout.decode(errors="replace").strip().split("\n")
-            count = len([line for line in lines if line.strip()])
-            # a file still being written can end mid-packet: keep what tshark printed
-            # OLD CODE START — #96: a failed read (bad filter, container down) was "0 matches"
-            # if proc.returncode != 0 and not count:
-            #     logger.debug("tshark filter count failed for %s: %s", pcap_file, ...)
-            # return count
-            # OLD CODE END
-            if proc.returncode != 0 and not count:
-                err = stderr.decode(errors="replace").strip()
-                logger.warning("tshark filter count failed for %s: %s", pcap_file, err)
-                raise RuntimeError(err or f"tshark exited with code {proc.returncode}")
-            return count
+        async def sample_stderr() -> str:
+            kept = bytearray()
+            while chunk := await proc.stderr.read(_READ_CHUNK):
+                kept += chunk[: max(0, _STDERR_SAMPLE - len(kept))]
+            return kept.decode(errors="replace")
 
-        except asyncio.TimeoutError:
-            logger.warning("tshark timed out counting packets in %s", pcap_file)
-            return None
-        # OLD CODE START — #96: docker missing or any other error read as "0 matches"
-        # except FileNotFoundError:
-        #     logger.error("docker not found in PATH")
-        #     return 0
-        # except Exception as exc:
-        #     logger.error("Error counting packets in %s: %s", pcap_file, exc)
-        #     return 0
-        # OLD CODE END
-        except FileNotFoundError as exc:
-            raise RuntimeError("docker not found in PATH") from exc
+        try:
+            _, stderr = await asyncio.wait_for(
+                asyncio.gather(count_stdout(), sample_stderr()),
+                timeout=timeout + _HOST_CAP_EXTRA_SECONDS,
+            )
+            returncode = await proc.wait()
+        except TimeoutError:
+            # shortcut: the in-container `timeout -k 5` ends TShark 305 s after it starts, so
+            # this fires only for a docker exec that started over a minute late or wedged. The
+            # local client is killed and the slot freed; a reader still running in the
+            # container is then outside _count_lock. Upgrade to a pgid kill (run_in_tshark)
+            # if this error ever shows up in the log.
+            with contextlib.suppress(ProcessLookupError):  # it ended just now
+                proc.kill()
+            await proc.wait()
+            logger.error("docker exec for %s did not end; gave up on it", pcap_file)
+            return FileCount(lines[0], "timed_out")
+        return _classify_read(
+            pcap_file, lines[0], returncode, stderr, time.monotonic() - started, timeout
+        )
 
     # ------------------------------------------------------------------
     # Preview
@@ -1035,6 +1327,50 @@ def _admit_download(sel: Selection, start: Decimal, end: Decimal) -> None:
             f"{MAX_BYTES / 1e9:.0f} GB. Set a shorter download window, use Packet "
             "analysis, or download single files."
         )
+
+
+_START_EXPIRED = "The search took too long to start; try again."
+_ROOT_WARNING = 'Running as user "root"'
+
+
+def _classify_read(
+    pcap_file: str,
+    matches: int,
+    returncode: int,
+    stderr: str,
+    seconds: float,
+    timeout: int,
+) -> FileCount:
+    """How one search read ended (NET-347), checked in this order."""
+    message = "\n".join(
+        line
+        for line in stderr.strip().splitlines()
+        if not line.startswith(_ROOT_WARNING)
+    ).strip()
+    # timeout's own TERM (124), or its KILL 5 s after the deadline
+    if returncode == 124 or (returncode == 137 and seconds >= timeout):
+        logger.warning("tshark timed out counting packets in %s", pcap_file)
+        return FileCount(matches, "timed_out")
+    # #137: a KILL before timeout's deadline is the kernel's OOM killer, not a timeout
+    if returncode == 137:
+        try:
+            size = f" ({round(os.path.getsize(pcap_file) / 1_000_000)} MB)"
+        except OSError:  # pruned meanwhile
+            size = ""
+        logger.warning("tshark ran out of memory reading %s", pcap_file)
+        return FileCount(
+            matches,
+            "failed",
+            f"tshark ran out of memory reading {os.path.basename(pcap_file)}{size}",
+        )
+    if _CUT_SHORT in message:
+        return FileCount(matches, "truncated")
+    if returncode == 0:
+        return FileCount(matches, "full")
+    logger.warning("tshark filter count failed for %s: %s", pcap_file, message)
+    return FileCount(
+        matches, "failed", message or f"tshark exited with code {returncode}"
+    )
 
 
 async def _check_download_filter(display_filter: str) -> None:

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
 	getPcapFiles,
 	searchPcaps,
+	checkPcapFilter,
+	PcapRequestError,
 	previewPcap,
 	getDownloadUrl,
 	getFileDownloadUrl,
@@ -214,5 +216,39 @@ describe('pcap API client', () => {
 		it('shows a full 256 MiB capture file as 268.4 MB', () => {
 			expect(formatBytes(256 * 2 ** 20)).toBe('268.4 MB');
 		});
+	});
+});
+
+
+// NET-347: a refused filter (400) has to be told apart from a reader that couldn't run (5xx)
+describe('searchPcaps / checkPcapFilter errors carry the status', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('searchPcaps throws PcapRequestError with the status and the daemon message', async () => {
+		mockFetchFailure(400, { error: 'tshark: x is neither a field nor a protocol name.' });
+		const err = await searchPcaps('x').catch((e) => e);
+		expect(err).toBeInstanceOf(PcapRequestError);
+		expect(err.status).toBe(400);
+		expect(err.message).toBe('tshark: x is neither a field nor a protocol name.');
+	});
+
+	it('falls back to the status when the body has no message', async () => {
+		mockFetchFailure(503, {});
+		const err = await searchPcaps('dns').catch((e) => e);
+		expect([err.status, err.message]).toEqual([503, 'Search failed: 503']);
+	});
+
+	it('checkPcapFilter POSTs the filter as JSON, never in the URL', async () => {
+		mockFetchSuccess({ ok: true, filter: 'dns' });
+		await expect(checkPcapFilter('dns')).resolves.toEqual({ ok: true, filter: 'dns' });
+		const [url, init] = vi.mocked(fetch).mock.calls[0];
+		expect(url).toBe('/api/pcap/check-filter');
+		expect(init).toMatchObject({ method: 'POST', body: JSON.stringify({ filter: 'dns' }) });
+	});
+
+	it('checkPcapFilter rejects with the status', async () => {
+		mockFetchFailure(400, { error: 'refused' });
+		const err = await checkPcapFilter('x').catch((e) => e);
+		expect([err instanceof PcapRequestError, err.status, err.message]).toEqual([true, 400, 'refused']);
 	});
 });

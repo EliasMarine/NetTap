@@ -302,7 +302,8 @@ describe('PCAP page — search polling', () => {
 
 		expect(screen.getByText('a.pcap')).toBeInTheDocument();
 		// the count moved from the title into the card sub; was 'Search Results (1 files match)'
-		expect(screen.getByText('1 file matches')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText('1 file matches')).toBeInTheDocument(); (NET-347: the sub names the filter searched)
+		expect(screen.getByText('1 file matches dns')).toBeInTheDocument();
 		expect(screen.queryByText(/Checked \d+ of/)).not.toBeInTheDocument();
 		expect(urls).toHaveLength(2);
 		expect(urls[1]).toBe(urls[0]); // identical filter/from/to or the daemon restarts the job

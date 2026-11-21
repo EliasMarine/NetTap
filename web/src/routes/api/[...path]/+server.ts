@@ -28,6 +28,10 @@ import { daemonFetch } from '$lib/server/daemon.js';
 // The certificate overview stops itself at 50 s and answers 503, so 60 s always gets its reason
 const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 	'/api/pcap/preview': 60_000,
+	// NET-347: a new search compiles its filter and lists its files first; the daemon gives up at 45 s (nginx: 60 s)
+	'/api/pcap/search': 55_000,
+	// Up to 5 s waiting for a reader slot, then a 10 s tshark job and its clean-up
+	'/api/pcap/check-filter': 25_000,
 	// Filtered (?site=&server=) requests too: the lookup is by path
 	'/api/certificates/overview': 60_000,
 	// NET-188: a packet search or one packet's detail stops itself at ~48 s, so 55 s gets its reason

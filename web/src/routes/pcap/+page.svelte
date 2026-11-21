@@ -3,6 +3,8 @@
 	import {
 		getPcapFiles,
 		searchPcaps,
+		checkPcapFilter,
+		PcapRequestError,
 		previewPcap,
 		getDownloadUrl,
 		getFileDownloadUrl,
@@ -16,6 +18,7 @@
 		PcapSearchResult,
 		PcapPacket,
 	} from '$lib/api/pcap';
+	import type { PcapReadOutcome } from '$lib/api/pcap';
 	import { formatDuration } from '$lib/utils/tshark-helpers';
 	// OLD CODE START — DataTable sorts every table (utils/table-sort)
 	// import { TableSort, compareValues } from '$lib/utils/table-sort.svelte';
@@ -111,7 +114,20 @@
 		bytesChecked: number;
 		bytesTotal: number;
 		secondsElapsed: number;
+		/** NET-347: files read to the end, and files that ended mid-packet */
+		full: number;
+		truncated: number;
 	} | null>(null);
+	/** NET-347: the search on screen (filter and window as sent); results and their previews follow it, not the input */
+	type Submitted = { filter: string; from: string; to: string };
+	let submitted = $state<Submitted | null>(null);
+	/** A search that failed to start for a reason other than the filter: "Try again" resends it as it was */
+	let retrySearch = $state<Submitted | null>(null);
+	/** TShark's refusal of a submitted filter, shown under the field while it still holds that text */
+	let filterError = $state<{ text: string; message: string } | null>(null);
+	/** NET-347: the check that enables Download filtered, for the text it checked */
+	let filterCheck = $state<{ text: string; state: 'checking' | 'ok' | 'invalid' | 'unknown'; message?: string } | null>(null);
+	let checkRun = 0;
 	/** Bumped on every new search and on destroy so a stale poll loop exits. */
 	let searchRun = 0;
 	/** The scroll-to-preview timer; cleared on destroy, when `document` may be gone. */
@@ -121,6 +137,9 @@
 	let previewPackets = $state<PcapPacket[]>([]);
 	let previewTimedOut = $state(false);
 	let previewFile = $state('');
+	/** NET-347: the filter the preview was asked with, and its request number (a late answer for an older pick is dropped) */
+	let previewFilter = $state('');
+	let previewRun = 0;
 	let previewLoading = $state(false);
 	// A failed preview is not "No packets to display"
 	let previewFailed = $state(false);
@@ -464,16 +483,64 @@
 	// }
 	// OLD CODE END
 
-	async function runSearch() {
-		if (!bpfFilter.trim()) {
+	// OLD CODE START — NET-347: a refused filter read as a failed search, results followed the input box, and
+	// a retry recomputed the window (a new background job)
+	// async function runSearch() {
+	// 	if (!bpfFilter.trim()) {
+	// 		error = 'Enter a display filter to search';
+	// 		return;
+	// 	}
+	// 	const run = ++searchRun;
+	// 	// Filter and range are captured once: the daemon keys its background job on the exact
+	// 	// (filter, from, to), so changing any of them mid-poll would cancel and restart it.
+	// 	const filter = bpfFilter;
+	// 	const { from, to } = getTimeRange();
+	// 	loading = true;
+	// 	error = '';
+	// 	searchDone = false;
+	// 	searchResults = [];
+	// 	searchProgress = null;
+	// 	try {
+	// 		while (run === searchRun) {
+	// 			const response = await searchPcaps(filter, { from, to });
+	// 			if (run !== searchRun) return;
+	// 			searchResults = response.results;
+	// 			searchProgress = {
+	// 				checked: response.files_checked,
+	// 				total: response.files_total,
+	// 				timedOut: response.timed_out,
+	// 				// #96: files tshark couldn't read are not "no match"
+	// 				failed: response.failed ?? 0,
+	// 				error: response.error ?? '',
+	// 				bytesChecked: response.bytes_checked ?? 0,
+	// 				bytesTotal: response.bytes_total ?? 0,
+	// 				secondsElapsed: response.seconds_elapsed ?? 0,
+	// 			};
+	// 			if (response.complete) {
+	// 				searchDone = true;
+	// 				return;
+	// 			}
+	// 			await new Promise((resolve) => setTimeout(resolve, SEARCH_POLL_MS));
+	// 		}
+	// 	} catch (e) {
+	// 		if (run === searchRun) error = e instanceof Error ? e.message : 'Search failed';
+	// 	} finally {
+	// 		if (run === searchRun) loading = false;
+	// 	}
+	// }
+	// OLD CODE END
+	async function runSearch(again?: Submitted) {
+		if (!again && !bpfFilter.trim()) {
 			error = 'Enter a display filter to search';
 			return;
 		}
 		const run = ++searchRun;
 		// Filter and range are captured once: the daemon keys its background job on the exact
 		// (filter, from, to), so changing any of them mid-poll would cancel and restart it.
-		const filter = bpfFilter;
-		const { from, to } = getTimeRange();
+		const search: Submitted = again ?? { filter: bpfFilter, ...getTimeRange() };
+		submitted = search;
+		retrySearch = null;
+		filterError = null;
 		loading = true;
 		error = '';
 		searchDone = false;
@@ -481,7 +548,7 @@
 		searchProgress = null;
 		try {
 			while (run === searchRun) {
-				const response = await searchPcaps(filter, { from, to });
+				const response = await searchPcaps(search.filter, { from: search.from, to: search.to });
 				if (run !== searchRun) return;
 				searchResults = response.results;
 				searchProgress = {
@@ -494,6 +561,8 @@
 					bytesChecked: response.bytes_checked ?? 0,
 					bytesTotal: response.bytes_total ?? 0,
 					secondsElapsed: response.seconds_elapsed ?? 0,
+					full: response.files_full ?? 0,
+					truncated: response.files_truncated ?? 0,
 				};
 				if (response.complete) {
 					searchDone = true;
@@ -502,38 +571,140 @@
 				await new Promise((resolve) => setTimeout(resolve, SEARCH_POLL_MS));
 			}
 		} catch (e) {
-			if (run === searchRun) error = e instanceof Error ? e.message : 'Search failed';
+			if (run !== searchRun) return;
+			if (e instanceof PcapRequestError && e.status === 400) {
+				// TShark refused the filter: nothing was searched, so there is no result card or count
+				submitted = null;
+				if (bpfFilter === search.filter) filterError = { text: search.filter, message: e.message };
+				else error = `The filter "${search.filter}" was refused: ${e.message}`;
+			} else {
+				retrySearch = search;
+				error = e instanceof Error ? e.message : 'Search failed';
+			}
 		} finally {
 			if (run === searchRun) loading = false;
 		}
 	}
 
-	async function showPreview(file: string) {
+	/** NET-347: Download filtered stays off until TShark accepts the text in the box (checked 500 ms after typing stops). */
+	$effect(() => {
+		const text = bpfFilter.trim();
+		const run = ++checkRun;
+		if (!text) {
+			filterCheck = null;
+			return;
+		}
+		filterCheck = { text, state: 'checking' };
+		const timer = setTimeout(async () => {
+			try {
+				await checkPcapFilter(text);
+				if (run === checkRun) filterCheck = { text, state: 'ok' };
+			} catch (e) {
+				if (run !== checkRun) return;
+				// Busy or unavailable is not "invalid": the download checks the filter again on the daemon
+				filterCheck =
+					e instanceof PcapRequestError && e.status === 400
+						? { text, state: 'invalid', message: e.message }
+						: { text, state: 'unknown' };
+			}
+		}, 500);
+		return () => clearTimeout(timer);
+	});
+
+	/** TShark's message for the text in the box: from the search that was refused, or from the check. */
+	const fieldError = $derived(
+		filterError?.text === bpfFilter
+			? filterError.message
+			: filterCheck?.state === 'invalid' && filterCheck.text === bpfFilter.trim()
+				? (filterCheck.message ?? '')
+				: '',
+	);
+	const downloadReady = $derived(
+		filterCheck !== null && filterCheck.text === bpfFilter.trim() && (filterCheck.state === 'ok' || filterCheck.state === 'unknown'),
+	);
+
+	/** Rows whose read stopped before the end of the file: their counts are a minimum */
+	const stoppedEarly = (o: PcapReadOutcome | undefined) => o === 'failed' || o === 'timed_out';
+
+	/** NET-347: what the finished search covered, so a count never reads as more than it is */
+	const coverage = $derived.by(() => {
+		const p = searchProgress;
+		if (!p || loading) return null;
+		const early = searchResults.filter((r) => stoppedEarly(r.outcome));
+		const earlyFailed = early.filter((r) => r.outcome === 'failed').length;
+		const earlyTimedOut = early.length - earlyFailed;
+		return {
+			incomplete: p.failed + p.timedOut > 0,
+			full: p.full,
+			total: p.total,
+			early: early.length,
+			unreadFailed: Math.max(0, p.failed - earlyFailed),
+			unreadTimedOut: Math.max(0, p.timedOut - earlyTimedOut),
+			truncated: p.truncated,
+		};
+	});
+	const plural = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
+
+	// OLD CODE START — NET-347: a late answer for an earlier pick could land under the newer file's name,
+	// and the preview always took the filter in the box
+	// async function showPreview(file: string) {
+	// 	previewLoading = true;
+	// 	previewFile = file;
+	// 	previewPackets = [];
+	// 	previewTimedOut = false;
+	// 	previewFailed = false;
+	// 	error = '';
+	// 	try {
+	// 		const response = await previewPcap(file, {
+	// 			filter: bpfFilter || undefined,
+	// 			limit: 100,
+	// 		});
+	// 		previewPackets = response.packets;
+	// 		previewTimedOut = response.timed_out ?? false;
+	// 	} catch (e) {
+	// 		error = e instanceof Error ? e.message : 'Preview failed';
+	// 		previewFailed = true;
+	// 	} finally {
+	// 		previewLoading = false;
+	// 		scrollTimer = setTimeout(() => {
+	// 			document.getElementById('preview-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	// 		}, 50);
+	// 	}
+	// }
+	// OLD CODE END
+	async function showPreview(file: string, filter: string = bpfFilter) {
+		const run = ++previewRun;
 		previewLoading = true;
 		previewFile = file;
+		previewFilter = filter;
 		previewPackets = [];
 		previewTimedOut = false;
 		previewFailed = false;
 		error = '';
 		try {
 			const response = await previewPcap(file, {
-				filter: bpfFilter || undefined,
+				filter: filter || undefined,
 				limit: 100,
 			});
+			if (run !== previewRun) return;
 			previewPackets = response.packets;
 			previewTimedOut = response.timed_out ?? false;
 		} catch (e) {
+			if (run !== previewRun) return;
 			error = e instanceof Error ? e.message : 'Preview failed';
 			previewFailed = true;
 		} finally {
-			previewLoading = false;
-			scrollTimer = setTimeout(() => {
-				document.getElementById('preview-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-			}, 50);
+			if (run === previewRun) {
+				previewLoading = false;
+				scrollTimer = setTimeout(() => {
+					document.getElementById('preview-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+				}, 50);
+			}
 		}
 	}
 
 	function closePreview() {
+		previewRun++; // a preview still loading for this file is dropped
 		previewFile = '';
 		previewPackets = [];
 		previewTimedOut = false;
@@ -584,7 +755,8 @@
 	}
 
 	function downloadFiltered() {
-		if (!bpfFilter.trim()) return;
+		// OLD CODE: if (!bpfFilter.trim()) return; (NET-347: only a filter TShark accepted, or couldn't check)
+		if (!bpfFilter.trim() || !downloadReady) return;
 		const span = downloadWindow();
 		if (typeof span === 'string') {
 			error = span;
@@ -710,7 +882,8 @@
 
 {#snippet fileSizeCell(f: PcapFile)}<Bytes value={f.size_bytes} max={maxFileSize} display={formatBytes(f.size_bytes)} />{/snippet}
 {#snippet sizeCell(r: PcapSearchResult)}{formatBytes(r.size_bytes)}{/snippet}
-{#snippet matchingCell(r: PcapSearchResult)}{fmt(r.matching_packets)}{/snippet}
+<!-- OLD CODE: {#snippet matchingCell(r: PcapSearchResult)}{fmt(r.matching_packets)}{/snippet} (NET-347: a stopped read's count is a minimum) -->
+{#snippet matchingCell(r: PcapSearchResult)}{stoppedEarly(r.outcome) ? `at least ${fmt(r.matching_packets)}` : r.outcome === 'truncated' ? `${fmt(r.matching_packets)} (file ends mid-packet)` : fmt(r.matching_packets)}{/snippet}
 {#snippet modifiedCell(f: { modified: string })}<span class="num">{formatTime(f.modified)}</span>{/snippet}
 {#snippet protocolCell(pkt: PcapPacket)}{packetProtocol(pkt)}{/snippet}
 {#snippet downloadCell(r: { file: string; name: string })}
@@ -834,17 +1007,25 @@
 					class="mono"
 					bind:value={bpfFilter}
 					onkeydown={(e) => e.key === 'Enter' && runSearch()}
+					aria-invalid={fieldError ? 'true' : undefined}
+					aria-describedby={fieldError ? 'pcap-filter-error' : undefined}
 				/>
 			</div>
 			<!-- 2026-11-02: never disabled; a background search can take many minutes, so a new
 			     filter or range must be able to replace it -->
-			<button class="btn primary" type="button" onclick={runSearch}>
+			<button class="btn primary" type="button" onclick={() => runSearch()}>
 				<Icon name="search" />{loading ? 'Searching…' : 'Search'}
 			</button>
-			<button class="btn" type="button" onclick={downloadFiltered} disabled={!bpfFilter.trim()}>
+			<!-- OLD CODE: disabled={!bpfFilter.trim()} (NET-347: a filter TShark refuses could be downloaded) -->
+			<button class="btn" type="button" onclick={downloadFiltered} disabled={!downloadReady}>
 				<Icon name="download" />Download filtered
 			</button>
 		</div>
+		{#if fieldError}
+			<p id="pcap-filter-error" class="field-error filter-error" role="alert">{fieldError}</p>
+		{:else if filterCheck?.state === 'unknown' && filterCheck.text === bpfFilter.trim()}
+			<p class="field-help">Couldn't check the filter just now. Download filtered checks it again before it starts.</p>
+		{/if}
 		<div class="toolbar">
 			<label class="word" for="pcap-download-from">Download from</label>
 			<input id="pcap-download-from" class="input when" type="datetime-local" step="1" bind:value={downloadFrom} />
@@ -873,13 +1054,27 @@
 	</Card>
 
 	{#if error}
-		<p class="notice is-error c-12" role="alert"><Icon name="warn" />{error}</p>
+		<!-- OLD CODE: <p class="notice is-error c-12" role="alert"><Icon name="warn" />{error}</p> (NET-347: a search that failed to start can be resent as it was) -->
+		<p class="notice is-error c-12" role="alert">
+			<Icon name="warn" /><span>{error}</span>
+			{#if retrySearch}
+				<button class="btn" type="button" onclick={() => retrySearch && runSearch(retrySearch)}>Try again</button>
+			{/if}
+		</p>
 	{/if}
 
+	<!-- OLD CODE START — NET-347: the card said "N files match" for whatever was in the filter box
 	{#if searchDone || loading}
 		<Card
 			title="Search results"
 			sub={searchResults.length === 1 ? '1 file matches' : `${searchResults.length} files match`}
+			class="c-12"
+		>
+	OLD CODE END -->
+	{#if submitted && (searchDone || loading)}
+		<Card
+			title="Search results"
+			sub="{searchResults.length === 1 ? '1 file matches' : `${searchResults.length} files match`} {submitted.filter}{coverage?.incomplete ? ' · incomplete' : ''}"
 			class="c-12"
 		>
 			{#if loading}
@@ -893,6 +1088,7 @@
 						Starting search&hellip;
 					{/if}
 				</p>
+			<!-- OLD CODE START — NET-347: failure counts alone, which didn't say how much was searched
 			{:else if searchProgress && searchProgress.timedOut > 0}
 				<p class="notice is-warn note"><Icon name="warn" />{timedOutNote(searchProgress.timedOut)}</p>
 			{/if}
@@ -901,8 +1097,34 @@
 					<Icon name="warn" />{searchProgress.failed === 1 ? "1 file couldn't be searched" : `${searchProgress.failed} files couldn't be searched`}{searchProgress.error ? `: ${searchProgress.error}` : '.'}
 				</p>
 			{/if}
+			OLD CODE END -->
+			{/if}
+			{#if coverage && (coverage.incomplete || coverage.truncated > 0)}
+				<div class="notice is-warn note coverage" role="status">
+					<Icon name="warn" />
+					<div>
+						<!-- OLD CODE: <p>Fully searched {coverage.full} of {plural(coverage.total, 'file', 'files')}.{coverage.incomplete ? ' Results are incomplete.' : ''}</p> (the file being written read as missed on every recent search) -->
+						{#if coverage.incomplete}
+							<p>Fully searched {coverage.full + coverage.truncated} of {plural(coverage.total, 'file', 'files')}. Results are incomplete.</p>
+						{/if}
+						{#if coverage.early > 0}
+							<p>Reading stopped early in {plural(coverage.early, 'file', 'files')}: {coverage.early === 1 ? 'its count is' : 'their counts are'} a minimum.</p>
+						{/if}
+						{#if coverage.unreadFailed > 0}
+							<p>{coverage.unreadFailed === 1 ? "1 file couldn't be searched" : `${coverage.unreadFailed} files couldn't be searched`}{searchProgress?.error ? `: ${searchProgress.error}` : '.'}</p>
+						{/if}
+						{#if coverage.unreadTimedOut > 0}
+							<p>{timedOutNote(coverage.unreadTimedOut)}</p>
+						{/if}
+						{#if coverage.truncated > 0}
+							<p>{plural(coverage.truncated, 'file ends', 'files end')} mid-packet (still being written, or cut short): {coverage.truncated === 1 ? 'its count covers' : 'their counts cover'} the packets {coverage.truncated === 1 ? 'it holds' : 'they hold'}.</p>
+						{/if}
+					</div>
+				</div>
+			{/if}
 			{#if searchResults.length === 0}
-				{#if searchDone && searchProgress && searchProgress.failed > 0}
+				<!-- OLD CODE: {#if searchDone && searchProgress && searchProgress.failed > 0} (NET-347: timed-out files weren't searched either) -->
+				{#if searchDone && coverage?.incomplete}
 					<CardState state="empty" icon="search" title="No matching packets in the files that could be searched." message="Try another filter, or a range without the unreadable files." />
 				{:else if searchDone}
 					<CardState state="empty" icon="search" title="No matching packets found in any PCAP file." message="Try another filter or a longer time range." />
@@ -914,7 +1136,7 @@
 					ariaLabel="Files matching the filter"
 					rowKey={(r) => r.file}
 					initialSort={{ key: 'matching_packets', dir: 'desc' }}
-					onrowactivate={(r) => showPreview(r.file)}
+					onrowactivate={(r) => showPreview(r.file, submitted?.filter ?? bpfFilter)}
 					rowLabel={(r) => `Preview ${r.name}`}
 					selectedKey={previewFile || undefined}
 				/>
@@ -924,7 +1146,7 @@
 
 	<Card
 		title="Packet preview"
-		sub={previewFile ? `${previewName} · first 100 packets${bpfFilter ? ' matching the filter' : ''}` : 'The first 100 packets of a file'}
+		sub={previewFile ? `${previewName} · first 100 packets${previewFilter ? ` matching ${previewFilter}` : ''}` : 'The first 100 packets of a file'}
 		class="c-12"
 	>
 		{#snippet actions()}
@@ -955,7 +1177,7 @@
 				<p class="notice is-warn note"><Icon name="warn" />Stopped after 45 seconds: this file is large, so only its first part was read.</p>
 			{/if}
 		{:else if previewFailed}
-			<CardState state="error" title="Couldn't preview {previewName}: the request failed." message={error || undefined} onaction={() => showPreview(previewFile)} />
+			<CardState state="error" title="Couldn't preview {previewName}: the request failed." message={error || undefined} onaction={() => showPreview(previewFile, previewFilter)} />
 		{:else if previewTimedOut}
 			<p class="notice is-warn"><Icon name="warn" />No matching packets in the part of this file read within 45 seconds. The file is large; try a smaller file or a narrower time range.</p>
 		{:else}
@@ -1029,6 +1251,10 @@
 	.download-help { margin-top: calc(var(--sp-2) * -1); margin-bottom: var(--sp-4); }
 	.note { margin-bottom: var(--sp-3); }
 	.pick-hint { margin-top: var(--sp-2); }
+	/* NET-347: TShark's refusal keeps its own line breaks (the caret under the bad token) */
+	.filter-error { margin-top: var(--sp-2); white-space: pre-wrap; font-family: var(--font-mono); }
+	.coverage p { margin: 0; }
+	.coverage p + p { margin-top: var(--sp-1); }
 	.notice .btn { margin-left: auto; }
 	.row-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; }
 	/* A long preview scrolls inside the card */

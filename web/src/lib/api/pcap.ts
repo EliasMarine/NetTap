@@ -19,8 +19,13 @@ export interface PcapFilesResponse {
 	files: PcapFile[];
 }
 
+/** How a file's search read ended (NET-347): only "full" counted every packet in it. */
+export type PcapReadOutcome = 'full' | 'truncated' | 'timed_out' | 'failed';
+
 export interface PcapSearchResult extends PcapFile {
+	/** Matches found; a lower bound unless `outcome` is "full". */
 	matching_packets: number;
+	outcome?: PcapReadOutcome;
 }
 
 export interface PcapSearchResponse {
@@ -36,6 +41,9 @@ export interface PcapSearchResponse {
 	/** Files tshark couldn't read (counted in files_checked), and the first reason (#96). */
 	failed?: number;
 	error?: string | null;
+	/** NET-347: files read to the end, and files that ended mid-packet (counted in files_checked). */
+	files_full?: number;
+	files_truncated?: number;
 	/** Sizes and time so far, for the page's estimate (#137). */
 	bytes_total?: number;
 	bytes_checked?: number;
@@ -104,18 +112,58 @@ export async function getPcapFiles(
 /**
  * Search PCAPs by BPF filter.
  */
+/** A failed PCAP request, with its HTTP status (NET-347: 400 is TShark refusing the filter). */
+export class PcapRequestError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+	) {
+		super(message);
+		this.name = 'PcapRequestError';
+	}
+}
+
+async function requestError(res: Response, fallback: string): Promise<PcapRequestError> {
+	const data = await res.json().catch(() => ({}));
+	return new PcapRequestError(data.error || `${fallback}: ${res.status}`, res.status);
+}
+
+// OLD CODE START — NET-347: the error dropped the status, so a refused filter looked like any failure
+// export async function searchPcaps(
+// 	filter: string,
+// 	opts: { from?: string; to?: string } = {}
+// ): Promise<PcapSearchResponse> {
+// 	const query = buildQuery({ filter, from: opts.from, to: opts.to });
+// 	const res = await fetch(`/api/pcap/search${query}`);
+//
+// 	if (!res.ok) {
+// 		const data = await res.json().catch(() => ({ error: 'Search failed' }));
+// 		throw new Error(data.error || `Search failed: ${res.status}`);
+// 	}
+//
+// 	return res.json();
+// }
+// OLD CODE END
+/** Start or poll a background search; a 400 is TShark refusing the filter, and starts nothing. */
 export async function searchPcaps(
 	filter: string,
 	opts: { from?: string; to?: string } = {}
 ): Promise<PcapSearchResponse> {
 	const query = buildQuery({ filter, from: opts.from, to: opts.to });
 	const res = await fetch(`/api/pcap/search${query}`);
+	if (!res.ok) throw await requestError(res, 'Search failed');
+	return res.json();
+}
 
-	if (!res.ok) {
-		const data = await res.json().catch(() => ({ error: 'Search failed' }));
-		throw new Error(data.error || `Search failed: ${res.status}`);
-	}
-
+/** Resolves when TShark accepts the filter; rejects with PcapRequestError (400: refused, with TShark's message). */
+export async function checkPcapFilter(filter: string): Promise<{ ok: true; filter: string }> {
+	// POST (NET-347): a filter typed but never searched stays out of the access log
+	const res = await fetch('/api/pcap/check-filter', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ filter }),
+	});
+	if (!res.ok) throw await requestError(res, 'Filter check failed');
 	return res.json();
 }
 

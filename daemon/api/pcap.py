@@ -7,6 +7,7 @@ Endpoints:
     GET /api/pcap/files      List available PCAPs
     GET /api/pcap/search     Search PCAPs by BPF filter
     GET /api/pcap/preview    Preview packets from a PCAP
+    POST /api/pcap/check-filter  Compile a display filter (NET-347)
     GET /api/pcap/download   Download filtered PCAP
 """
 
@@ -28,7 +29,7 @@ from api.time_range import iso_param
 from services.capture_index import StillIndexing
 from services.container_exec import ReaderBusy
 from services.packet_manifest import PacketError
-from services.pcap_search import PcapSearchService
+from services.pcap_search import PcapSearchService, SearchStartExpired
 
 logger = logging.getLogger("nettap.api.pcap")
 
@@ -107,15 +108,62 @@ async def handle_pcap_search(request: web.Request) -> web.Response:
     #     }
     # )
     # OLD CODE END
+    # OLD CODE START — NET-347: a start that couldn't check the filter answered a plain 5xx,
+    # which the error middleware cut to "Something went wrong"
+    # try:
+    #     progress = await pcap_service.search_progress(bpf_filter, from_ts, to_ts)
+    # except ValueError as exc:
+    #     return web.json_response({"error": str(exc)}, status=400)
+    # except Exception as exc:
+    #     logger.error("Error searching PCAPs: %s", exc)
+    #     return web.json_response({"error": f"PCAP search failed: {exc}"}, status=500)
+    # OLD CODE END
     try:
         progress = await pcap_service.search_progress(bpf_filter, from_ts, to_ts)
-    except ValueError as exc:
+    except ValueError as exc:  # TShark refused the filter: its own message
         return web.json_response({"error": str(exc)}, status=400)
+    except (ReaderBusy, SearchStartExpired) as exc:
+        return public_json({"error": str(exc)}, status=503)
     except Exception as exc:
         logger.error("Error searching PCAPs: %s", exc)
-        return web.json_response({"error": f"PCAP search failed: {exc}"}, status=500)
+        return public_json({"error": _SEARCH_UNAVAILABLE}, status=500)
 
     return web.json_response(progress)
+
+
+async def handle_pcap_check_filter(request: web.Request) -> web.Response:
+    """POST /api/pcap/check-filter {filter} — compile a display filter in TShark (NET-347).
+
+    POST so a filter typed but never searched stays out of nginx's access log.
+    """
+    pcap_service: PcapSearchService = request.app["pcap_search"]
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response(
+            {"error": "Send a JSON body with a filter."}, status=400
+        )
+    bpf_filter = body.get("filter") if isinstance(body, dict) else None
+    if not isinstance(bpf_filter, str) or not bpf_filter.strip():
+        return web.json_response({"error": "filter is required"}, status=400)
+    bpf_filter = bpf_filter.strip()
+    try:
+        await pcap_service.check_filter(bpf_filter)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except ReaderBusy as exc:
+        return public_json({"error": str(exc)}, status=503)
+    except Exception as exc:
+        logger.warning("PCAP filter check couldn't run: %s", exc)
+        return public_json({"error": _CHECK_UNAVAILABLE}, status=500)
+    return web.json_response({"ok": True, "filter": bpf_filter})
+
+
+_SEARCH_UNAVAILABLE = (
+    "Couldn't check the filter or start the search. "
+    "Check that the packet reader is running on the System page, then try again."
+)
+_CHECK_UNAVAILABLE = "Couldn't check the filter just now."
 
 
 async def handle_pcap_preview(request: web.Request) -> web.Response:
@@ -365,8 +413,9 @@ def register_pcap_routes(app: web.Application, pcap_service: PcapSearchService) 
 
     app.router.add_get("/api/pcap/files", handle_pcap_files)
     app.router.add_get("/api/pcap/search", handle_pcap_search)
+    app.router.add_post("/api/pcap/check-filter", handle_pcap_check_filter)
     app.router.add_get("/api/pcap/preview", handle_pcap_preview)
     app.router.add_get("/api/pcap/download", handle_pcap_download)
     app.router.add_get("/api/pcap/download-file", handle_pcap_download_file)
 
-    logger.info("PCAP search API routes registered (5 endpoints)")
+    logger.info("PCAP search API routes registered (6 endpoints)")

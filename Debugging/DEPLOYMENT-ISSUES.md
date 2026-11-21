@@ -2123,7 +2123,7 @@ The first-run Go Live path can't be shown on a box with an admin; CI's first-run
 | Field | Value |
 |---|---|
 | **PR** | `fix/tshark-init` (A0 of the 2026-11-20 live audit fixes) |
-| **Status** | Fixed in code; G11 deploy via `scripts/remote/deploy-tshark-init.sh` |
+| **Status** | Fixed and verified on the G11 2026-11-20 (PR #345 → 65e1bc71) |
 | **Severity** | Urgent (PCAP Search, Packet analysis and the filtered download all down) |
 | **Date** | 2026-11-20 |
 | **Environment** | G11, `nettap-tshark` up 11 days since 2026-11-09 |
@@ -2136,7 +2136,28 @@ The first-run Go Live path can't be shown on a box with an admin; CI's first-run
 
 **Verification:** `deploy-tshark-init.sh` recreates only this container (`--no-deps`), then checks that `HostConfig.Init` is true, PID 1 is `docker-init`, TShark reads a closed capture, and 20 supervised filter checks leave zero zombies with `pids.current` back at its baseline.
 
+**Device result (2026-11-20):** before, `pids.current` 14137 of 14138 and 14,136 zombies. After, `HostConfig.Init` true, PID 1 `docker-init`, a closed capture read, 20 of 20 supervised checks answered 200, 0 zombies and `pids.current` 2.
+
 **Key insight:** a container that receives `docker exec` jobs needs a PID 1 that reaps. `docker top` and `cgroup.procs` don't show zombies. Read `pids.current` in the container's cgroup, or count `Z` children of its init PID on the host.
+
+### NET-347 (PR A): a refused filter was searched, and a replaced search let readers pile up
+
+| Field | Value |
+|---|---|
+| **PR** | `fix/pcap-search-reliability` |
+| **Status** | Fixed in code; G11 deploy via `scripts/remote/deploy-live-audit-fixes.sh` |
+| **Severity** | High |
+| **Date** | 2026-11-20 |
+
+**Symptom:** the audit's search for `nettapqa_invalid_filter` scanned and reported "7 files match". The filter was never compiled, so every file's read failed or was guessed at, and the card counted whatever came back.
+
+**Root cause:** (1) `search_progress` started a job without asking TShark whether it accepts the filter. (2) A new search cancelled the old task mid-read: the cancelled `communicate()` freed the reader slot while TShark ran on in the container, so repeated searches stacked full-file reads in the 1 GiB container. (3) The count read all of stdout into memory and treated any nonzero exit with output as a full read, so a damaged or stopped file looked fully searched.
+
+**Fix:** a new search first compiles the filter (`check_filter`: the PCAP rules, then the existing CHECK_JOB, holding one reader slot); TShark's refusal is a 400 and installs nothing. Starts run one at a time under `_start_lock` with a 45 s deadline (`SearchStartExpired` → 503). A replaced job is never cancelled: it stops before its next file, and every job shares `_count_lock`, so background search runs one TShark read at a time and the other slot stays free for previews and checks. `_count_file` (`nice -n 19 tshark -l`) reads both pipes as they fill, holds its slot until the docker exec ends, and classifies each file: timed out, out of memory, truncated, full, failed, keeping the matches it saw. The page names the searched filter, says what was covered ("Fully searched 7 of 318 files. Results are incomplete.") and marks stopped reads "at least N". New `POST /api/pcap/check-filter` gates Download filtered.
+
+**Verification:** `deploy-live-audit-fixes.sh` runs `verify_pcap_search.py` inside the daemon: the refused filter answers 400 on both routes, and a known-answer search over a closed 60 s window must read every file in full and match TShark's own per-file counts.
+
+**Key insight:** cancelling an asyncio wait on `docker exec` does not stop the process in the container. Hold the slot until the exec has ended.
 
 ---
 
@@ -2200,6 +2221,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `web/src/lib/api/notification-hub.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
 | `web/src/routes/setup/+page.svelte` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
 | `daemon/api/pcap.py` | Chain 17 | Added `GET /api/pcap/download-file` endpoint for per-file PCAP download. |
+| `daemon/services/pcap_search.py`, `daemon/api/pcap.py` | NET-347 (Chain 38) | A new search compiles its filter first (400, nothing installed). Starts are serialised under `_start_lock` (45 s, 503). Never cancel a search job: replaced jobs stop between files, and `_count_lock` keeps background search to one TShark read. `_count_file` holds its slot until the exec ends. Keep `public_json` on the 503/500 replies. |
 | `daemon/services/pcap_search.py` | Chain 17 | Fixed filter validation: removed `|` and `&` from forbidden chars (safe with `create_subprocess_exec`). |
 | `web/src/routes/pcap/+page.svelte` | Chain 17 | Fixed quick filters from BPF to display filter syntax. Added Download buttons, auto-scroll to preview, sortable columns. |
 | `web/src/lib/api/pcap.ts` | Chain 17 | Added `downloadPcapFile()` API client function for per-file download. |

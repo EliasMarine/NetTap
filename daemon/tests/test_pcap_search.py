@@ -7,6 +7,7 @@ search, and download.
 
 import asyncio
 import os
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -227,11 +228,25 @@ class TestPreview:
 _DISPLAY_FILTER = "ip.src == 10.0.0.1 || (tcp.port == 443 && !dns)"
 
 
+def _stream(data: bytes) -> asyncio.StreamReader:
+    """A finished pipe holding `data` (NET-347: the search count reads its pipes as they fill)."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(data)
+    reader.feed_eof()
+    return reader
+
+
 class _FakeProc:
     returncode = 0
 
+    def __init__(self):
+        self.stdout, self.stderr = _stream(b"1\n2\n"), _stream(b"")
+
     async def communicate(self):
         return b"1\n2\n", b""
+
+    async def wait(self):
+        return self.returncode
 
 
 @pytest.fixture
@@ -325,24 +340,41 @@ class TestNoOrphanedTshark:
     # OLD CODE END
 
 
+# TShark 4.0.17 reading a file that ends mid-packet (exit 2)
+_CUT_SHORT_STDERR = b'tshark: The file "/pcap/x.pcap" appears to have been cut short in the middle of a packet.\n'
+
+
 class _Proc:
-    def __init__(self, out=b"1\n2\n", rc=0):
-        self._out, self.returncode = out, rc
+    def __init__(self, out=b"1\n2\n", rc=0, err=b""):
+        self._out, self.returncode, self._err = out, rc, err
+        self.stdout, self.stderr = _stream(out), _stream(err)
 
     async def communicate(self):
-        return self._out, b""
+        return self._out, self._err
+
+    async def wait(self):
+        return self.returncode
+
+    def kill(self):
+        pass
 
 
 @pytest.fixture
 def fake_tshark(monkeypatch):
     """create_subprocess_exec stub; set .result = (stdout, returncode)."""
-    state = type("S", (), {"result": (b"1\n2\n", 0), "calls": []})()
+    state = type("S", (), {"result": (b"1\n2\n", 0), "calls": [], "checked": []})()
 
     async def fake_exec(*argv, **kwargs):
         state.calls.append(list(argv))
         return _Proc(*state.result)
 
+    async def fake_check(
+        display_filter,
+    ):  # NET-347: a new search compiles its filter first
+        state.checked.append(display_filter)
+
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(pcap_search_mod, "_check_download_filter", fake_check)
     return state
 
 
@@ -420,10 +452,11 @@ class TestBackgroundSearch:
         self, service, fake_tshark, monkeypatch
     ):
         # timeout -k 5 sends KILL 5 s after its deadline: that 137 is a timeout
-        clock = iter(range(0, 100_000, 400))
-        monkeypatch.setattr(pcap_search_mod.time, "monotonic", lambda: next(clock))
         fake_tshark.result = (b"", 137)
         await service.search_progress("dns")
+        # the clock jumps only once the job runs (NET-347: the start has its own deadline)
+        clock = iter(range(0, 100_000, 400))
+        monkeypatch.setattr(pcap_search_mod.time, "monotonic", lambda: next(clock))
         await service._search_task
         done = await service.search_progress("dns")
         assert (done["timed_out"], done["failed"]) == (3, 0)
@@ -440,9 +473,19 @@ class TestBackgroundSearch:
         assert done["count"] == 0
         assert done["complete"] is True
 
+    # OLD CODE START — NET-347: any nonzero exit with output counted as a full read
+    # @pytest.mark.asyncio
+    # async def test_cut_short_file_keeps_its_matches(self, service, fake_tshark):
+    #     fake_tshark.result = (b"7\n9\n", 2)  # file still being written
+    #     assert await service._count_matching_packets("/x.pcap", "dns") == 2
+    # OLD CODE END
     @pytest.mark.asyncio
     async def test_cut_short_file_keeps_its_matches(self, service, fake_tshark):
-        fake_tshark.result = (b"7\n9\n", 2)  # file still being written
+        fake_tshark.result = (
+            b"7\n9\n",
+            2,
+            _CUT_SHORT_STDERR,
+        )  # file still being written
         assert await service._count_matching_packets("/x.pcap", "dns") == 2
 
     @pytest.mark.asyncio
@@ -451,7 +494,7 @@ class TestBackgroundSearch:
             await service.search_progress("")
 
     @pytest.mark.asyncio
-    async def test_no_files_is_complete_at_once(self, tmp_path):
+    async def test_no_files_is_complete_at_once(self, tmp_path, fake_tshark):
         svc = PcapSearchService(pcap_dir=str(tmp_path / "empty"))
         result = await svc.search_progress("dns")
         assert result["complete"] is True
@@ -994,3 +1037,285 @@ class TestStreamedDownload:
 
 async def _noop(_chunk: bytes) -> None:
     return None
+
+
+# ---------------------------------------------------------------------------
+# NET-347: a refused filter starts nothing; one start and one background read at a time
+# ---------------------------------------------------------------------------
+
+
+_REFUSED = "tshark: nettapqa_invalid_filter is neither a field nor a protocol name."
+
+
+class TestSearchAdmission:
+    @pytest.mark.asyncio
+    async def test_a_refused_filter_starts_nothing(
+        self, service, fake_tshark, monkeypatch
+    ):
+        async def refuse(display_filter):
+            raise ValueError(_REFUSED)
+
+        monkeypatch.setattr(pcap_search_mod, "_check_download_filter", refuse)
+        with pytest.raises(ValueError, match="neither a field"):
+            await service.search_progress("nettapqa_invalid_filter")
+        assert service._search_job is None
+        assert fake_tshark.calls == []  # no file was read
+
+    @pytest.mark.asyncio
+    async def test_a_check_that_could_not_run_starts_nothing(
+        self, service, fake_tshark, monkeypatch
+    ):
+        async def cannot_fork(display_filter):
+            raise RuntimeError("sh: 1: Cannot fork")
+
+        monkeypatch.setattr(pcap_search_mod, "_check_download_filter", cannot_fork)
+        with pytest.raises(RuntimeError):
+            await service.search_progress("dns")
+        assert service._search_job is None
+        assert fake_tshark.calls == []
+
+    @pytest.mark.asyncio
+    async def test_busy_reader_is_reader_busy(self, pcap_dir, fake_tshark, monkeypatch):
+        monkeypatch.setattr(pcap_search_mod, "_DOWNLOAD_SLOT_WAIT_SECONDS", 0.01)
+        svc = PcapSearchService(pcap_dir=str(pcap_dir), semaphore=asyncio.Semaphore(0))
+        with pytest.raises(ReaderBusy):
+            await svc.search_progress("dns")
+        assert svc._search_job is None
+
+    @pytest.mark.asyncio
+    async def test_a_refused_start_leaves_the_running_job_alone(
+        self, service, fake_tshark, monkeypatch
+    ):
+        await service.search_progress("dns")
+
+        async def refuse(display_filter):
+            raise ValueError(_REFUSED)
+
+        monkeypatch.setattr(pcap_search_mod, "_check_download_filter", refuse)
+        with pytest.raises(ValueError):
+            await service.search_progress("nettapqa_invalid_filter")
+        assert service._search_job["key"][0] == "dns"
+        await service._search_task
+        assert (await service.search_progress("dns"))["complete"] is True
+
+    @pytest.mark.asyncio
+    async def test_starts_install_in_arrival_order(
+        self, service, fake_tshark, monkeypatch
+    ):
+        gate = asyncio.Event()
+        installed = []
+
+        async def slow_first(display_filter):
+            if display_filter == "dns":
+                await gate.wait()
+
+        monkeypatch.setattr(pcap_search_mod, "_check_download_filter", slow_first)
+        real_install = service._install_job
+        monkeypatch.setattr(
+            service,
+            "_install_job",
+            lambda key, pcaps: (installed.append(key[0]), real_install(key, pcaps)),
+        )
+        first = asyncio.create_task(service.search_progress("dns"))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(service.search_progress("http"))
+        await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(first, second)
+        assert installed == ["dns", "http"]
+        assert service._search_job["key"][0] == "http"
+
+    @pytest.mark.asyncio
+    async def test_a_duplicate_start_waits_and_gets_the_installed_job(
+        self, service, fake_tshark, monkeypatch
+    ):
+        gate = asyncio.Event()
+
+        async def slow(display_filter):
+            fake_tshark.checked.append(display_filter)
+            await gate.wait()
+
+        monkeypatch.setattr(pcap_search_mod, "_check_download_filter", slow)
+        first = asyncio.create_task(service.search_progress("dns"))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(service.search_progress("dns"))
+        await asyncio.sleep(0)
+        gate.set()
+        a, b = await asyncio.gather(first, second)
+        assert fake_tshark.checked == ["dns"]  # compiled once
+        assert a["files_total"] == b["files_total"] == 3
+
+    @pytest.mark.asyncio
+    async def test_a_start_that_waits_too_long_installs_nothing(
+        self, service, fake_tshark, monkeypatch
+    ):
+        monkeypatch.setattr(pcap_search_mod, "_SEARCH_START_SECONDS", 0.05)
+        gate = asyncio.Event()
+
+        async def slow_first(display_filter):
+            if display_filter == "dns":
+                await gate.wait()
+
+        monkeypatch.setattr(pcap_search_mod, "_check_download_filter", slow_first)
+        first = asyncio.create_task(service.search_progress("dns"))
+        await asyncio.sleep(0)
+        with pytest.raises(pcap_search_mod.SearchStartExpired):
+            await service.search_progress("http")
+        gate.set()
+        with pytest.raises(pcap_search_mod.SearchStartExpired):
+            await first  # its own deadline passed while it was blocked
+        assert service._search_job is None
+
+
+class TestOneBackgroundRead:
+    @pytest.mark.asyncio
+    async def test_a_replaced_job_is_not_cancelled_and_stops_at_the_next_file(
+        self, service, fake_tshark, monkeypatch
+    ):
+        release = asyncio.Event()
+        reads = []
+        active = [0, 0]  # now, most at once
+
+        async def fake_count(pcap_file, bpf_filter, timeout):
+            reads.append(bpf_filter)
+            active[0] += 1
+            active[1] = max(active[1], active[0])
+            if len(reads) == 1:
+                await release.wait()
+            active[0] -= 1
+            return pcap_search_mod.FileCount(1, "full")
+
+        monkeypatch.setattr(service, "_count_file", fake_count)
+        await service.search_progress("dns")
+        old = service._search_task
+        while not reads:
+            await asyncio.sleep(0)
+        await service.search_progress(
+            "http"
+        )  # replaces while the dns read is in flight
+        # an interactive check still gets the other reader slot
+        await asyncio.wait_for(service.check_filter("tcp"), timeout=1)
+        await asyncio.sleep(0)
+        assert reads == ["dns"]  # the http job waits for the one background read
+        release.set()
+        await old
+        assert not old.cancelled()
+        await service._search_task
+        assert reads == ["dns", "http", "http", "http"]
+        assert active[1] == 1
+        done = await service.search_progress("http")
+        assert done["complete"] is True and done["files_full"] == 3
+
+    @pytest.mark.asyncio
+    async def test_counts_run_with_low_priority_and_line_flushing(
+        self, service, fake_tshark
+    ):
+        await service.search_progress("dns")
+        await service._search_task
+        argv = fake_tshark.calls[0]
+        assert argv[argv.index("nice") : argv.index("nice") + 3] == ["nice", "-n", "19"]
+        assert "-l" in argv
+
+
+def _real_process(code: str):
+    """create_subprocess_exec that runs `python3 -c code` instead of docker (real pipes)."""
+    real = asyncio.create_subprocess_exec
+
+    async def run(*argv, **kwargs):
+        return await real(sys.executable, "-c", code, **kwargs)
+
+    return run
+
+
+class TestCountReads:
+    @pytest.mark.asyncio
+    async def test_a_full_stderr_pipe_does_not_stall_the_count(
+        self, service, monkeypatch
+    ):
+        code = "import sys; sys.stderr.write('x' * 300000); sys.stderr.flush(); print(1); print(2)"
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _real_process(code))
+        read = await asyncio.wait_for(
+            service._count_file("/x.pcap", "dns", 300), timeout=20
+        )
+        assert read == pcap_search_mod.FileCount(2, "full")
+
+    @pytest.mark.asyncio
+    async def test_matches_printed_before_a_stuck_read_are_kept(
+        self, service, monkeypatch
+    ):
+        code = "import time; print(1, flush=True); print(2, flush=True); time.sleep(60)"
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _real_process(code))
+        monkeypatch.setattr(pcap_search_mod, "_HOST_CAP_EXTRA_SECONDS", 1)
+        read = await asyncio.wait_for(
+            service._count_file("/x.pcap", "dns", 0), timeout=20
+        )
+        assert read.outcome == "timed_out"
+        assert read.matches == 2
+
+    @pytest.mark.asyncio
+    async def test_frames_then_a_read_error_is_a_failed_row_with_its_matches(
+        self, service, fake_tshark
+    ):
+        fake_tshark.result = (
+            b"4\n8\n",
+            2,
+            b"tshark: The file appears to be damaged or corrupt.\n",
+        )
+        await service.search_progress("dns")
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["failed"] == 3 and done["files_full"] == 0
+        assert {(r["matching_packets"], r["outcome"]) for r in done["results"]} == {
+            (2, "failed")
+        }
+        assert "damaged" in done["error"]
+
+    @pytest.mark.asyncio
+    async def test_a_closed_truncated_file_with_no_match_is_not_unread(
+        self, pcap_dir, fake_tshark
+    ):
+        for extra in ("capture_002.pcapng", "2026-03/sub_capture.pcap"):
+            (pcap_dir / extra).unlink()
+        svc = PcapSearchService(pcap_dir=str(pcap_dir))
+        fake_tshark.result = (b"", 2, _CUT_SHORT_STDERR)
+        await svc.search_progress("dns")
+        await svc._search_task
+        done = await svc.search_progress("dns")
+        assert (done["files_truncated"], done["failed"], done["timed_out"]) == (1, 0, 0)
+        assert done["results"] == []
+
+
+class TestClassifyRead:
+    @pytest.mark.parametrize(
+        "rc, stderr, seconds, outcome",
+        [
+            (124, "", 300, "timed_out"),
+            (137, "", 305, "timed_out"),  # timeout's KILL after its deadline
+            (137, "", 12, "failed"),  # #137: the OOM killer, before the deadline
+            (2, _CUT_SHORT_STDERR.decode(), 3, "truncated"),
+            (0, "", 3, "full"),
+            (2, "tshark: The file appears to be damaged or corrupt.", 3, "failed"),
+        ],
+    )
+    def test_outcomes_in_order_and_every_count_is_kept(
+        self, rc, stderr, seconds, outcome
+    ):
+        read = pcap_search_mod._classify_read("/x.pcap", 5, rc, stderr, seconds, 300)
+        assert read.outcome == outcome
+        assert read.matches == 5
+
+
+class TestJobNeverStalls:
+    @pytest.mark.asyncio
+    async def test_a_read_that_could_not_start_is_a_failed_file(
+        self, service, fake_tshark, monkeypatch
+    ):
+        async def cannot_fork(*argv, **kwargs):
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+
+        await service.search_progress("dns")
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", cannot_fork)
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["complete"] is True
+        assert done["failed"] == 3 and "temporarily unavailable" in done["error"]

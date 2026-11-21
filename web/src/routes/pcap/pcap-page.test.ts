@@ -12,6 +12,7 @@ vi.mock('$lib/api/pcap', async (importActual) => ({
 	getPcapFiles: vi.fn(),
 	searchPcaps: vi.fn(),
 	previewPcap: vi.fn(),
+	checkPcapFilter: vi.fn(),
 }));
 vi.mock('$lib/api/capture', async (importActual) => ({
 	...(await importActual<typeof import('$lib/api/capture')>()),
@@ -22,6 +23,7 @@ let open: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
 	vi.mocked(api.getPcapFiles).mockResolvedValue({ count: 0, files: [] });
+	vi.mocked(api.checkPcapFilter).mockImplementation(async (filter) => ({ ok: true, filter }));
 	open = vi.fn();
 	vi.stubGlobal('open', open);
 });
@@ -41,6 +43,8 @@ function opened(): URLSearchParams {
 async function setUp(filter = 'tcp') {
 	render(Page);
 	await fireEvent.input(screen.getByLabelText('Wireshark display filter'), { target: { value: filter } });
+	// NET-347: Download filtered turns on once TShark has accepted the filter (500 ms after typing)
+	await vi.waitFor(() => expect(screen.getByRole('button', { name: /Download filtered/ })).toBeEnabled());
 }
 
 const download = () => fireEvent.click(screen.getByRole('button', { name: /Download filtered/ }));
