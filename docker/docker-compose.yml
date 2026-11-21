@@ -1198,6 +1198,9 @@ services:
       com.nettap.component: "nettap"
       com.nettap.description: "TShark packet decoder for on-demand PCAP analysis"
     read_only: true
+    # NET-347: the entrypoint (tail) never reaps, so every orphaned job watchdog stayed a zombie
+    # until the container hit pids.max and could not fork (14,136 on the G11, 2026-11-20)
+    init: true
     tmpfs:
       - /tmp:size=100M
     volumes:

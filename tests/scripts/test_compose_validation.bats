@@ -238,6 +238,8 @@ svc = data['services']['nettap-tshark']
 assert svc.get('network_mode') == 'none', svc.get('network_mode')
 assert 'networks' not in svc, 'network_mode: none cannot be combined with networks'
 assert svc.get('user') == '65534:65534', svc.get('user')
+# NET-347: the daemon's docker exec jobs leave orphans; without an init they never get reaped
+assert svc.get('init') is True, svc.get('init')
 "
     [ "$status" -eq 0 ]
 }

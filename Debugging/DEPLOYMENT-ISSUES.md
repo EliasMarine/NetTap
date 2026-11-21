@@ -2116,6 +2116,30 @@ The first-run Go Live path can't be shown on a box with an admin; CI's first-run
 
 ---
 
+## Chain 38: the TShark container filled with zombies and could not fork
+
+### NET-347: every packet search, preview and analysis failed with "fork system call failed"
+
+| Field | Value |
+|---|---|
+| **PR** | `fix/tshark-init` (A0 of the 2026-11-20 live audit fixes) |
+| **Status** | Fixed in code; G11 deploy via `scripts/remote/deploy-tshark-init.sh` |
+| **Severity** | Urgent (PCAP Search, Packet analysis and the filtered download all down) |
+| **Date** | 2026-11-20 |
+| **Environment** | G11, `nettap-tshark` up 11 days since 2026-11-09 |
+
+**Symptom:** the owner's live audit ran a PCAP search over 1 hour (318 files). It ended with "311 files couldn't be searched: timeout: fork system call failed: Resource temporarily unavailable". `docker exec nettap-tshark sh -c …` answered `sh: 1: Cannot fork`.
+
+**Root cause:** the image's entrypoint is `tail -f /dev/null`, and the service had no `init`, so `tail` was PID 1. Every supervised job (`daemon/services/container_exec.py` SUPERVISOR) backgrounds a watchdog (`setsid sh -c 'sleep …; kill …'`), kills its group when the job ends and exits without waiting. The watchdog's `sh` and `sleep` are orphaned to PID 1, and `tail` never calls `wait`. On the G11: 14,136 zombie children of `tail` (14,039 `sleep`, 90 `sh`, plus a few editcap, tshark and mergecap), cgroup `pids.current 14137` against `pids.max 14138`, `pids.events max 63394`. `docker top` showed only `tail`: zombies leave `cgroup.procs` but keep their pid charge until reaped.
+
+**Fix:** `init: true` on `nettap-tshark`. Docker's tini runs as PID 1 and reaps every orphan, whatever leaks it. Changing SUPERVISOR alone can't close it: after `kill -KILL -$wd`, the watchdog's `sleep` grandchild is still orphaned to PID 1.
+
+**Verification:** `deploy-tshark-init.sh` recreates only this container (`--no-deps`), then checks that `HostConfig.Init` is true, PID 1 is `docker-init`, TShark reads a closed capture, and 20 supervised filter checks leave zero zombies with `pids.current` back at its baseline.
+
+**Key insight:** a container that receives `docker exec` jobs needs a PID 1 that reaps. `docker top` and `cgroup.procs` don't show zombies. Read `pids.current` in the container's cgroup, or count `Z` children of its init PID on the host.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
@@ -2459,6 +2483,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Boxes with older, dynamically mapped indices (Chain 24) | The daemon now queries Malcolm's field names (no `.keyword`); on an index from before the template fix those fields are text, so aggregations on it fail and that day's data drops out of dashboard ranges | Run `fix-index-template.sh` (plus `--delete-today` if acceptable). Older daily indices age out with retention; delete them early if their data isn't needed. |
 | zeek-live is a local build on top of the Malcolm Zeek image (Chain 23) | A Malcolm tag bump needs `docker compose build zeek-live`, not just a pull; if the new Zeek stops importing `std::random_device::_M_init`, affected AMD boxes go silent again | The Dockerfile's final-stage checks fail the build in that case. After a tag bump, rebuild zeek-live and read the build log for `random_device shim: ok`. |
 | Every process in zeek-live preloads libnettap_urandom.so (Chain 23) | bash, supervisord and Python also load libstdc++ (shared pages, a few MB) | Accepted. If a process in that container ever misbehaves at start, check it without the preload: `docker run --rm --entrypoint bash nettap/zeek-live:<tag> -c 'mv /etc/ld.so.preload /tmp; <cmd>'`. |
+| A container used through `docker exec` without an init (Chain 38) | Orphaned processes stay as zombies until `pids.max`, then every fork fails | `nettap-tshark` has `init: true`. Any new exec-driven container needs it too. Health check: `cat /sys/fs/cgroup/system.slice/docker-<id>.scope/pids.current` stays small |
 | Malcolm upgrade may change entrypoint behavior | Supervisord.conf override and PUSER_PRIV_DROP could break | Pin Malcolm image tags; test upgrades in staging |
 | `-Xss8m` may not be enough for future zeek plugins | StackOverflowError returns | Monitor pipeline startup; increase to 16m if needed |
 | `fix-perms` runs chown on every container restart | Slow startup on large data dirs | Consider conditional check (`stat -c %U`) |
