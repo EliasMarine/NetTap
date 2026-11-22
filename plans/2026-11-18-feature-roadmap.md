@@ -1115,7 +1115,7 @@ The owner's standing rule is to take the recommended option and keep going. **Ea
 | #5 Watched devices | M1 | M | NET-331 | [ ] |
 | #2 Internet health | M1 | M | NET-322 | [ ] |
 | #4 Phone top bar | M1 | S–M | NET-323 | [ ] |
-| #1 Weekly report | M1 | L | NET-340 | [ ] |
+| #1 Weekly report | M1 | L | NET-340 | [x] PR #351 |
 | #7 Categories + JA4 | M2 | M | NET-324 | [ ] |
 | #9 Groups | M2 | M | NET-332 | [ ] |
 | #10 Feodo feed | M2 | S | NET-325 | [ ] |
