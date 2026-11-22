@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -305,3 +306,206 @@ def test_an_unreadable_journal_logs_one_error_not_one_per_retry(tmp_path, caplog
             )  # a producer's retry
     levels = [r.levelname for r in caplog.records if "unreadable" in r.getMessage()]
     assert levels == ["ERROR", "DEBUG", "DEBUG"]
+
+
+# ---------------------------------------------------------------------------
+# NET-340: scan(), the weekly report's read (plan §3.6)
+# ---------------------------------------------------------------------------
+
+WEEK = datetime(2026, 11, 9, tzinfo=timezone.utc)
+WEEK_END = WEEK + timedelta(days=7)
+
+
+def _iso(t: datetime) -> str:
+    return t.isoformat().replace("+00:00", "Z")
+
+
+def _row(seq: int, kind: str, key: str, at: datetime, data=None, recorded=None) -> str:
+    entry = {
+        "seq": seq,
+        "id": f"id{seq}",
+        "type": kind,
+        "key": key,
+        "observed_at": _iso(at),
+        "recorded_at": _iso(recorded or at),
+        "data": data or {},
+    }
+    return json.dumps(entry, separators=(",", ":")) + "\n"
+
+
+def _down(seq, mac, seen, declared):
+    data = {"mac": mac, "name": None, "after_min": 15, "seen_at": _iso(seen)}
+    return _row(seq, "device_offline", mac, declared, data)
+
+
+def _up(seq, mac, seen, back, detected):
+    data = {
+        "mac": mac,
+        "name": None,
+        "after_min": 15,
+        "seen_at": _iso(seen),
+        "back_at": _iso(back),
+        "away_min": int((back - seen).total_seconds() // 60),
+    }
+    return _row(seq, "device_online", mac, detected, data)
+
+
+def _journal_of(tmp_path, lines: list[str]) -> EventJournal:
+    path = tmp_path / "events.jsonl"
+    path.write_text("".join(lines))
+    return EventJournal(str(path))
+
+
+def _scan(journal, **kw):
+    return journal.scan(WEEK, WEEK_END, time.monotonic() + 60, **kw)
+
+
+def test_scan_streams_a_60000_line_file_and_keeps_only_the_week(tmp_path):
+    old = WEEK - timedelta(days=30)
+    lines = [
+        _row(n, "new_device", f"M{n}", old + timedelta(seconds=n))
+        for n in range(1, 59_998)
+    ]
+    lines += [
+        _row(59_998, "new_device", "IN1", WEEK + timedelta(hours=1)),
+        _row(59_999, "data_cap", "80", WEEK + timedelta(days=2), {"threshold": "80"}),
+        _row(60_000, "new_device", "LATE", WEEK_END),  # [start, until): the end is out
+    ]
+    result = _scan(_journal_of(tmp_path, lines))
+    assert [e["key"] for e in result["entries"]] == ["IN1", "80"]
+    assert result["truncated"] is False
+    assert result["examined_from"] == old + timedelta(seconds=1)
+
+
+def test_scan_keeps_one_new_device_after_5000_older_matches(tmp_path):
+    old = WEEK - timedelta(days=3)
+    lines = [_row(n, "new_device", f"M{n}", old) for n in range(1, 5_001)]
+    lines.append(_row(5_001, "new_device", "NEW", WEEK + timedelta(days=1)))
+    result = _scan(_journal_of(tmp_path, lines))
+    assert [e["key"] for e in result["entries"]] == ["NEW"]
+    assert result["truncated"] is False
+
+
+def test_scan_over_max_bytes_reads_the_newest_and_says_where_it_started(tmp_path):
+    lines = [
+        _row(n, "new_device", f"M{n:03d}", WEEK + timedelta(hours=n))
+        for n in range(1, 101)
+    ]
+    keep = "".join(lines[-10:])
+    # the cut lands inside line 90, so the first whole line read is 91
+    result = _scan(_journal_of(tmp_path, lines), max_bytes=len(keep.encode()) + 5)
+    assert [e["key"] for e in result["entries"]] == [
+        f"M{n:03d}" for n in range(91, 101)
+    ]
+    assert result["truncated"] is True
+    assert result["examined_from"] == WEEK + timedelta(hours=91)
+    # a cut exactly on a line start keeps that line whole
+    exact = _scan(_journal_of(tmp_path, lines), max_bytes=len(keep.encode()))
+    assert [e["key"] for e in exact["entries"]][0] == "M091"
+
+
+def test_scan_examined_from_skips_data_cap_lines(tmp_path):
+    lines = [
+        _row(1, "data_cap", "80", WEEK - timedelta(days=40), {"threshold": "80"}),
+        _row(2, "new_device", "A", WEEK + timedelta(hours=2)),
+    ]
+    assert _scan(_journal_of(tmp_path, lines))["examined_from"] == WEEK + timedelta(
+        hours=2
+    )
+
+
+def test_scan_is_unaffected_by_an_append_and_a_compaction_while_it_reads(tmp_path):
+    lines = [
+        _row(n, "new_device", f"M{n}", WEEK + timedelta(minutes=n))
+        for n in range(1, 3_001)
+    ]
+    journal = _journal_of(tmp_path, lines)
+    real = time.monotonic
+    calls = []
+
+    def clock():
+        calls.append(1)
+        if (
+            len(calls) == 2
+        ):  # the first 1,000-line deadline check: the read is under way
+            journal.append(
+                "new_device", "AFTER", _iso(WEEK + timedelta(days=1)), {}, instance=""
+            )
+            assert journal.compact(
+                datetime(2027, 6, 1, tzinfo=timezone.utc), journal.last_seq
+            )
+        return real()
+
+    with patch("services.event_journal.time.monotonic", side_effect=clock):
+        result = journal.scan(WEEK, WEEK_END, real() + 60)
+    assert len(result["entries"]) == 3_000  # the snapshot, whole
+    assert "AFTER" not in {e["key"] for e in result["entries"]}
+    assert len(_lines(tmp_path / "events.jsonl")) == 1  # the compaction did run
+
+
+def test_scan_gives_up_when_the_lock_stays_busy(tmp_path):
+    journal = _journal_of(tmp_path, [_row(1, "new_device", "A", WEEK)])
+    started = time.monotonic()
+    with journal._lock, pytest.raises(TimeoutError):
+        journal.scan(WEEK, WEEK_END, time.monotonic() + 0.2)
+    assert time.monotonic() - started < 2
+
+
+def test_scan_past_its_deadline_raises_instead_of_answering_short(tmp_path):
+    lines = [_row(n, "new_device", f"M{n}", WEEK) for n in range(1, 2_001)]
+    with pytest.raises(TimeoutError):
+        _journal_of(tmp_path, lines).scan(WEEK, WEEK_END, time.monotonic() - 1)
+
+
+def test_scan_pairs_outages_before_dropping_those_outside_the_week(tmp_path):
+    pre = WEEK - timedelta(days=3)
+    lines = [
+        # closed before the week: dropped
+        _down(1, "AA", pre, pre + timedelta(minutes=30)),
+        _up(
+            2, "AA", pre, pre + timedelta(hours=1), pre + timedelta(hours=1, minutes=5)
+        ),
+        # opened before the week, closed in it: both halves kept
+        _down(3, "BB", pre, pre + timedelta(minutes=30)),
+        _up(
+            4,
+            "BB",
+            pre,
+            WEEK + timedelta(hours=2),
+            WEEK + timedelta(hours=2, minutes=3),
+        ),
+        # an opening superseded before the week (seen again, then a new outage): dropped
+        _down(5, "CC", pre, pre + timedelta(minutes=30)),
+        _down(6, "CC", pre + timedelta(days=1), pre + timedelta(days=1, minutes=30)),
+        # an opening never closed: kept for the sections to judge
+        _down(7, "DD", pre, pre + timedelta(minutes=30)),
+    ]
+    result = _scan(_journal_of(tmp_path, lines))
+    assert [e["seq"] for e in result["entries"]] == [3, 4, 6, 7]
+
+
+def test_scan_drops_5000_closed_pre_week_outages_without_truncating(tmp_path):
+    lines, seq = [], 0
+    for n in range(5_000):
+        seen = WEEK - timedelta(days=20) + timedelta(minutes=5 * n)
+        lines += [
+            _down(seq + 1, "AA", seen, seen + timedelta(minutes=1)),
+            _up(
+                seq + 2,
+                "AA",
+                seen,
+                seen + timedelta(minutes=2),
+                seen + timedelta(minutes=3),
+            ),
+        ]
+        seq += 2
+    inside = WEEK + timedelta(days=2)
+    lines.append(_down(seq + 1, "AA", inside, inside + timedelta(minutes=30)))
+    result = _scan(_journal_of(tmp_path, lines))
+    assert [e["seq"] for e in result["entries"]] == [seq + 1]
+    assert result["truncated"] is False
+
+
+def test_scan_of_a_missing_file_is_empty(tmp_path):
+    result = _scan(EventJournal(str(tmp_path / "none.jsonl")))
+    assert result == {"entries": [], "examined_from": None, "truncated": False}

@@ -48,6 +48,8 @@ describe('Notification settings when requests fail (#96)', () => {
 			'/api/notifications/rules': { rules: [], count: 0 },
 			'/api/notifications/log': { log: [], count: 0 },
 			'/api/jobs': { jobs: [] },
+			// NET-340: the weekly report card, none set up
+			'/api/reports/schedules': { schedules: [] },
 		});
 		render(Page);
 
@@ -96,6 +98,8 @@ const LISTS: Record<string, unknown> = {
 	'/api/notifications/log': { log: [], count: 0 },
 	// NET-319: the background checks load with the lists
 	'/api/jobs': { jobs: [] },
+	// NET-340: the weekly report card shares the tab (else its load-failed alert joins the page's)
+	'/api/reports/schedules': { schedules: [], tz: 'Europe/London' },
 };
 
 describe('Notification settings card states', () => {
@@ -114,16 +118,40 @@ describe('Notification settings card states', () => {
 	});
 
 	it('offers a retry on a failed card that reloads the page', async () => {
-		stubFetch({});
+		// OLD CODE: stubFetch({}); (NET-340: the weekly report card loads on its own and has its own retry)
+		stubFetch({ '/api/reports/schedules': LISTS['/api/reports/schedules'] });
 		render(Page);
 		await screen.findByText("Couldn't load the notification channels: the request failed.");
 
 		stubFetch(LISTS);
-		await fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]);
+		// OLD CODE: await fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]); (NET-340: the weekly report card's retry comes first now)
+		const channels = screen.getByRole('heading', { name: 'Notification channels' }).closest('.card') as HTMLElement;
+		await fireEvent.click(within(channels).getByRole('button', { name: 'Try again' }));
 
 		expect(await screen.findByText('Home Discord')).toBeInTheDocument();
 		expect(screen.getByText('1 channel')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
+	});
+});
+
+// NET-340: the weekly report card sits on this tab, bound to the card schedule
+describe('Notification settings weekly report', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('shows the weekly report card with its schedule', async () => {
+		stubFetch({
+			...LISTS,
+			'/api/reports/schedules': {
+				schedules: [{ id: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b', card: true, enabled: true, weekday: 2, hour: 18, recipients: ['owner@example.com'], tz: 'Europe/London', needs_review: false, rev: 1, confirm_token: 't' }],
+			},
+		});
+		render(Page);
+
+		expect(await screen.findByRole('heading', { name: 'Weekly report' })).toBeInTheDocument();
+		expect(await screen.findByDisplayValue('Wednesday')).toBeInTheDocument();
+		expect(screen.getByLabelText('Email addresses, one per line')).toHaveValue('owner@example.com');
 	});
 });
 

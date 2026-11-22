@@ -121,6 +121,9 @@ def _is_address(raw: Any) -> bool:
     return isinstance(raw, str) and "@" in raw and not _WHITESPACE.search(raw)
 
 
+is_address = _is_address  # NET-340: public for the report schedules' recipients
+
+
 def recipients_of(raw: Any) -> list[str]:
     """A recipients value as a list: older channels stored a comma-separated string."""
     if isinstance(raw, str):

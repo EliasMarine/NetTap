@@ -427,13 +427,16 @@ describe('layout sidebar', () => {
 	// OLD CODE START — NET-264: 20 links before Local services joined
 	// it('keeps all 20 page links', () => { … expect(new Set(hrefs).size).toBe(20); … arrayContaining(['/investigations', '/compliance', '/packets']) … });
 	// OLD CODE END
-	it('keeps all 21 page links', () => {
+	// OLD CODE START — NET-340: 21 links before Reports joined
+	// it('keeps all 21 page links', () => { … expect(new Set(hrefs).size).toBe(21); … arrayContaining(['/investigations', '/compliance', '/packets', '/local-services']) … });
+	// OLD CODE END
+	it('keeps all 22 page links', () => {
 		renderLayout();
 		const nav = screen.getByRole('navigation', { name: 'Main' });
-		// the brand link also points home, so 22 links share 21 hrefs
+		// the brand link also points home, so 23 links share 22 hrefs
 		const hrefs = within(nav).getAllByRole('link').map((a) => a.getAttribute('href'));
-		expect(new Set(hrefs).size).toBe(21);
-		expect(hrefs).toEqual(expect.arrayContaining(['/investigations', '/compliance', '/packets', '/local-services']));
+		expect(new Set(hrefs).size).toBe(22);
+		expect(hrefs).toEqual(expect.arrayContaining(['/investigations', '/compliance', '/packets', '/local-services', '/reports']));
 	});
 
 	it('shows the storage used and free space', async () => {

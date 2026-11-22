@@ -201,6 +201,34 @@ describe('Settings hub — unsaved edits', () => {
 		expect(await screen.findByText('Data cap saved.')).toBeInTheDocument();
 	});
 
+	// NET-340: the weekly report card saves on its own, so the Notifications tab passes its state up
+	it('holds a tab switch on an unsaved weekly report alone, and while it is being saved', async () => {
+		resetNavigation('http://localhost/settings?tab=notifications');
+		const save = gate();
+		stubFetch({
+			'/api/reports/schedules': () => ({ body: { schedules: [], tz: 'Europe/London' } }),
+			'/api/reports/card': async (init) => {
+				await save.wait();
+				return { body: { ...JSON.parse(String(init?.body)), id: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b', tz: 'Europe/London', rev: 1, confirm_token: 't', card: true } };
+			},
+		});
+		render(Page);
+		await flush();
+		await fireEvent.input(await screen.findByLabelText('Email addresses, one per line'), { target: { value: 'owner@example.com' } });
+
+		await fireEvent.click(tab('About'));
+		expect(screen.getByText('You have unsaved changes in Notifications.')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save weekly report' }));
+		await fireEvent.click(tab('About'));
+		expect(screen.getByText(BUSY_BAR)).toBeInTheDocument();
+
+		save.open();
+		await flush();
+		expect(await screen.findByText('Saved. The weekly report is on.')).toBeInTheDocument();
+	});
+
 	it('holds a tab switch: Keep editing stays, Discard and continue goes', async () => {
 		await openDirtyDisplay();
 

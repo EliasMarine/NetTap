@@ -17,10 +17,17 @@
 //  * them. Investigations and Security posture joined in NET-160, Packet analysis in NET-188.
 //  */
 // OLD CODE END
+// OLD CODE START — NET-340: Reports joined the Overview group
+// /**
+//  * Sidebar navigation (PLAN.md §5.5): 21 pages, grouped as the design system's Sidebar shows
+//  * them. Investigations and Security posture joined in NET-160, Packet analysis in NET-188,
+//  * Local services in NET-264.
+//  */
+// OLD CODE END
 /**
- * Sidebar navigation (PLAN.md §5.5): 21 pages, grouped as the design system's Sidebar shows
+ * Sidebar navigation (PLAN.md §5.5): 22 pages, grouped as the design system's Sidebar shows
  * them. Investigations and Security posture joined in NET-160, Packet analysis in NET-188,
- * Local services in NET-264.
+ * Local services in NET-264, Reports in NET-340.
  */
 import type { IconName } from '$lib/components/ui/icons';
 
@@ -42,6 +49,8 @@ export const NAV_GROUPS: NavGroup[] = [
 			{ href: '/', label: 'Home', icon: 'home' },
 			{ href: '/live', label: 'Live Monitor', icon: 'live' },
 			{ href: '/bandwidth', label: 'Bandwidth', icon: 'bandwidth' },
+			// NET-340: the weekly report
+			{ href: '/reports', label: 'Reports', icon: 'logs' },
 		],
 	},
 	{

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import threading
+import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -34,6 +35,13 @@ CAP_KEEP = timedelta(days=62)
 WINDOW = (
     1_000  # the newest entries, kept in memory so a normal poll never reads the file
 )
+# NET-340: the weekly report's scan reads at most the newest SCAN_MAX_BYTES and keeps at most
+# SCAN_KEEP rows of each kind (new devices, data cap warnings, open or overlapping outages)
+SCAN_MAX_BYTES = 32 * 1024 * 1024
+SCAN_KEEP = 5_000
+_OFFLINE, _ONLINE = "device_offline", "device_online"
+_WINDOWED = ("new_device", "data_cap")
+_SCANNED = tuple(f'"type":"{t}"'.encode() for t in (*_WINDOWED, _OFFLINE, _ONLINE))
 
 
 def event_id(event_type: str, key: str, instance: str) -> str:
@@ -47,6 +55,41 @@ def _when(raw: Any) -> datetime | None:
     except ValueError:
         return None
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _pair(
+    outages: dict[str, dict[datetime, dict]],
+    entry: dict,
+    kind: str,
+    window_start: datetime,
+    kept: int,
+) -> tuple[int, bool]:
+    """Add one offline/online transition to `outages`, keyed (MAC, seen_at); returns (the change
+    in kept outages, False when SCAN_KEEP stopped a new one). An outage closed before
+    window_start, and an opening superseded before it (the device was seen again), go here."""
+    data = entry.get("data")
+    if not isinstance(data, dict):
+        return 0, True
+    mac, seen = data.get("mac") or entry.get("key"), _when(data.get("seen_at"))
+    if not isinstance(mac, str) or seen is None:
+        return 0, True
+    mine = outages.setdefault(mac.upper(), {})
+    delta = 0
+    if seen < window_start:
+        for older in [s for s, p in mine.items() if s < seen and "up" not in p]:
+            del mine[older]
+            delta -= 1
+    if seen not in mine:
+        if kept + delta >= SCAN_KEEP:
+            return delta, False
+        mine[seen] = {}
+        delta += 1
+    mine[seen] = {**mine[seen], ("down" if kind == _OFFLINE else "up"): entry}
+    back = _when(data.get("back_at")) if kind == _ONLINE else None
+    if back is not None and back < window_start:
+        del mine[seen]
+        delta -= 1
+    return delta, True
 
 
 class EventJournal:
@@ -278,3 +321,96 @@ class EventJournal:
             if not self._recent or self._recent[0]["seq"] <= seq + 1:
                 return [e for e in self._recent if e["seq"] > seq][:limit]
             return [e for e in self._read_all() if e["seq"] > seq][:limit]
+
+    def scan(
+        self,
+        window_start: datetime,
+        until: datetime,
+        deadline: float,
+        max_bytes: int = SCAN_MAX_BYTES,
+    ) -> dict:
+        """NET-340 (plan §3.6): what the weekly report reads, without holding the lock.
+
+        {entries, examined_from, truncated}: new_device and data_cap entries observed in
+        [window_start, until), and every device_offline/device_online entry of an outage open
+        at window_start or later (paired by MAC and seen_at before any window filter, so a
+        pre-week return closes its pre-week opening). `examined_from` is the first examined
+        entry's recorded_at (data cap warnings outlive the line cap, so they don't count);
+        `truncated` when only the newest `max_bytes` were read or a kind hit SCAN_KEEP.
+        Raises TimeoutError past `deadline` (time.monotonic()), OSError when unavailable.
+        """
+        if not self._lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            raise TimeoutError("the event journal is busy")
+        try:
+            self._require()
+            try:
+                f = open(self._path, "rb")
+            except FileNotFoundError:
+                return {"entries": [], "examined_from": None, "truncated": False}
+            # every line up to here is whole: an append writes its line under the lock
+            size = os.fstat(f.fileno()).st_size
+        finally:
+            self._lock.release()
+        # the descriptor keeps this file even if a compaction replaces it meanwhile
+        with f:
+            return self._scan_file(f, size, window_start, until, deadline, max_bytes)
+
+    @staticmethod
+    def _scan_file(
+        f: Any,
+        size: int,
+        window_start: datetime,
+        until: datetime,
+        deadline: float,
+        max_bytes: int,
+    ) -> dict:
+        pos = max(0, size - max_bytes)
+        truncated = pos > 0
+        if pos:
+            f.seek(pos - 1)
+            pos += len(f.readline()) - 1  # to the start of the next whole line
+        windowed: dict[str, list[dict]] = {t: [] for t in _WINDOWED}
+        # {mac: {seen_at: {"down": entry, "up": entry}}}: only outages open at window_start
+        outages: dict[str, dict[datetime, dict]] = {}
+        kept_outages, examined_from, n = 0, None, 0
+        for line in f:
+            pos += len(line)
+            if pos > size:  # appended after the snapshot
+                break
+            n += 1
+            if n % 1_000 == 0 and time.monotonic() > deadline:
+                raise TimeoutError("the event journal scan ran out of time")
+            first = examined_from is None and b'"type":"data_cap"' not in line
+            if not first and not any(t in line for t in _SCANNED):
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if first:
+                examined_from = _when(entry.get("recorded_at"))
+            kind = entry.get("type")
+            if kind in _WINDOWED:
+                at = _when(entry.get("observed_at"))
+                if at is not None and window_start <= at < until:
+                    if len(windowed[kind]) < SCAN_KEEP:
+                        windowed[kind].append(entry)
+                    else:
+                        truncated = True
+            elif kind in (_OFFLINE, _ONLINE):
+                delta, ok = _pair(outages, entry, kind, window_start, kept_outages)
+                kept_outages += delta
+                truncated = truncated or not ok
+        halves = [
+            e for mac in outages.values() for p in mac.values() for e in p.values()
+        ]
+        return {
+            "entries": sorted(
+                [*windowed["new_device"], *windowed["data_cap"], *halves],
+                key=lambda e: e.get("seq", 0),
+            ),
+            "examined_from": examined_from,
+            "truncated": truncated,
+        }

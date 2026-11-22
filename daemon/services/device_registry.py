@@ -519,13 +519,30 @@ class DeviceRegistry:
             return None
         return result.get("_source")
 
-    def get_devices(self, macs: list[str]) -> dict[str, dict]:
-        """{normalized MAC: device} for the MACs the registry knows, in one request."""
+    # OLD CODE: def get_devices(self, macs: list[str]) -> dict[str, dict]: (NET-340: + fields, timeout, client)
+    def get_devices(
+        self,
+        macs: list[str],
+        fields: list[str] | None = None,
+        timeout: float | None = None,
+        client: Any = None,
+    ) -> dict[str, dict]:
+        """{normalized MAC: device} for the MACs the registry knows, in one request.
+
+        NET-340 (weekly report): `fields` returns only those source fields, `timeout` caps the
+        wait, and `client` sends it on another client (the report's, which never retries)."""
         ids = sorted({self._normalize_mac(m) for m in macs if m})
         if not ids:
             return {}
+        extra = {
+            **({"_source_includes": fields} if fields else {}),
+            **({"request_timeout": timeout} if timeout is not None else {}),
+        }
         try:
-            result = self._client.mget(index=DEVICES_INDEX, body={"ids": ids})
+            # OLD CODE: result = self._client.mget(index=DEVICES_INDEX, body={"ids": ids})
+            result = (client or self._client).mget(
+                index=DEVICES_INDEX, body={"ids": ids}, **extra
+            )
         except NotFoundError:
             return {}
         return {

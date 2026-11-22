@@ -62,6 +62,8 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	// NET-188: the first visit; packets.visual.ts covers a search's answer and the packet drawer
 	{ path: '/packets', marker: 'Packet analysis' },
 	{ path: '/pcap', marker: 'PCAP search' },
+	// NET-340: the weekly report (no schedule when empty; the card's schedule, its history and a report when populated)
+	{ path: '/reports', marker: 'Reports' },
 	{ path: '/settings', marker: 'Settings' },
 	// OLD CODE START — NET-273: the three pages are Settings tabs now, and their old addresses redirect there
 	// { path: '/settings/backup', marker: 'Backup and restore' },

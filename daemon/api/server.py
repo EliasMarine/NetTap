@@ -126,6 +126,7 @@ from services.investigation_store import InvestigationStore
 from services.nl_search import NLSearchParser
 from services.detection_packs import DetectionPackManager
 from services.report_generator import ReportGenerator
+from services.report_sections import ReportDeps
 from services.bridge_health import BridgeHealthMonitor
 from services.bridge_manager import BridgeManager
 from services.dns_recon_service import DnsReconService
@@ -1289,15 +1290,18 @@ def create_app(
     detection_pack_manager = DetectionPackManager(packs_dir=packs_dir)
     register_detection_pack_routes(app, detection_pack_manager)
 
-    # Scheduled reports (periodic network summary reports)
-    reports_dir = os.environ.get("REPORTS_DIR", "/opt/nettap/data/reports")
-    schedules_file = os.environ.get(
-        "REPORT_SCHEDULES_FILE", "/opt/nettap/data/report_schedules.json"
-    )
-    report_generator = ReportGenerator(
-        reports_dir=reports_dir, schedules_file=schedules_file
-    )
-    register_report_routes(app, report_generator)
+    # OLD CODE START — NET-340: built below, after the ledger, journal, registry, watched devices
+    # and notification hub its report contents and email need
+    # # Scheduled reports (periodic network summary reports)
+    # reports_dir = os.environ.get("REPORTS_DIR", "/opt/nettap/data/reports")
+    # schedules_file = os.environ.get(
+    #     "REPORT_SCHEDULES_FILE", "/opt/nettap/data/report_schedules.json"
+    # )
+    # report_generator = ReportGenerator(
+    #     reports_dir=reports_dir, schedules_file=schedules_file
+    # )
+    # register_report_routes(app, report_generator)
+    # OLD CODE END
 
     # Bridge health monitoring (inline tap bridge state + NIC carrier)
     bridge_name = os.environ.get("BRIDGE_NAME", "br0")
@@ -1480,6 +1484,30 @@ def create_app(
     )
     register_watched_devices_routes(app, watched_devices)
 
+    # NET-340: scheduled reports (the weekly report). Its own exact-terms client without
+    # retries, as F4's, so a slow reply can't be retried past the report's deadline
+    report_client = ExactTermsOpenSearch(
+        **storage.client_kwargs(max_retries=0, retry_on_timeout=False)
+    )
+    report_generator = ReportGenerator(
+        reports_dir=os.environ.get("REPORTS_DIR", "/opt/nettap/data/reports"),
+        schedules_file=os.environ.get(
+            "REPORT_SCHEDULES_FILE", "/opt/nettap/data/report_schedules.json"
+        ),
+        deps=ReportDeps(
+            ledger=usage_ledger,
+            journal=event_journal,
+            registry=device_registry,
+            watched=watched_devices,
+            tracker=bandwidth_tracker,
+            # OLD CODE: client_factory=lambda: report_client, (ponytail: it was always this client)
+            client=report_client,
+            network_index=NETWORK_INDEX,
+        ),
+        hub=notification_hub,
+    )
+    register_report_routes(app, report_generator)
+
     # NET-319: background checks; later slices add their jobs here
     scheduler = Scheduler(
         [
@@ -1521,6 +1549,14 @@ def create_app(
                 every_s=300,
                 deadline_s=60,
                 run=watched_devices.run,
+            ),
+            # NET-340: at most one due report per tick, claimed before it is emailed
+            Job(
+                "weekly-report",
+                "Scheduled reports",
+                every_s=300,
+                deadline_s=240,
+                run=report_generator.run_due,
             ),
         ]
     )
@@ -1596,10 +1632,12 @@ def create_app(
     # OLD CODE: config_backup = ConfigBackup() (NET-200: names and pictures are backed up)
     # OLD CODE: config_backup = ConfigBackup(device_custom=device_custom) (NET-224: notifications restore through the hub)
     # OLD CODE: config_backup = ConfigBackup(device_custom=device_custom, notification_hub=notification_hub) (NET-320)
+    # OLD CODE: ConfigBackup(device_custom=..., notification_hub=..., device_details=...) (NET-340)
     config_backup = ConfigBackup(
         device_custom=device_custom,
         notification_hub=notification_hub,
         device_details=device_details,
+        report_generator=report_generator,
     )
     register_backup_routes(app, config_backup)
 

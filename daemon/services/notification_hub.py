@@ -24,9 +24,10 @@ import ssl
 import threading
 import uuid
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import aiohttp
 
@@ -114,6 +115,44 @@ async def _post(url: str, **kwargs: Any) -> str | None:
                 return None
             reason = f"HTTP {resp.status}"
             return reason if resp.status >= 500 else Refused(reason)
+
+
+class _Smtp(NamedTuple):
+    """An SMTP server's settings, in _smtp_send's argument order."""
+
+    host: str
+    port: int
+    use_tls: Any
+    username: str
+    password: str
+    from_addr: str
+
+
+def _smtp_settings(server: dict) -> "_Smtp | str":
+    """The settings in an email channel's or Settings › API keys' config, or why they can't be
+    used (NET-340: the alert email and the report email read them the same way)."""
+    try:
+        port = int(server.get("smtp_port") or 587)
+    except ValueError:  # Settings › API keys saves the port as typed
+        return "the SMTP port isn't a number"
+    host = server.get("smtp_host", "")
+    if not host:
+        return "no SMTP server: set one in Settings › API keys"
+    username = server.get("smtp_user", "")
+    return _Smtp(
+        host,
+        port,
+        server.get("use_tls", True),
+        username,
+        server.get("smtp_pass", ""),
+        server.get("from_address") or username,
+    )
+
+
+def _report_result(
+    result: str, error: str | None, refused: list[str] | None = None
+) -> dict[str, Any]:
+    return {"result": result, "refused": refused or [], "error": error}
 
 
 def _reason(exc: BaseException) -> str:
@@ -717,19 +756,26 @@ class NotificationHub:
         """Send an email notification via SMTP. None when sent, else the reason."""
         # NET-224: a channel without its own server uses the one in Settings › API keys
         server = config if config.get("smtp_host") else nc.smtp_server(self._env_file)
-        host = server.get("smtp_host", "")
-        try:
-            port = int(server.get("smtp_port") or 587)
-        except ValueError:  # Settings › API keys saves the port as typed
-            return "the SMTP port isn't a number"
-        username = server.get("smtp_user", "")
-        password = server.get("smtp_pass", "")
-        from_addr = server.get("from_address") or username
+        # OLD CODE START — NET-340: moved to _smtp_settings, which the report email shares
+        # host = server.get("smtp_host", "")
+        # try:
+        #     port = int(server.get("smtp_port") or 587)
+        # except ValueError:  # Settings › API keys saves the port as typed
+        #     return "the SMTP port isn't a number"
+        # username = server.get("smtp_user", "")
+        # password = server.get("smtp_pass", "")
+        # from_addr = server.get("from_address") or username
+        # recipients = nc.recipients_of(config.get("recipients"))
+        # use_tls = server.get("use_tls", True)
+        #
+        # if not host:
+        #     return "no SMTP server: set one in Settings › API keys"
+        # OLD CODE END
+        smtp = _smtp_settings(server)
+        if isinstance(smtp, str):
+            return smtp
+        host, port, use_tls, username, password, from_addr = smtp
         recipients = nc.recipients_of(config.get("recipients"))
-        use_tls = server.get("use_tls", True)
-
-        if not host:
-            return "no SMTP server: set one in Settings › API keys"
         if not recipients:
             return "no recipients"
 
@@ -860,6 +906,45 @@ class NotificationHub:
         finally:
             deadline.cancel()
         return refused if isinstance(refused, dict) else {}
+
+    def send_report_email(
+        self, recipients: list[str], subject: str, text: str
+    ) -> dict[str, Any]:
+        """NET-340: a report as plain text, through the SMTP server _send_email falls back to
+        (Settings › API keys), with no severity tag. Blocking: the report job's thread calls it.
+
+        {"result": sent | partly_sent | failed | not_configured, "refused": [addresses],
+        "error": reason or None}. Nothing is retried here, and no address is logged.
+        """
+        smtp = _smtp_settings(nc.smtp_server(self._env_file))
+        if isinstance(smtp, str):
+            return _report_result("not_configured", smtp)
+        # validated when saved; checked again, as each goes into the To header
+        if not recipients or not all(
+            nc.is_address(r) and "," not in r for r in recipients
+        ):
+            return _report_result("not_configured", "no valid recipients")
+        try:
+            msg = EmailMessage()  # a bad header value raises: a result too
+            msg["Subject"] = subject.replace("\r", " ").replace("\n", " ")
+            msg["From"] = smtp.from_addr
+            msg["To"] = ", ".join(recipients)
+            msg.set_content(text, cte="quoted-printable")
+            refused = self._smtp_send(*smtp, list(recipients), msg.as_string())
+        except smtplib.SMTPRecipientsRefused as exc:
+            logger.warning("Report email: every recipient was refused")
+            return _report_result("failed", str(_reason(exc)), sorted(exc.recipients))
+        except Exception as exc:  # any failure is a result to record, never a crash
+            logger.warning("Report email failed: %s", _reason(exc))
+            return _report_result("failed", str(_reason(exc)))
+        if refused:
+            logger.warning("Report email: %d recipient(s) refused", len(refused))
+            return _report_result(
+                "partly_sent",
+                "the mail server refused some recipients",
+                sorted(refused),
+            )
+        return _report_result("sent", None)
 
     async def _send_discord(
         self, config: dict, title: str, message: str, severity: int

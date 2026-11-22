@@ -66,6 +66,8 @@
 		home_location: 'Home location',
 		alert_acknowledgements: 'Alert acknowledgements',
 		alert_suppressions: 'Alert suppressions',
+		// NET-340: the weekly report's schedules (restored paused until saved in Settings › Notifications)
+		report_schedules: 'Report schedules',
 	};
 	// OLD CODE: const label = (section: string) => SECTION_LABELS[section] ?? section.replace(/_/g, ' ');
 	// L6: own keys only, so a daemon key such as 'constructor' never reads Object.prototype
