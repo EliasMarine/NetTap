@@ -1,6 +1,6 @@
 # NET-340: the weekly report
 
-**Date:** 2026-11-21 · **Branch:** `feature/weekly-report` · **Status:** in review
+**Date:** 2026-11-21 · **Branch:** `feature/weekly-report` · **Status:** merged in PR #351 (`c479940e`) and deployed on the G11 on 2026-11-22
 
 Roadmap #1 (`plans/2026-11-18-feature-roadmap.md` §8, decision D6). Every week the owner gets a plain-text email and a Reports page saying, in plain English, what the network did over the last full week:
 - internet used;
@@ -144,6 +144,20 @@ Every section states its own coverage, so a short or broken history never reads 
   - **CodeQL** (2 high `py/path-injection`, 1 test warning):
     - `schedule_dir` adds the normalise-then-prefix guard CodeQL recognises, after the uuid4 check.
     - The flagged test asserts on the full addresses.
+
+## G11 deploy (2026-11-22, `deploy-weekly-report.sh` at `c479940e`)
+
+- **Baseline:** daemon VmRSS 307 MB on the old image, 154 MB settled on the new one. OpenSearch anon about 3,960 MB. Swap used 3,322 MB once settled.
+- **`@timestamp`:** a `date` in all 9 network indices.
+- **Generate now:** a throwaway weekly schedule with no recipients, zone UTC, covering 15–21 Nov.
+  - It took 0.3 s. The worst five completed, and `/api/health` peaked at 1 ms.
+  - Daemon VmRSS went 154 → 152 MB 60 s later, and swap peaked at 3,329 MB (+7 MB). The stop rule passed.
+- **Representative:** yes. The last day was yesterday, there were 7 day rows, and yesterday had 704 alerts.
+- **Parity:**
+  - Traffic was 1,621,616,440,132 bytes, equal to `/api/usage/daily` exactly.
+  - Alerts were 3,984. The script's check failed because it read the count endpoint's top level instead of `counts`, and PR #352 fixes that. A hand check on the G11 gave `/api/alerts/count` = 3,984 (high 1,052, medium 951, low 1,981) for the same week.
+- **History and files:** the report was listed with file mode 600. Deleting the schedule removed its directory.
+- **Email:** unverified on the device, because the check emails no one.
 
 ## Notes
 

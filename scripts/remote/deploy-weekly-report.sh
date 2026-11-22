@@ -279,7 +279,9 @@ usage = u["bytes"]["total"] if s == 200 else None
 end = datetime.fromisoformat(p["end"].replace("Z", "+00:00")) - timedelta(milliseconds=1)
 to = end.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 frm = datetime.fromisoformat(p["start"].replace("Z", "+00:00")).astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-s2, c = call("GET", "/api/alerts/count?" + urllib.parse.urlencode({"from": frm, "to": to, "activity": "false"}))
+s2, reply = call("GET", "/api/alerts/count?" + urllib.parse.urlencode({"from": frm, "to": to, "activity": "false"}))
+# OLD CODE: read total/high/medium/low from the top level; the endpoint nests them under "counts"
+c = reply.get("counts", {}) if s2 == 200 and isinstance(reply, dict) else {}
 sev = a.get("by_severity") or {}
 same_sev = s2 == 200 and (sev.get("1", 0), sev.get("2", 0), sev.get("3", 0)) == (c.get("high", 0), c.get("medium", 0), c.get("low", 0))
 traffic_ok = usage is not None and usage == t["total"]
