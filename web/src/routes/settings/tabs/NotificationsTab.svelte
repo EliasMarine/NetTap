@@ -38,6 +38,7 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import { formatTime } from '$lib/utils/time';
 	import NotificationPrefsCard from './NotificationPrefsCard.svelte';
+	import ReportScheduleCard from '../ReportScheduleCard.svelte';
 
 	interface Props {
 		/** The preferences or a half-filled add form differ from what was last loaded or saved. */
@@ -55,6 +56,9 @@
 	let holding = $state(false);
 	let prefs: ReturnType<typeof NotificationPrefsCard> | undefined;
 	let prefsDirty = $state(false);
+	// NET-340: the weekly report card saves on its own, outside `serial` (it shares no records with the rest of the tab)
+	let reportDirty = $state(false);
+	let reportWriting = $state(false);
 
 	// OLD CODE START — review L5: reads take the lock too, and only writes hold a tab switch
 	// async function serial(task: () => Promise<void>): Promise<void> {
@@ -118,9 +122,11 @@
 
 	$effect(() => {
 		const addingInput = showAddForm && (newChannelName.trim() !== '' || Object.values(newChannelConfig).some((v) => v?.trim()));
-		dirty = prefsDirty || addingInput || (showRuleForm && newRuleChannels.length > 0);
+		// OLD CODE: dirty = prefsDirty || addingInput || (showRuleForm && newRuleChannels.length > 0); (NET-340: + the weekly report card)
+		dirty = prefsDirty || reportDirty || addingInput || (showRuleForm && newRuleChannels.length > 0);
 		// OLD CODE: busy = locked;
-		busy = holding;
+		// OLD CODE: busy = holding; (NET-340: + the weekly report card's save)
+		busy = holding || reportWriting;
 	});
 
 	// Channel type configs
@@ -511,6 +517,7 @@ OLD CODE END -->
 
 <div class="grid">
 	<NotificationPrefsCard bind:this={prefs} bind:dirty={prefsDirty} {locked} run={serial} onsaved={() => refresh.run()} />
+	<ReportScheduleCard bind:dirty={reportDirty} bind:writing={reportWriting} />
 
 	<Card title="Notification channels" sub={countLabel(failed.channels, channels.length, 'channel')} class="c-6">
 		{#snippet actions()}

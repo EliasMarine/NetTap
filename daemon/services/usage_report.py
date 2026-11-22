@@ -156,17 +156,31 @@ def _projection(
     }
 
 
-def _lower_bound(rows: list[dict], snapshot: dict | None, rules: str) -> int:
+def counted_now(row: dict, snapshot: dict | None, rules: str) -> bool:
+    """A day with figures counted under the current rules (counted, approximate or stale, its
+    rules matching): the days lower_bound sums (NET-340: the weekly report counts them too)."""
+    return (
+        row["total"] is not None
+        and row["status"] in ("counted", "approximate", "stale")
+        and (snapshot or {}).get("days", {}).get(row["date"], {}).get("rules") == rules
+    )
+
+
+# OLD CODE: def _lower_bound(rows, snapshot, rules) -> int: (NET-340: public, the weekly report uses it)
+def lower_bound(rows: list[dict], snapshot: dict | None, rules: str) -> int:
     """NET-339: the days' totals counted under the current rules only (counted, approximate and
     stale days whose rules match), so the sum is never too high after an exclusions change."""
-    days = (snapshot or {}).get("days", {})
-    return sum(
-        r["total"]
-        for r in rows
-        if r["total"] is not None
-        and r["status"] in ("counted", "approximate", "stale")
-        and days.get(r["date"], {}).get("rules") == rules
-    )
+    # OLD CODE START — NET-340: the day test moved to counted_now, which the report shares
+    # days = (snapshot or {}).get("days", {})
+    # return sum(
+    #     r["total"]
+    #     for r in rows
+    #     if r["total"] is not None
+    #     and r["status"] in ("counted", "approximate", "stale")
+    #     and days.get(r["date"], {}).get("rules") == rules
+    # )
+    # OLD CODE END
+    return sum(r["total"] for r in rows if counted_now(r, snapshot, rules))
 
 
 def month(
@@ -190,7 +204,7 @@ def month(
         # NET-339: from the same snapshot and rules as the projection (Codex r2 #5)
         "bytes": {
             **report["bytes"],
-            "lower_bound": _lower_bound(report["days"], snapshot, rules),
+            "lower_bound": lower_bound(report["days"], snapshot, rules),
         },
         "year": year,
         "month": month_no,

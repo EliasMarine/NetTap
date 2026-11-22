@@ -57,6 +57,7 @@ from services.backup_notifications import redact_channels
 from services.capture_config import load_capture_config, write_file_atomic
 from services.excluded_ips import parse_single_ip
 from services.home_location import load_home, parse_home, save_home
+from services.report_generator import restore_report_schedules
 
 logger = logging.getLogger("nettap.services.config_backup")
 
@@ -124,6 +125,8 @@ _VALID_SECTIONS = {
     "notification_quiet",
     # NET-320: watch time, group, owner and notes ({MAC: entry})
     "device_details",
+    # NET-340: report schedules with their weekday, hour and card; restored paused
+    "report_schedules",
 }
 
 DETAILS_UNREADABLE = (
@@ -148,12 +151,14 @@ class ConfigBackup:
     # OLD CODE END
     # OLD CODE: def __init__(self, config_paths=None, device_custom=None, notification_hub=None)
     # (NET-320: plus the device details store)
+    # OLD CODE: (..., device_details: Any = None) (NET-340: plus the report generator)
     def __init__(
         self,
         config_paths: dict[str, str] | None = None,
         device_custom: Any = None,
         notification_hub: Any = None,
         device_details: Any = None,
+        report_generator: Any = None,
     ) -> None:
         self._paths = {**_DEFAULT_PATHS, **(config_paths or {})}
         # DeviceCustomStore: the owner's device names, icons and photos (NET-200)
@@ -162,6 +167,8 @@ class ConfigBackup:
         self._notification_hub = notification_hub
         # DeviceDetailsStore: watch time, group, owner and notes (NET-320)
         self._device_details = device_details
+        # ReportGenerator: report schedules, through its lock (NET-340)
+        self._report_generator = report_generator
 
     # ------------------------------------------------------------------
     # Export
@@ -247,6 +254,11 @@ class ConfigBackup:
         # NET-320: a damaged details file raises StoreUnavailable too, for the same reason
         if self._device_details is not None:
             config["sections"]["device_details"] = self._device_details.export()
+        # NET-340: an unreadable schedule store raises, so the export fails rather than drop it
+        if self._report_generator is not None:
+            config["sections"]["report_schedules"] = (
+                self._report_generator.export_backup()
+            )
 
         # Excluded IPs
         config["sections"]["excluded_ips"] = self._read_json(
@@ -582,6 +594,10 @@ class ConfigBackup:
             )
 
         self._restore_owner_files(sections, applied, skipped, errors)
+        # NET-340: restored paused, through the generator's lock
+        restore_report_schedules(
+            sections, self._report_generator, applied, errors, notes
+        )
 
         logger.info(
             "Imported config: %d sections applied, %d skipped, %d errors",

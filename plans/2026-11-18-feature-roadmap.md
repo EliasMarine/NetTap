@@ -146,7 +146,7 @@ Lane A (F1) does not wait for P1 or P2: it is daemon-only, and its two new label
 
 - [x] **Done 2026-11-18 (NET-319, `feature/f1-notification-foundation`).** As the slice plan `plans/2026-11-18-f1-notification-foundation.md` narrowed it:
   - F1 sends `new_device` only. Each later slice adds its own event type when it adds the sender.
-  - `GET /api/events` moved to #1.
+  - `GET /api/events` moved to #1. **Amended 2026-11-21 (NET-340):** deferred again, NET-352. #1 reads the journal in-process through `EventJournal.scan()`, so nothing consumes the route yet.
   - The only job is `journal-compact`.
 
 - **What the owner gets:** offline, data-cap, new-device and report messages arrive on the same channels, with the same daily limits and retries as alerts. The rule builder offers only event types that actually fire. Settings shows when each background check last ran. Weekly reports can count incidents even across restarts.
@@ -178,7 +178,7 @@ Lane A (F1) does not wait for P1 or P2: it is daemon-only, and its two new label
   - Quick settings (`notification_config.py:283`) create the fixed rules `settings-offline`, `settings-datacap` and `settings-newdevice`.
 - **Out:** senders for the five hidden event types.
 - **Reuse:** `notification_dispatcher.py` (cooldown, retry, daily cap, digest), `notification_hub.py`, `beacon_snapshots.py`, `api/drilldown_runner.py` (slot accounting), `capture_config.write_file_atomic`, `device_registry.py`.
-- **Daemon:** `GET /api/notifications/jobs` (read-only job state) and `GET /api/events?type&from&to` (read-only journal query, used by #1).
+- **Daemon:** `GET /api/notifications/jobs` (read-only job state) and `GET /api/events?type&from&to` (read-only journal query, used by #1). **Amended 2026-11-21:** `GET /api/events` is deferred (NET-352); #1 reads the journal in-process.
 - **Web:** event labels in `NotificationsTab.svelte`; quick-settings toggles in `NotificationPrefsCard.svelte`; a "Background checks" table on the Notifications tab.
 - **Tests:**
   - `test_notification_dispatcher.py`: emitted events follow their own rules, old state still loads, events count against the daily cap, the outbox survives a restart, and alert-path behaviour is unchanged.
@@ -510,7 +510,8 @@ Lane A (F1) does not wait for P1 or P2: it is daemon-only, and its two new label
   - **Fix existing API bugs:**
     - validate recipients with `_is_address` and allow at most 10 (CR/LF injection into the To header);
     - `PUT /api/reports/schedules/{id}` must reject a non-object body.
-  - Delivery through F1 (`report` event) for channels, plus a hub method that sends plain-text email to the schedule's recipients.
+  - <!-- OLD TEXT: Delivery through F1 (`report` event) for channels, plus a hub method that sends plain-text email to the schedule's recipients. (amended 2026-11-21, NET-340: the channel summary is deferred) -->
+  - A hub method sends plain-text email to the schedule's recipients. **Amended 2026-11-21 (NET-340, owner sign-off at the plan gate):** the channel summary (a `report` journal event to Pushover, Discord or Telegram) is deferred to its own slice, NET-351. It needs its own consent, off by default and naming the channels; a durable pending event tied to the send claim; digest carry-over in the dispatcher; and a purge of held report items on downgrade. The claim keeps a `pending_event` field for it.
 - **Out:** a posture section (it would mean porting `web/src/lib/posture/score.ts` to Python; link to Security posture instead), PDF, CSV.
 - **Reuse:** `report_generator.py`, `api/reports.py`, `web/src/lib/api/reports.ts` (today imported only by its test), the four `web/src/routes/api/reports/*` proxies, `notification_hub._smtp_send` (:657).
 - **Daemon:** `GET /api/reports/history` and `GET /api/reports/{id}/{stamp}`, both checked with strict patterns so no path is built from input. Each schedule records `last_delivery`.
@@ -1114,7 +1115,7 @@ The owner's standing rule is to take the recommended option and keep going. **Ea
 | #5 Watched devices | M1 | M | NET-331 | [ ] |
 | #2 Internet health | M1 | M | NET-322 | [ ] |
 | #4 Phone top bar | M1 | S–M | NET-323 | [ ] |
-| #1 Weekly report | M1 | L | NET-340 | [ ] |
+| #1 Weekly report | M1 | L | NET-340 | [x] PR #351 |
 | #7 Categories + JA4 | M2 | M | NET-324 | [ ] |
 | #9 Groups | M2 | M | NET-332 | [ ] |
 | #10 Feodo feed | M2 | S | NET-325 | [ ] |

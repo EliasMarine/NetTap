@@ -36,6 +36,8 @@ const HUB_LISTS: Record<string, FetchRoute> = {
 	'/api/notifications/log': () => ({ body: { log: [], count: 0 } }),
 	// NET-319: and its background checks
 	'/api/jobs': () => ({ body: { jobs: [] } }),
+	// NET-340: and the weekly report card (none set up)
+	'/api/reports/schedules': () => ({ body: { schedules: [], tz: 'Europe/London' } }),
 };
 
 /** Stub fetch: URLs in `routes` get their body, the notification lists are empty, everything else a 500. */

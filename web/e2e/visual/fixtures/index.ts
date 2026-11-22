@@ -23,6 +23,7 @@ import { MOMENT_ROUTES } from './moment.ts';
 import { NOTIFICATION_ROUTES } from './notifications.ts';
 import { PACKETS_ROUTES } from './packets.ts';
 import { PCAP_ROUTES } from './pcap.ts';
+import { REPORT_ROUTES } from './reports.ts';
 import { RISK_ROUTES } from './risk.ts';
 import { SETTINGS_ROUTES } from './settings.ts';
 import { SETUP_ROUTES } from './setup.ts';
@@ -60,6 +61,7 @@ export const ROUTES: readonly FixtureRoute[] = [
 	...NOTIFICATION_ROUTES,
 	...PACKETS_ROUTES,
 	...PCAP_ROUTES,
+	...REPORT_ROUTES,
 	...RISK_ROUTES,
 	...SETTINGS_ROUTES,
 	...SETUP_ROUTES,

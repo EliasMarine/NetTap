@@ -1,6 +1,6 @@
 # NET-349: deep UI audit fixes
 
-**Date:** 2026-11-21 · **Branch:** `fix/deep-ui-audit-2026-11-21` · **Status:** in review
+**Date:** 2026-11-21 · **Branch:** `fix/deep-ui-audit-2026-11-21` · **Status:** Done: merged in PR #350 (`940179a8`) and deployed on the G11 on 2026-11-21
 
 The owner's "NetTap Deep UI Audit 2026-11-21" ran on the live G11 (`0.4.0-alpha.2`) in desktop Chrome and a 400 px phone viewport. It found six problems. It also confirmed the NET-347/348 fixes live: the drive warning at 74 °C, the retention label, the drill-down bounds, the Changelog window, one protocol choice on Connections, and the refused PCAP filter.
 
@@ -107,5 +107,11 @@ All six were display gaps:
 
 ## Next steps
 
-- Deploy on the G11 and check the strings and the phone layout.
-- **Follow-up:** the certificate and packet drawers are separate `<aside>` components and may have the same focus gap at phone width.
+- ~~Deploy on the G11 and check the strings and the phone layout.~~ Done 2026-11-21. `deploy-deep-ui-audit.sh` passed every check:
+  - the four new strings are in the served build;
+  - `/login` returns 200, and `/api/auth/me` without a session returns 401;
+  - `nettap-web` is healthy, and the daemon wasn't touched.
+
+  The phone layout is verified in Playwright at 390 and 400 px only, not on a real phone.
+- **Follow-up (NET-350):** the certificate and packet drawers are separate `<aside>` components and may have the same focus gap at phone width.
+- **Follow-up (NET-323):** move correction 10 into the design system, and check every nav page at 390 px.

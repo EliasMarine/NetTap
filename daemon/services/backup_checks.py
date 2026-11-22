@@ -20,6 +20,7 @@ from services.dhcp_gateway_net import validate_interface_name, validate_subnet
 from services.excluded_ips import EXCLUDED_IPS_MAX, parse_single_ip
 from services.home_location import parse_home
 from services.notification_hub import backup_problems
+from services.report_schedule import backup_problems as report_schedule_problems
 from storage.retention_config import RetentionConfigManager
 
 # The fields each capture mode uses, as POST /api/setup/configure takes them
@@ -47,6 +48,7 @@ LABELS = {
     "home_location": "the home location",
     "alert_acknowledgements": "alert acknowledgements",
     "alert_suppressions": "alert suppressions",
+    "report_schedules": "report schedules",
 }
 # The ConfigBackup path each section comes from, for the log
 SECTION_FILES = {
@@ -298,6 +300,8 @@ _SECTION_CHECKS = {
     "alert_suppressions": _suppression_errors,
     # NET-320: worded as the restore words them, "Device details not restored: …"
     "device_details": _details_errors,
+    # NET-340: worded as the restore words them, "Report schedules not restored: …"
+    "report_schedules": report_schedule_problems,
 }
 
 

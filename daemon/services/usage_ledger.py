@@ -117,6 +117,50 @@ def _ms_iso(value: Any) -> str | None:
     return utc_iso(datetime.fromtimestamp(value / 1000, tz=timezone.utc))
 
 
+def network_inventory(
+    client: Any, budget: Budget, index: str = NETWORK_INDEX
+) -> dict[str, dict]:
+    """{uuid: {name, min_ts, max_ts}} of the network indices, inside the budget (moved out of
+    UsageLedger._inventory for the weekly report's storage coverage, NET-340; unchanged)."""
+    budget.check("the index listing")
+    rows = client.cat.indices(
+        index=index,
+        format="json",
+        h="index,uuid",
+        request_timeout=min(LISTING_TIMEOUT_S, budget.remaining()),
+    )
+    names = _listing(rows)
+    undated = sorted({n for n in names.values() if index_day(n) is None})
+    bounds = _index_bounds(client, undated, budget) if undated else {}
+    return {u: index_entry(n, bounds.get(n)) for u, n in names.items()}
+
+
+def _index_bounds(client: Any, names: list[str], budget: Budget) -> dict[str, tuple]:
+    """{name: (min_ts, max_ts)} for indices whose name has no date (was UsageLedger._bounds)."""
+    body = {
+        "size": 0,
+        "aggs": {
+            "idx": {
+                "terms": {"field": "_index", "size": len(names)},
+                "aggs": {
+                    "lo": {"min": {"field": "@timestamp"}},
+                    "hi": {"max": {"field": "@timestamp"}},
+                },
+            }
+        },
+    }
+    reply = client.search(index=",".join(names), body=body, budget=budget)
+    buckets = checked(reply, "the index bounds", ("idx",))["aggregations"]["idx"]
+    try:
+        return {
+            b["key"]: (_ms_iso(b["lo"].get("value")), _ms_iso(b["hi"].get("value")))
+            for b in buckets.get("buckets") or []
+        }
+    # review: a bad bucket (OverflowError: a time past year 9999)
+    except (KeyError, TypeError, AttributeError, ValueError, OverflowError) as exc:
+        raise QueryFailed(f"the index bounds: malformed reply ({exc!r})") from exc
+
+
 def _usable(data: Any) -> bool:
     """A ledger file this version can read; its inventory is checked separately."""
     try:
@@ -245,44 +289,50 @@ class UsageLedger:
 
     # --- OpenSearch -------------------------------------------------------------
 
+    # OLD CODE START — NET-340: moved to the module (network_inventory, _index_bounds) so the
+    # weekly report reads the same inventory
+    # def _inventory(self, budget: Budget) -> dict[str, dict]:
+    #     """{uuid: {name, min_ts, max_ts}} of the network indices, inside the budget."""
+    #     budget.check("the index listing")
+    #     rows = self._client.cat.indices(
+    #         index=NETWORK_INDEX,
+    #         format="json",
+    #         h="index,uuid",
+    #         request_timeout=min(LISTING_TIMEOUT_S, budget.remaining()),
+    #     )
+    #     names = _listing(rows)
+    #     undated = sorted({n for n in names.values() if index_day(n) is None})
+    #     bounds = self._bounds(undated, budget) if undated else {}
+    #     return {u: index_entry(n, bounds.get(n)) for u, n in names.items()}
+    #
+    # def _bounds(self, names: list[str], budget: Budget) -> dict[str, tuple]:
+    #     """{name: (min_ts, max_ts)} for indices whose name has no date."""
+    #     body = {
+    #         "size": 0,
+    #         "aggs": {
+    #             "idx": {
+    #                 "terms": {"field": "_index", "size": len(names)},
+    #                 "aggs": {
+    #                     "lo": {"min": {"field": "@timestamp"}},
+    #                     "hi": {"max": {"field": "@timestamp"}},
+    #                 },
+    #             }
+    #         },
+    #     }
+    #     reply = self._client.search(index=",".join(names), body=body, budget=budget)
+    #     buckets = checked(reply, "the index bounds", ("idx",))["aggregations"]["idx"]
+    #     try:
+    #         return {
+    #             b["key"]: (_ms_iso(b["lo"].get("value")), _ms_iso(b["hi"].get("value")))
+    #             for b in buckets.get("buckets") or []
+    #         }
+    #     # review: a bad bucket (OverflowError: a time past year 9999)
+    #     except (KeyError, TypeError, AttributeError, ValueError, OverflowError) as exc:
+    #         raise QueryFailed(f"the index bounds: malformed reply ({exc!r})") from exc
+    # OLD CODE END
     def _inventory(self, budget: Budget) -> dict[str, dict]:
         """{uuid: {name, min_ts, max_ts}} of the network indices, inside the budget."""
-        budget.check("the index listing")
-        rows = self._client.cat.indices(
-            index=NETWORK_INDEX,
-            format="json",
-            h="index,uuid",
-            request_timeout=min(LISTING_TIMEOUT_S, budget.remaining()),
-        )
-        names = _listing(rows)
-        undated = sorted({n for n in names.values() if index_day(n) is None})
-        bounds = self._bounds(undated, budget) if undated else {}
-        return {u: index_entry(n, bounds.get(n)) for u, n in names.items()}
-
-    def _bounds(self, names: list[str], budget: Budget) -> dict[str, tuple]:
-        """{name: (min_ts, max_ts)} for indices whose name has no date."""
-        body = {
-            "size": 0,
-            "aggs": {
-                "idx": {
-                    "terms": {"field": "_index", "size": len(names)},
-                    "aggs": {
-                        "lo": {"min": {"field": "@timestamp"}},
-                        "hi": {"max": {"field": "@timestamp"}},
-                    },
-                }
-            },
-        }
-        reply = self._client.search(index=",".join(names), body=body, budget=budget)
-        buckets = checked(reply, "the index bounds", ("idx",))["aggregations"]["idx"]
-        try:
-            return {
-                b["key"]: (_ms_iso(b["lo"].get("value")), _ms_iso(b["hi"].get("value")))
-                for b in buckets.get("buckets") or []
-            }
-        # review: a bad bucket (OverflowError: a time past year 9999)
-        except (KeyError, TypeError, AttributeError, ValueError, OverflowError) as exc:
-            raise QueryFailed(f"the index bounds: malformed reply ({exc!r})") from exc
+        return network_inventory(self._client, budget)
 
     def _recount(self, p: _Pass, state: dict, days: list[date]) -> dict:
         """The state after one recount of `days`, the index listing read around its query."""

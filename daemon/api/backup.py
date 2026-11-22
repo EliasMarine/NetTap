@@ -43,6 +43,8 @@ from services.config_backup import (
 )
 from services.device_custom import StoreUnavailable
 from services.excluded_ips import load_excluded_ips, with_appliance_ip
+from services.report_generator import ReportRefused
+from services.report_schedule import UNAVAILABLE as REPORTS_UNREADABLE
 
 logger = logging.getLogger("nettap.api.backup")
 
@@ -116,6 +118,11 @@ async def _export(backup: ConfigBackup) -> web.Response:
     except StoreUnavailable as exc:
         logger.error("Config export refused, a device file is unreadable: %s", exc)
         return public_json({"error": EXPORT_UNREADABLE}, status=503)
+    # NET-340: unreadable report schedules (export_backup's only refusal); this was the generic
+    # 500 below, so the owner saw "Something went wrong" instead of the reason
+    except ReportRefused as exc:
+        logger.error("Config export refused: %s", exc)
+        return public_json({"error": REPORTS_UNREADABLE}, status=503)
     except Exception as exc:
         logger.error("Error exporting config: %s", exc)
         return web.json_response({"error": f"Config export failed: {exc}"}, status=500)

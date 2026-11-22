@@ -249,6 +249,7 @@ SAFE_TEXT = {
     "LiveBandwidthBusyError",
     "ReaderBusy",  # services/container_exec.py, services/pcap_search.py: fixed sentences
     "StillIndexing",  # services/capture_index.py: a sentence and a count
+    "ReportRefused",  # services/report_schedule.py: fixed sentences written for the owner (NET-340)
     "SearchStartExpired",  # services/pcap_search.py: a fixed sentence (NET-347)
 }
 # Exceptions whose reply must be marked public (the page needs to say what happened). A capped

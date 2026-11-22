@@ -36,13 +36,19 @@ describe('navigation', () => {
 	// 	expect(item('/packets')).toMatchObject({ group: 'Investigate', label: 'Packet analysis' });
 	// });
 	// OLD CODE END
-	it('lists 21 pages, Local services under Devices, grouped as the design system shows', () => {
+	// OLD CODE START — NET-340: Reports joined Overview, so 22 pages
+	// it('lists 21 pages, Local services under Devices, grouped as the design system shows', () => {
+	// 	… the same checks without '/reports' …
+	// });
+	// OLD CODE END
+	it('lists 22 pages, Reports under Overview after Bandwidth, grouped as the design system shows', () => {
 		expect(NAV_GROUPS.map((g) => g.label)).toEqual(['Overview', 'Investigate', 'Devices', 'System']);
 		const hrefs = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href));
 		expect(hrefs.sort()).toEqual(
 			[
 				'/', '/alerts', '/bandwidth', '/certificates', '/changelog', '/compliance', '/connections', '/devices', '/dns',
-				'/infrastructure', '/investigations', '/iot', '/live', '/local-services', '/logs', '/packets', '/pcap', '/settings', '/system', '/threats', '/tools',
+				'/infrastructure', '/investigations', '/iot', '/live', '/local-services', '/logs', '/packets', '/pcap', '/reports', '/settings', '/system',
+				'/threats', '/tools',
 			].sort(),
 		);
 		const item = (href: string) => NAV_GROUPS.flatMap((g) => g.items.map((i) => ({ group: g.label, ...i }))).find((i) => i.href === href);
@@ -50,6 +56,8 @@ describe('navigation', () => {
 		expect(item('/compliance')).toMatchObject({ group: 'System', label: 'Security posture' });
 		expect(item('/packets')).toMatchObject({ group: 'Investigate', label: 'Packet analysis' });
 		expect(item('/local-services')).toMatchObject({ group: 'Devices', label: 'Local services' });
+		expect(item('/reports')).toMatchObject({ group: 'Overview', label: 'Reports', icon: 'logs' });
+		expect(NAV_GROUPS[0].items.map((i) => i.href)).toEqual(['/', '/live', '/bandwidth', '/reports']);
 	});
 
 	it.each([
@@ -72,6 +80,7 @@ describe('navigation', () => {
 		expect(pageTitle('/addresses')).toBe('NetTap');
 		expect(pageTitle('/packets')).toBe('Packet analysis');
 		expect(pageTitle('/local-services')).toBe('Local services');
+		expect(pageTitle('/reports')).toBe('Reports');
 	});
 
 	it('shows no shell on sign-in and setup only (Go Live keeps it, as before)', () => {
