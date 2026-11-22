@@ -34,7 +34,7 @@
 
 NetTap is an open-source, self-hosted network monitor for homes and small businesses. Put it on a small x86 box on your network and it records the traffic, flags threats and shows it all in a web dashboard. It runs CISA's [Malcolm](https://github.com/cisagov/Malcolm) stack (Zeek, Suricata, OpenSearch) and adds an installer, a setup wizard, its own dashboard and automatic storage management.
 
-> **Pre-release.** The current version is [`v0.4.0-alpha.2`](https://github.com/EliasMarine/NetTap/releases/tag/v0.4.0-alpha.2), the second alpha for early testers. Use mirror / SPAN mode, the one tested on real hardware, and expect rough edges.
+> **Pre-release.** The current version is [`v0.4.0-beta.1`](https://github.com/EliasMarine/NetTap/releases/tag/v0.4.0-beta.1), the first beta for early testers. Use mirror / SPAN mode, the one tested on real hardware, and expect rough edges.
 
 **New here?** The [setup guide](https://eliasmarine.github.io/NetTap/getting-started/setup-guide/) walks you through everything from choosing hardware to a dashboard full of live data.
 
@@ -117,7 +117,7 @@ See the [hardware guide](https://eliasmarine.github.io/NetTap/getting-started/ha
 ```bash
 git clone https://github.com/EliasMarine/NetTap.git
 cd NetTap
-git checkout v0.4.0-alpha.2
+git checkout v0.4.0-beta.1
 sudo scripts/install/install.sh --skip-bridge
 ```
 

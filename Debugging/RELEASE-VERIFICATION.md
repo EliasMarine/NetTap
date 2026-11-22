@@ -267,6 +267,7 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-11-16 | DO droplets (Ubuntu 24.04.5), tag `v0.4.0-alpha.1` `616877fe` and `main` `4cc3cc73` | Fresh install (H2) via `fresh-install-cloud.sh`, before the LinkedIn post | **PASS** | 5 + 5 | 0 | 0 | Claude | 9 min each. The tag is the README path; `main` is what nettap.dev clones (run with `--skip-bridge`). Installer start screenshot: the ASCII logo renders. `tracking-fixes/2026-11-16-fresh-install-cloud-ubuntu-2204-needrestart.md` |
 | 2026-11-16 | DO droplet (Ubuntu 22.04.5), `main` `4cc3cc73` | Fresh install (H2) via `fresh-install-cloud.sh` | **PASS with a defect** | 5 | 0 | 0 | Claude | Stopped twice in step 2 at needrestart's "Daemons using outdated libraries" dialog until Enter was pressed (NET-297); 21 min |
 | 2026-11-16 | DO droplet (Ubuntu 22.04.5), `fix/installer-needrestart-prompt` `e9872d58` | Fresh install (H2) via `fresh-install-cloud.sh` | **PASS** | 5 | 0 | 0 | Claude | 9 min, no `whiptail` process during the whole install (polled every 2 s). PR #303. All five droplets destroyed |
+| 2026-11-22 | Dev (macOS), `chore/release-v0.4.0-beta.1` off `main` `a38dec62` | Pre-tag checks for `v0.4.0-beta.1` (NET-353) | **PASS** | 6304 | 0 | 5 | Claude | `NETTAP_VERSION = "0.4.0-beta.1"` passes release.yml's `grep -qxF` check for the tag; daemon pytest 6304 passed. CI on `main` `a38dec62` green. Fresh install (H2) not re-run since 2026-11-16 (40 commits, including SvelteKit 3); the G11 runs this `main`. Pre-Release Gate is for v1.0.0 and stays open |
 
 ---
 
