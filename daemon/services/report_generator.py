@@ -27,6 +27,7 @@ from services import owner_tz
 
 # The pure rules live in report_schedule; the names callers use are re-exported here (`as`)
 from services.report_schedule import (
+    CARD_ONLY,
     CHANGED,
     DEFAULT_HOUR,
     DEFAULT_WEEKDAY,
@@ -59,6 +60,7 @@ from services.report_schedule import (
     _schedule_from,
     _weekday,
     _fsync_dir,
+    _replace_file,
     _write_durable,
     backup_problems,
     confirm_token,
@@ -160,14 +162,37 @@ class ReportGenerator:
     def _commit(self, schedules: dict, meta: dict) -> None:
         """Under _state_lock: the sidecar first, then the schedules file, each only if changed.
         Memory follows the disk, so a failed second write leaves the first one in force."""
+        # OLD CODE START — Python review: a directory fsync failing after os.replace left memory
+        # without the state the file already held (memory "no claim", disk a claim)
+        # if meta != self._meta:
+        #     _write_durable(self._meta_file, meta)
+        #     self._meta = meta
+        # if schedules != self._schedules:
+        #     _write_durable(
+        #         self._schedules_file, [asdict(s) for s in schedules.values()]
+        #     )
+        #     self._schedules = schedules
+        # OLD CODE END
         if meta != self._meta:
-            _write_durable(self._meta_file, meta)
+            _replace_file(self._meta_file, meta)
             self._meta = meta
+            self._fsync_parent(self._meta_file)
         if schedules != self._schedules:
-            _write_durable(
-                self._schedules_file, [asdict(s) for s in schedules.values()]
-            )
+            _replace_file(self._schedules_file, [asdict(s) for s in schedules.values()])
             self._schedules = schedules
+            self._fsync_parent(self._schedules_file)
+
+    @staticmethod
+    def _fsync_parent(path: Path) -> None:
+        """The rename made durable. Memory already holds the file's new state; a failure still
+        raises, so a claim whose write isn't durable is never sent (plan §3.3)."""
+        try:
+            _fsync_dir(path.parent)
+        except OSError as exc:
+            logger.warning(
+                "%s replaced but its directory not synced: %s", path.name, exc
+            )
+            raise
 
     def _check_available(self) -> None:
         if not self._available:
@@ -183,7 +208,14 @@ class ReportGenerator:
         """The one resolver for a schedule's report directory; ValueError for a non-uuid4 id."""
         if not isinstance(sid, str) or not UUID4.fullmatch(sid):
             raise ValueError("Not a schedule id")
-        return self._reports_dir / sid
+        # OLD CODE: return self._reports_dir / sid (CodeQL py/path-injection: the uuid4 check
+        # makes it safe, but a regex isn't a sanitiser it recognises; normalise + prefix is)
+        # abspath, not realpath: the reports directory may sit behind a symlink (macOS tmp)
+        root = os.path.normpath(os.path.abspath(self._reports_dir))
+        path = os.path.normpath(os.path.join(root, sid))
+        if not path.startswith(root + os.sep):
+            raise ValueError("Not a schedule id")
+        return Path(path)
 
     def _schedule_dirs(self) -> list[Path]:
         if not self._reports_dir.is_dir():
@@ -315,14 +347,26 @@ class ReportGenerator:
             raise ReportRefused(409, STALE)
 
     def create(self, fields: dict, card: bool = False) -> dict:
-        """A new schedule from validated fields; confirmed only with confirm: true."""
+        """A new schedule from validated fields, never confirmed: only the card sends email."""
+        # OLD CODE START — security review: an API-only schedule could be confirmed for email,
+        # and no page shows it (a hidden forwarding rule); the cap moved to _create_locked
+        # """A new schedule from validated fields; confirmed only with confirm: true."""
+        # with self._state_lock:
+        #     self._check_available()
+        #     if len(self._schedules) >= MAX_SCHEDULES:
+        #         raise ValueError(f"NetTap keeps up to {MAX_SCHEDULES} report schedules")
+        #     return self._create_locked(fields, card)
+        # OLD CODE END
+        if fields.get("confirm") is True and not card:
+            raise ValueError(CARD_ONLY)
         with self._state_lock:
             self._check_available()
-            if len(self._schedules) >= MAX_SCHEDULES:
-                raise ValueError(f"NetTap keeps up to {MAX_SCHEDULES} report schedules")
             return self._create_locked(fields, card)
 
     def _create_locked(self, fields: dict, card: bool) -> dict:
+        # review: here, so the card's first save counts too (50 API schedules + a card made 51)
+        if len(self._schedules) >= MAX_SCHEDULES:
+            raise ValueError(f"NetTap keeps up to {MAX_SCHEDULES} report schedules")
         s = ReportSchedule(
             id=str(uuid.uuid4()),
             name=fields.get("name", "Weekly report"),
@@ -348,6 +392,9 @@ class ReportGenerator:
         or on a destination change while a report is being sent."""
         with self._state_lock:
             self._check_available()
+            # security review: only the card confirms, so no hidden schedule sends email
+            if fields.get("confirm") is True and not self._get(sid)[1].get("card"):
+                raise ValueError(CARD_ONLY)
             return self._update_locked(sid, fields)
 
     def _update_locked(self, sid: str, fields: dict) -> dict:
@@ -371,6 +418,9 @@ class ReportGenerator:
     def upsert_card(self, fields: dict) -> tuple[dict, bool]:
         """The Settings card's one schedule, found by card: true or created (weekly); the reply
         and whether it was created."""
+        # security review: the card shows a weekly report, so it never confirms another frequency
+        # (a restored or API-edited card schedule could be daily)
+        fields = {**fields, "frequency": "weekly"}
         with self._state_lock:
             self._check_available()
             sid = next(
@@ -449,6 +499,14 @@ class ReportGenerator:
         )
         return report
 
+    @staticmethod
+    def _prune_quietly(d: Path) -> None:
+        """The newest 12 kept; a failure is logged, never fails a stored or sent report."""
+        try:
+            prune(d)
+        except OSError as exc:
+            logger.warning("Old reports in %s not pruned: %s", d.name, exc)
+
     def generate_now(self, sid: str) -> dict:
         """A manual report of the latest completed period: never waits, emails or moves state."""
         if not self._gen_lock.acquire(blocking=False):
@@ -477,7 +535,8 @@ class ReportGenerator:
                 }
                 report = {**report, "id": rid, "delivery": delivery}
                 _write_durable(d / f"{rid}.json", report)
-                prune(d)
+                # OLD CODE: prune(d) (review: best-effort, the report is already stored)
+                self._prune_quietly(d)
             return report
         finally:
             self._gen_lock.release()
@@ -518,6 +577,7 @@ class ReportGenerator:
             delivery = self._send(claim, report)
             with self._state_lock:
                 self._finish(s.id, claim, delivery, report)
+                self._prune_quietly(self.schedule_dir(s.id))
             return None
         finally:
             self._gen_lock.release()
@@ -586,9 +646,19 @@ class ReportGenerator:
                 self._schedules,
                 {**self._meta, sid: {**m, "claim": claim, "last_period": done}},
             )
-            os.replace(staged, d / f"{rid}.json")
-            _fsync_dir(d)
-            prune(d)
+            # OLD CODE START — Python review: an error here, after the claim was committed, lost
+            # the period with no send and recovery called it "NetTap stopped while sending"
+            # os.replace(staged, d / f"{rid}.json")
+            # _fsync_dir(d)
+            # prune(d)
+            # OLD CODE END
+            # the claim stands, so the send goes ahead: _finish writes the report in place, and
+            # recovery would rename a staged file that matches a claim
+            try:
+                os.replace(staged, d / f"{rid}.json")
+                _fsync_dir(d)
+            except OSError as exc:
+                logger.error("Report %s: staged file not published: %s", rid, exc)
             return claim, report
         finally:
             self._state_lock.release()
@@ -739,7 +809,7 @@ class ReportGenerator:
         """The schedules with their weekday, hour and card; never digests, claims or deliveries."""
         with self._state_lock:
             self._check_available()
-            return [
+            items = [
                 {
                     **{
                         k: v
@@ -752,6 +822,17 @@ class ReportGenerator:
                 }
                 for s in self._schedules.values()
             ]
+        # Python review: an older daemon stored what a restore refuses (a comma in a recipient,
+        # a 101-character name), and one such schedule refused the whole download
+        kept = [i for i in items if not backup_problems([i])]
+        left = [i["id"] for i in items if backup_problems([i])]
+        if left:
+            logger.warning(
+                "Backup leaves out %d report schedule(s) a restore would refuse: %s",
+                len(left),
+                ", ".join(left),
+            )
+        return kept
 
     def restore_backup(self, items: Any) -> list[str]:
         """The backup's schedules replace these, unconfirmed (paused); the warnings to show.

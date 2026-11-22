@@ -27,7 +27,8 @@ function stub(list: Reply, put?: Reply) {
 
 const putBodies = (fn: ReturnType<typeof stub>) => fn.mock.calls.filter(([, init]) => init?.method === 'PUT').map(([, init]) => JSON.parse(String(init!.body)));
 const recipients = () => screen.getByLabelText('Email addresses, one per line') as HTMLTextAreaElement;
-const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save weekly report' }));
+// OLD CODE: const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save weekly report' })); (the 409 reload holds "Saving…" a moment longer)
+const save = async () => fireEvent.click(await screen.findByRole('button', { name: 'Save weekly report' }));
 const listed = (schedules: ReportSchedule[], tz = 'Europe/London'): Reply => ({ status: 200, body: { schedules, tz } });
 
 describe('Weekly report card (NET-340)', () => {
@@ -119,24 +120,91 @@ describe('Weekly report card (NET-340)', () => {
 		expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
 	});
 
-	it("settings changed in another window: the stale-token 409 shows as the daemon words it", async () => {
-		const stale = 'These settings changed in another window. Reload and check them.';
-		stub({ status: 200, body: SCHEDULES }, { status: 409, body: { error: stale } });
-		render(Card);
-		await screen.findByDisplayValue('Monday');
+	// OLD CODE START — TypeScript review: the card kept the stale token, so every retry met the same 409
+	// it("settings changed in another window: the stale-token 409 shows as the daemon words it", async () => { … });
+	// OLD CODE END
+	describe('after a stale-token 409', () => {
+		const STALE = 'These settings changed in another window. Reload and check them.';
+		/** The schedule another window saved: a new token and rev, and 18:00. */
+		const CHANGED = { ...CARD_SCHEDULE, hour: 18, rev: 4, confirm_token: 'fresh-token' };
 
-		await save();
-		expect(await screen.findByRole('alert')).toHaveTextContent(stale);
+		/** The list answers SCHEDULES, then the changed schedule; the first PUT is refused, later ones save. */
+		function stubStale() {
+			let lists = 0;
+			let puts = 0;
+			const fn = vi.fn(async (url: string, init?: RequestInit) => {
+				if (url === '/api/reports/card' && init?.method === 'PUT') {
+					const body = JSON.parse(String(init.body));
+					const reply = ++puts === 1 ? { status: 409, body: { error: STALE } } : { status: 200, body: { ...CHANGED, ...body, rev: 5, confirm_token: 'next-token' } };
+					return { ok: reply.status < 400, status: reply.status, json: async () => reply.body };
+				}
+				const body = ++lists === 1 ? SCHEDULES : { schedules: [CHANGED], tz: 'Europe/London' };
+				return { ok: true, status: 200, json: async () => body };
+			});
+			vi.stubGlobal('fetch', fn);
+			return fn;
+		}
+
+		it('reloads the schedule, so the next Save carries the fresh token and rev', async () => {
+			const fn = stubStale();
+			render(Card);
+			await screen.findByDisplayValue('Monday');
+
+			await save();
+			expect(await screen.findByText('These settings changed in another window. NetTap loaded them: check them and save again.')).toBeInTheDocument();
+			// nothing was edited here, so the other window's 18:00 shows
+			expect((screen.getByLabelText('Time') as HTMLSelectElement).value).toBe('18');
+
+			await save();
+			expect(await screen.findByText('Saved. The weekly report is on.')).toBeInTheDocument();
+			const [first, second] = putBodies(fn);
+			expect(first).toMatchObject({ confirm_token: CARD_SCHEDULE.confirm_token, rev: CARD_SCHEDULE.rev });
+			expect(second).toMatchObject({ confirm_token: 'fresh-token', rev: 4, hour: 18 });
+		});
+
+		it("keeps the owner's unsaved edits through the reload", async () => {
+			const fn = stubStale();
+			render(Card);
+			await screen.findByDisplayValue('Monday');
+
+			await fireEvent.input(recipients(), { target: { value: 'mine@example.com' } });
+			await save();
+			expect(await screen.findByText(/NetTap loaded them and kept your edits: check them and save again\.$/)).toBeInTheDocument();
+			expect(recipients().value).toBe('mine@example.com');
+			expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+
+			await save();
+			await screen.findByText('Saved. The weekly report is on.');
+			expect(putBodies(fn)[1]).toMatchObject({ recipients: ['mine@example.com'], confirm_token: 'fresh-token', rev: 4 });
+		});
+
+		it("a 409 where nothing changed (a send in progress) keeps the daemon's words", async () => {
+			stub({ status: 200, body: SCHEDULES }, { status: 409, body: { error: STALE } });
+			render(Card);
+			await screen.findByDisplayValue('Monday');
+
+			await save();
+			expect(await screen.findByRole('alert')).toHaveTextContent(STALE);
+		});
 	});
 
-	it('a failed load says so, with no form to save, and Try again reloads it', async () => {
-		stub({ status: 503, body: {} });
+	it("a failed load shows the daemon's reason, with no form to save, and Try again reloads it", async () => {
+		// OLD CODE: stub({ status: 503, body: {} }); (TypeScript review: the daemon's sentence was dropped, and this test locked that in)
+		stub({ status: 503, body: { error: 'Report schedules are unavailable.' } });
 		render(Card);
 		expect(await screen.findByText("Couldn't load the weekly report: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText('Report schedules are unavailable.')).toBeInTheDocument();
+		expect(screen.queryByText(/Check that NetTap is running/)).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Save weekly report' })).not.toBeInTheDocument();
 
 		stub({ status: 200, body: SCHEDULES });
 		await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 		expect(await screen.findByDisplayValue('Monday')).toBeInTheDocument();
+	});
+
+	it('a load that never reaches NetTap keeps the generic hint', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+		render(Card);
+		expect(await screen.findByText('Check that NetTap is running on the System page, then try again.')).toBeInTheDocument();
 	});
 });

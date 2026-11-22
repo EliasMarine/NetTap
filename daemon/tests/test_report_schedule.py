@@ -208,7 +208,6 @@ def test_the_old_loader_reads_a_file_the_new_code_wrote(tmp_path):
             "recipients": ["a@example.com"],
             "weekday": 2,
             "hour": 18,
-            "confirm": True,
         }
     )
     gen.update(view["id"], {"name": "Renamed"})

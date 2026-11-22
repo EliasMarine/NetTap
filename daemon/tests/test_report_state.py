@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services import report_schedule  # noqa: E402
+from services import report_generator, report_schedule  # noqa: E402
 from services.report_generator import ReportGenerator, ReportRefused  # noqa: E402
 from services.report_schedule import UNKNOWN_SEND  # noqa: E402
 
@@ -110,15 +110,23 @@ class Rig:
         return self.gen
 
     def confirmed(self, **fields) -> dict:
+        """The card's schedule, saved and confirmed: only the card sends email."""
         body = {
-            "name": "Weekly report",
             "recipients": ["owner@example.com"],
             "weekday": 0,
             "hour": 8,
             "confirm": True,
             **fields,
         }
-        return self.gen.create(body)
+        # OLD CODE: return self.gen.create(body) (security review: only the card confirms)
+        return self.gen.upsert_card(body)[0]
+
+    def confirmed_below_the_api(self, **fields) -> dict:
+        """A confirmed schedule that isn't the card. No route makes one (only the card
+        confirms); the job's own rules, such as one report per tick, are checked with it."""
+        body = {"name": "W", "recipients": ["second@example.com"], "confirm": True}
+        with self.gen._state_lock:
+            return self.gen._create_locked({**body, **fields}, card=False)
 
     def tick(self, deadline_s: float = 240) -> None:
         self.gen.run_due(time.monotonic() + deadline_s)
@@ -183,7 +191,8 @@ def test_a_confirmed_schedule_sends_once_at_its_boundary(rig):
 
 def test_one_due_schedule_per_tick(rig):
     rig.confirmed()
-    rig.confirmed(recipients=["second@example.com"])
+    # OLD CODE: rig.confirmed(recipients=["second@example.com"]) (only the card confirms)
+    rig.confirmed_below_the_api()
     rig.clock.now = MONDAY_0805
     rig.tick()
     assert len(rig.hub.calls) == 1
@@ -374,10 +383,14 @@ def test_an_unchanged_save_between_the_boundary_and_the_tick_doesnt_skip(rig):
 
 
 def test_confirming_a_paused_schedule_skips_the_weeks_it_missed(rig):
-    sid = rig.gen.create({"name": "W", "recipients": ["a@example.com"]})["id"]
+    # OLD CODE: sid = rig.gen.create({"name": "W", "recipients": ["a@example.com"]})["id"]
+    sid = rig.gen.upsert_card({"recipients": ["a@example.com"]})[0][
+        "id"
+    ]  # not confirmed
     rig.clock.now = MONDAY_0805 + timedelta(days=2)
     token = rig.gen.view(sid)["confirm_token"]
-    rig.gen.update(sid, {"confirm": True, "confirm_token": token})
+    # OLD CODE: rig.gen.update(sid, {"confirm": True, "confirm_token": token})
+    rig.gen.upsert_card({"confirm": True, "confirm_token": token})
     rig.tick()
     assert rig.hub.calls == []
     assert rig.gen.view(sid)["last_period"]["last"] == "2026-11-15"
@@ -433,6 +446,50 @@ def test_a_replaced_card_refuses_the_old_cards_token(rig):
     assert exc.value.status == 409
 
 
+def test_a_card_save_confirms_weekly_even_for_a_daily_card_schedule(rig):
+    """Security review: a restored or API-edited card schedule could be daily, and the weekly
+    card confirmed it as daily."""
+    entry = {
+        "id": "0b6c8f8e-6f1e-4c55-9a3e-2d7c1b0e9a11",
+        "name": "Weekly report",
+        "frequency": "daily",
+        "format": "json",
+        "recipients": ["a@example.com"],
+        "sections": ["traffic_summary", "alerts", "devices"],
+        "enabled": True,
+        "created_at": "2026-11-01T00:00:00Z",
+        "weekday": 0,
+        "hour": 8,
+        "card": True,
+    }
+    rig.gen.restore_backup([entry])
+    token = rig.gen.view(entry["id"])["confirm_token"]
+    saved, created = rig.gen.upsert_card({"confirm": True, "confirm_token": token})
+    assert (saved["id"], saved["frequency"], created) == (entry["id"], "weekly", False)
+    assert saved["confirmed"]
+
+
+def test_the_card_counts_toward_the_schedule_limit(rig):
+    for i in range(50):
+        rig.gen.create({"name": f"S{i}"})
+    with pytest.raises(ValueError):
+        rig.gen.upsert_card({"recipients": ["a@example.com"], "confirm": True})
+    assert len(rig.gen.list_schedules()) == 50
+
+
+def test_only_the_card_can_be_confirmed(rig):
+    """Security review: an API-only schedule confirmed for email is a hidden forwarding rule."""
+    with pytest.raises(ValueError) as exc:
+        rig.gen.create({"name": "W", "recipients": ["x@example.com"], "confirm": True})
+    assert "Settings › Notifications" in str(exc.value)
+    assert rig.gen.list_schedules() == []
+    sid = rig.gen.create({"name": "W", "recipients": ["x@example.com"]})["id"]
+    shown = rig.gen.view(sid)
+    with pytest.raises(ValueError):
+        rig.gen.update(sid, {"confirm": True, "confirm_token": shown["confirm_token"]})
+    assert rig.gen.view(sid) == shown
+
+
 def test_two_first_card_saves_make_one_schedule(rig):
     first, _ = rig.gen.upsert_card({"recipients": ["a@example.com"], "confirm": True})
     with pytest.raises(ReportRefused) as exc:  # the second tab saw no card, so no token
@@ -443,7 +500,8 @@ def test_two_first_card_saves_make_one_schedule(rig):
 
 
 def test_a_card_save_updates_the_card_schedule_not_the_first_listed(rig):
-    other = rig.confirmed(frequency="daily")
+    # OLD CODE: other = rig.confirmed(frequency="daily") (only the card confirms)
+    other = rig.gen.create({"name": "Other", "frequency": "daily"})
     card, _ = rig.gen.upsert_card({"recipients": ["a@example.com"], "confirm": True})
     saved, created = rig.gen.upsert_card(
         {"hour": 9, "confirm": True, "confirm_token": card["confirm_token"]}
@@ -477,44 +535,76 @@ def _fail_for(path: Path, real):
     return wrapped
 
 
+def _raise(*_args, **_kwargs):
+    raise OSError("injected")
+
+
 @pytest.mark.parametrize("step", ["temp write", "replace", "directory fsync"])
 def test_a_failed_claim_write_means_no_smtp_attempt(rig, monkeypatch, step):
+    """Before the claim is durable nothing is sent. A failed directory fsync leaves the file
+    replaced, so memory holds the claim too, and recovery reads it as unknown."""
     sid = rig.confirmed()["id"]
     meta = rig.root / "report_schedule_meta.json"
-    originals = (
-        report_schedule.write_file_atomic,
-        os.replace,
-        report_schedule._fsync_dir,
-    )
-    if step == "temp write":
-        monkeypatch.setattr(
-            report_schedule,
-            "write_file_atomic",
-            _fail_for(meta, report_schedule.write_file_atomic),
-        )
-    elif step == "replace":
-        real = os.replace
-        monkeypatch.setattr(
-            os, "replace", lambda src, dst: _fail_for(meta, lambda d: real(src, d))(dst)
-        )
+    real = {
+        "temp write": (report_schedule, "write_file_atomic"),
+        "replace": (os, "replace"),
+        "directory fsync": (report_generator, "_fsync_dir"),
+    }[step]
+    original = getattr(*real)
+    if step == "replace":
+        failing = lambda src, dst: _fail_for(meta, lambda d: original(src, d))(dst)  # noqa: E731
     else:
-        monkeypatch.setattr(
-            report_schedule,
-            "_fsync_dir",
-            _fail_for(rig.root, report_schedule._fsync_dir),
-        )
+        failing = _fail_for(meta if step == "temp write" else rig.root, original)
+    monkeypatch.setattr(*real, failing)
     rig.clock.now = MONDAY_0805
     with pytest.raises(OSError):
         rig.tick()
-    assert rig.hub.calls == []
-    assert rig.reports(sid) == []  # nothing published
-    report_schedule.write_file_atomic, os.replace, report_schedule._fsync_dir = (
-        originals
-    )
+    replaced = step == "directory fsync"  # the new sidecar is on disk, only not synced
+    assert rig.hub.calls == [] and rig.reports(sid) == []
+    assert rig.gen.view(sid)["sending"] is replaced  # memory matches the file
+    monkeypatch.setattr(*real, original)
     rig.restart()
-    rig.tick()  # the staged file had no claim: deleted; the period was never sent: sent now
+    rig.tick()
     assert not list((rig.root / "reports" / sid).glob("*.staged"))
-    assert len(rig.reports(sid)) == 1 and len(rig.hub.calls) <= 1
+    (path,) = rig.reports(sid)
+    result = rig.gen.view(sid)["last_delivery"]["result"]
+    if replaced:  # claimed, never sent: unknown, and the period isn't sent again
+        assert rig.hub.calls == [] and result == "unknown"
+    else:  # never claimed: the period is still due and goes now
+        assert len(rig.hub.calls) == 1 and result == "sent"
+    assert json.loads(path.read_text())["delivery"]["result"] == result
+
+
+@pytest.mark.parametrize("step", ["staged rename", "reports-dir fsync", "prune"])
+def test_a_file_error_after_the_claim_still_sends_once(rig, monkeypatch, step):
+    """Python review: these lost the period with no send and read "NetTap stopped while
+    sending". The claim is durable, so the send goes ahead."""
+    sid = rig.confirmed()["id"]
+    d = rig.root / "reports" / sid
+    if step == "staged rename":
+        original = os.replace
+
+        def replace(src, dst):
+            if str(src).endswith(".json.staged"):
+                raise OSError("injected")
+            return original(src, dst)
+
+        monkeypatch.setattr(os, "replace", replace)
+    elif step == "reports-dir fsync":
+        monkeypatch.setattr(
+            report_generator, "_fsync_dir", _fail_for(d, report_generator._fsync_dir)
+        )
+    else:
+        monkeypatch.setattr(report_generator, "prune", _raise)
+    rig.clock.now = MONDAY_0805
+    rig.tick()
+    rig.tick()  # recovery deletes a staged file left behind; nothing is sent again
+    assert len(rig.hub.calls) == 1
+    view = rig.gen.view(sid)
+    assert view["last_delivery"]["result"] == "sent" and not view["sending"]
+    (path,) = rig.reports(sid)
+    assert json.loads(path.read_text())["delivery"]["result"] == "sent"
+    assert not list(d.glob("*.staged"))
 
 
 def test_a_failing_claim_write_holds_the_period_for_an_hour(rig, contents):
@@ -728,6 +818,29 @@ def test_an_invalid_stored_id_makes_the_store_unavailable_and_untouched(tmp_path
     rig.tick()
     assert (tmp_path / "report_schedules.json").read_text() == raw
     assert not (tmp_path / "report_schedule_meta.json").exists()
+
+
+@pytest.mark.parametrize(
+    "tampered",
+    [
+        "0b6c8f8e-6f1e-4c55-9a3e-2d7c1b0e9a11/..",
+        "../0b6c8f8e-6f1e-4c55-9a3e-2d7c1b0e9a1",
+        "0b6c8f8e-6f1e-4c55-9a3e-2d7c1b0e9a11\x00",
+        "/etc/0b6c8f8e-6f1e-4c55-9a3e-2d7c1b0e",
+        "0B6C8F8E-6F1E-4C55-9A3E-2D7C1B0E9A11",
+        "",
+        None,
+    ],
+)
+def test_schedule_dir_refuses_a_tampered_id(rig, tampered):
+    """CodeQL py/path-injection: every request id reaches the disk through schedule_dir."""
+    with pytest.raises(ValueError):
+        rig.gen.schedule_dir(tampered)
+
+
+def test_schedule_dir_stays_inside_the_reports_directory(rig):
+    sid = "0b6c8f8e-6f1e-4c55-9a3e-2d7c1b0e9a11"
+    assert rig.gen.schedule_dir(sid) == rig.root / "reports" / sid
 
 
 def test_history_and_report_reads_reject_bad_ids(rig):

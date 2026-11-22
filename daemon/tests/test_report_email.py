@@ -94,7 +94,7 @@ def test_a_connection_failure_is_failed_and_logs_no_address(hub, caplog):
         "refused": [],
         "error": "can't connect: Connection refused",
     }
-    assert not any("example.net" in r.getMessage() for r in caplog.records)
+    assert not any(addr in r.getMessage() for r in caplog.records for addr in TO)
 
 
 def test_no_smtp_server_is_not_configured(hub, env_file):

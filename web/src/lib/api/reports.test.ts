@@ -12,6 +12,7 @@ import {
 	getReportHistory,
 	getReport,
 	ReportsError,
+	daemonReason,
 } from './reports';
 
 // ---------------------------------------------------------------------------
@@ -303,6 +304,14 @@ describe('reports API client', () => {
 			mockFetchFailure(503);
 
 			await expect(getReportHistory('s')).rejects.toMatchObject({ status: 503 });
+		});
+	});
+
+	describe('daemonReason', () => {
+		it("is the daemon's sentence, or null when NetTap wasn't reached", () => {
+			expect(daemonReason(new ReportsError('Report schedules are unavailable.', 503))).toBe('Report schedules are unavailable.');
+			expect(daemonReason(new ReportsError("Couldn't reach NetTap. Check the connection and try again.", 0))).toBeNull();
+			expect(daemonReason(new Error('boom'))).toBeNull();
 		});
 	});
 

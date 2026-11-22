@@ -26,11 +26,14 @@ const OLDER: Report = {
 
 let calls: { url: string; method: string }[] = [];
 
-/** Routes by path; `generate` answers Generate now. */
-function stubFetch({ schedules = ok(SCHEDULES), history = ok(HISTORY), report = (id: string) => ok(id === OLDER.id ? OLDER : REPORT), generate = ok(REPORT) }: {
-	schedules?: Reply;
+type Answer = Reply | Promise<Reply>;
+
+/** Routes by path; `generate` answers Generate now. A reply may be a promise, so a test can hold it. */
+// OLD CODE: schedules?: Reply; report?: (id: string) => Reply; (TypeScript review: the race tests hold replies)
+function stubFetch({ schedules = () => ok(SCHEDULES), history = ok(HISTORY), report = (id: string) => ok(id === OLDER.id ? OLDER : REPORT), generate = ok(REPORT) }: {
+	schedules?: () => Answer;
 	history?: Reply;
-	report?: (id: string) => Reply;
+	report?: (id: string) => Answer;
 	generate?: Reply;
 } = {}) {
 	vi.stubGlobal(
@@ -38,16 +41,34 @@ function stubFetch({ schedules = ok(SCHEDULES), history = ok(HISTORY), report = 
 		vi.fn(async (url: string, init?: RequestInit) => {
 			calls.push({ url, method: init?.method ?? 'GET' });
 			const path = url.split('?')[0];
-			const r =
-				path === '/api/reports/schedules' ? schedules
+			const r = await (
+				path === '/api/reports/schedules' ? schedules()
 				: path === '/api/reports/history' ? history
 				: path.startsWith('/api/reports/history/') ? report(decodeURIComponent(path.split('/').pop()!))
 				: path.startsWith('/api/reports/generate/') ? generate
-				: { status: 404, body: { error: 'Not found' } };
+				: { status: 404, body: { error: 'Not found' } }
+			);
 			return { ok: r.status < 400, status: r.status, json: async () => r.body };
 		}),
 	);
 }
+
+/** A reply the test lets through when it chooses. */
+function held() {
+	let release: (r: Reply) => void = () => {};
+	const reply = new Promise<Reply>((resolve) => (release = resolve));
+	return { reply, release };
+}
+
+/** The report on screen: its head (from the history row) and its sections (from the report itself). */
+async function shownReport(period: string) {
+	expect(await screen.findByRole('heading', { name: `Report for ${period}` })).toBeInTheDocument();
+	expect(await screen.findByRole('region', { name: 'Internet use' })).toBeInTheDocument();
+}
+
+const rowButton = (name: RegExp) => within(screen.getByRole('table', { name: 'Report history' })).getByRole('button', { name });
+const NEWEST = /^Show the report for 9–15 Nov 2026/;
+const OLDER_ROW = /^Show the report for 2–8 Nov 2026, generated Thu 12 Nov/;
 
 const kpi = (label: string) => screen.getByText(label, { selector: '.kpi-top span' }).closest('.kpi') as HTMLElement;
 
@@ -70,7 +91,7 @@ describe('Reports page (NET-340)', () => {
 	it('KPIs: next send in the ledger zone, last delivery, where it goes, and the days covered', async () => {
 		stubFetch();
 		render(Page);
-		await screen.findByRole('heading', { name: 'Report for 9–15 Nov 2026' });
+		await shownReport('9–15 Nov 2026');
 
 		expect(within(kpi('Next report')).getByText(zonedDay(CARD_SCHEDULE.next_send, 'Europe/London'))).toBeInTheDocument();
 		expect(within(kpi('Next report')).getByText(`${zonedClock(CARD_SCHEDULE.next_send, 'Europe/London')} · Europe/London`)).toBeInTheDocument();
@@ -85,7 +106,7 @@ describe('Reports page (NET-340)', () => {
 	it('hero: five sections, each with its status and coverage line; a partial one shows its note', async () => {
 		stubFetch();
 		render(Page);
-		await screen.findByRole('heading', { name: 'Report for 9–15 Nov 2026' });
+		await shownReport('9–15 Nov 2026');
 
 		for (const name of ['Internet use', 'Alerts', 'New devices', 'Offline incidents', 'Data cap']) {
 			expect(screen.getByRole('heading', { name, level: 3 })).toBeInTheDocument();
@@ -191,7 +212,7 @@ describe('Reports page (NET-340)', () => {
 	});
 
 	it('empty: no card schedule points to Settings › Notifications, and Generate now is off', async () => {
-		stubFetch({ schedules: ok(SCHEDULES_EMPTY) });
+		stubFetch({ schedules: () => ok(SCHEDULES_EMPTY) });
 		render(Page);
 
 		expect(await screen.findByText('No weekly report set up.')).toBeInTheDocument();
@@ -212,17 +233,90 @@ describe('Reports page (NET-340)', () => {
 	});
 
 	it('a failed load says so, never "no reports", and Try again reloads', async () => {
-		stubFetch({ schedules: { status: 503, body: { error: 'Report schedules are unavailable.' } } });
+		stubFetch({ schedules: () => ({ status: 503, body: { error: 'Report schedules are unavailable.' } }) });
 		render(Page);
 
 		expect(await screen.findByText("Couldn't load the reports: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the report history: the request failed.")).toBeInTheDocument();
+		// TypeScript review: the daemon's own reason, not "check that NetTap is running"
+		expect(screen.getAllByText('Report schedules are unavailable.')).toHaveLength(2);
+		expect(screen.queryByText(/Check that NetTap is running/)).not.toBeInTheDocument();
 		expect(screen.queryByText('No weekly report set up.')).not.toBeInTheDocument();
 		expect(within(kpi('Next report')).getByText('—')).toBeInTheDocument();
 
 		stubFetch();
 		await fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]);
 		expect(await screen.findByRole('heading', { name: 'Report for 9–15 Nov 2026' })).toBeInTheDocument();
+	});
+
+	it('a load that never reaches NetTap keeps the generic hint', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+		render(Page);
+
+		expect(await screen.findAllByText('Check that NetTap is running on the System page, then try again.')).toHaveLength(2);
+	});
+
+	it("a report that fails shows the daemon's reason", async () => {
+		stubFetch({ report: () => ({ status: 404, body: { error: 'That report is no longer kept.' } }) });
+		render(Page);
+
+		expect(await screen.findByText("Couldn't load this report: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText('That report is no longer kept.')).toBeInTheDocument();
+	});
+
+	// TypeScript review: A shown, B picked and hanging, A picked again and its refetch failing left the spinner for ever
+	it('picking back the report on screen shows it, even when its refetch fails, and a later pick clears the notice', async () => {
+		const b = held();
+		let failA = false;
+		stubFetch({ report: (id) => (id === OLDER.id ? b.reply : failA ? { status: 503, body: {} } : ok(REPORT)) });
+		render(Page);
+		await shownReport('9–15 Nov 2026');
+
+		await fireEvent.click(rowButton(OLDER_ROW));
+		expect(await screen.findByText('Loading the report')).toBeInTheDocument();
+
+		failA = true;
+		await fireEvent.click(rowButton(NEWEST));
+		expect(await screen.findByRole('region', { name: 'Internet use' })).toBeInTheDocument();
+		expect(await screen.findByText(/^Couldn't refresh the reports; showing figures from/)).toBeInTheDocument();
+		expect(screen.queryByText('Loading the report')).not.toBeInTheDocument();
+
+		// B's late answer belongs to a superseded pick
+		b.release(ok(OLDER));
+		await Promise.resolve();
+		expect(screen.getByRole('heading', { name: 'Report for 9–15 Nov 2026' })).toBeInTheDocument();
+
+		// a later pick that loads clears the stale notice that A's refetch set
+		stubFetch();
+		await fireEvent.click(rowButton(OLDER_ROW));
+		expect(await screen.findByRole('heading', { name: 'Report for 2–8 Nov 2026' })).toBeInTheDocument();
+		expect(await screen.findByRole('region', { name: 'Internet use' })).toBeInTheDocument();
+		expect(screen.queryByText(/^Couldn't refresh the reports/)).not.toBeInTheDocument();
+	});
+
+	it("Generate now's report can't be overwritten by a pick still in flight", async () => {
+		const b = held();
+		const schedulesAgain = held();
+		let loads = 0;
+		const NEW: Report = { ...REPORT, id: '20261121T153000Z-abcdef', trigger: 'manual', period: { ...REPORT.period, first: '2026-11-14', last: '2026-11-20' } };
+		stubFetch({
+			// the refresh after Generate now waits, so a late pick can land before it
+			schedules: () => (++loads === 1 ? ok(SCHEDULES) : schedulesAgain.reply),
+			report: (id) => (id === OLDER.id ? b.reply : ok(REPORT)),
+			generate: ok(NEW),
+		});
+		render(Page);
+		await shownReport('9–15 Nov 2026');
+
+		await fireEvent.click(rowButton(OLDER_ROW));
+		await fireEvent.click(screen.getByRole('button', { name: 'Generate now' }));
+		expect(await screen.findByRole('heading', { name: 'Report for 14–20 Nov 2026' })).toBeInTheDocument();
+
+		b.release(ok(OLDER));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.getByRole('heading', { name: 'Report for 14–20 Nov 2026' })).toBeInTheDocument();
+		expect(within(screen.getByRole('region', { name: 'Data cap' })).getByText('Unavailable')).toBeInTheDocument();
+		schedulesAgain.release(ok(SCHEDULES));
 	});
 
 	it('a report that fails to load shows its own error, with the history still there', async () => {
@@ -236,7 +330,7 @@ describe('Reports page (NET-340)', () => {
 	it('history sorts both ways on every column, and choosing a row shows that report', async () => {
 		stubFetch();
 		render(Page);
-		await screen.findByRole('heading', { name: 'Report for 9–15 Nov 2026' });
+		await shownReport('9–15 Nov 2026');
 		const table = screen.getByRole('table', { name: 'Report history' });
 
 		for (const name of ['Period', 'Generated', 'Trigger', 'Delivery']) {
@@ -258,7 +352,7 @@ describe('Reports page (NET-340)', () => {
 		const busy = "A report is being generated. It will appear in the history when it's done.";
 		stubFetch({ generate: { status: 409, body: { error: busy } } });
 		render(Page);
-		await screen.findByRole('heading', { name: 'Report for 9–15 Nov 2026' });
+		await shownReport('9–15 Nov 2026');
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Generate now' }));
 		const notice = await screen.findByText(busy);
@@ -269,7 +363,7 @@ describe('Reports page (NET-340)', () => {
 	it('Generate now shows the new report and says it is not emailed', async () => {
 		stubFetch({ generate: ok(OLDER) });
 		render(Page);
-		await screen.findByRole('heading', { name: 'Report for 9–15 Nov 2026' });
+		await shownReport('9–15 Nov 2026');
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Generate now' }));
 		expect(await screen.findByText("Report made for 2–8 Nov 2026. Generate now keeps it here and doesn't email it.")).toBeInTheDocument();

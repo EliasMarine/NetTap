@@ -38,6 +38,7 @@ SEND_MARGIN_S, GENERATE_MAX_S, MANUAL_S = 30, 180, 45
 TERMINAL = ("sent", "partly_sent", "failed", "not_configured", "not_emailed")
 
 SENDING = "A report is being sent. Try again in a minute."
+CARD_ONLY = "Only the weekly report on Settings › Notifications can send email. Turn it on there."
 RESTORE_SENDING = "A report is being sent. Try the restore again in a minute."
 STALE = "These settings changed in another window. Reload and check them."
 GENERATING = (
@@ -291,12 +292,17 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
-def _write_durable(path: Path, data: Any) -> None:
-    """Temp file fsynced, os.replace, then the directory fsynced; mode 600, new dirs 700."""
+def _replace_file(path: Path, data: Any) -> None:
+    """Temp file fsynced, then os.replace; mode 600, new dirs 700. The directory isn't synced."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_file_atomic(
         str(path), json.dumps(data, indent=2), mode=0o600, encoding="utf-8"
     )
+
+
+def _write_durable(path: Path, data: Any) -> None:
+    """Temp file fsynced, os.replace, then the directory fsynced; mode 600, new dirs 700."""
+    _replace_file(path, data)
     _fsync_dir(path.parent)
 
 

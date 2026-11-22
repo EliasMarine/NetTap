@@ -155,12 +155,15 @@ class TestCreateSchedule(_WithGenerator):
         #     sections=["traffic_summary", "alerts"],
         # )
         # OLD CODE END
-        sched = self._make("Daily Summary", "daily", confirm=True)
+        # OLD CODE: sched = self._make("Daily Summary", "daily", confirm=True) (security
+        # review: only the card confirms, so a daily schedule is never confirmed)
+        sched = self._make("Daily Summary", "daily")
         self.assertEqual(sched.name, "Daily Summary")
         self.assertEqual(sched.frequency, "daily")
         self.assertEqual(sched.format, "json")
         self.assertTrue(sched.enabled)
-        self.assertIsNotNone(sched.next_run)
+        # OLD CODE: self.assertIsNotNone(sched.next_run) (no next run until confirmed)
+        self.assertIsNone(sched.next_run)
 
     def test_create_weekly_schedule(self):
         """Create a weekly report schedule."""

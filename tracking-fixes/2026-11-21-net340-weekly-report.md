@@ -106,12 +106,12 @@ Every section states its own coverage, so a short or broken history never reads 
 
 ## Tests
 
-- **Daemon:** 6,284 passed, 5 skipped. New tests:
+- **Daemon:** 6,304 passed, 5 skipped. New tests:
   - `test_report_state.py` (38) and `test_report_schedule.py` (35);
   - `test_backup_report_schedules.py` (7) and 10 new API tests;
   - `test_report_sections.py` (46), `test_report_text.py` (14) and `test_report_email.py` (8);
   - 10 `scan()` tests in `test_event_journal.py`.
-- **Web:** Vitest 6,106 passed, svelte-check 0 errors, the colour gate clean. Visual specs cover `/reports` (populated and empty) and the card.
+- **Web:** Vitest 6,114 passed, svelte-check 0 errors, the colour gate clean. Visual specs cover `/reports` (populated and empty) and the card.
 - **Lint and shell:** ruff 0.17.3 check and format are clean, and shellcheck is clean on both scripts.
 
 ## Review gates
@@ -129,6 +129,21 @@ Every section states its own coverage, so a short or broken history never reads 
   9. a needless client factory;
   10. the SMTP settings read in two places (now `_smtp_settings`).
 - `ReportRefused` is now in the error-reply guard's `SAFE_TEXT` list. Its messages are fixed sentences.
+- **Two-angle review (PR #351)**. All findings are fixed with tests that fail before the fix.
+  - **Security** (2 LOW):
+    - The Settings card always saves its schedule as weekly, so saving it can never confirm a daily schedule restored from a backup or edited through the API.
+    - Only the card's schedule can be confirmed for email. A confirming POST, or a confirming PUT on any other schedule, gets a 400 and saves nothing, so there are no hidden recurring emails.
+  - **Python** (HIGH and MEDIUM):
+    - A backup download leaves out any stored schedule a restore would refuse, and logs the ids, instead of refusing the whole download. The card's first save counts toward the 50-schedule limit.
+    - Once the claim is durably saved, the email always goes out. A failed staged-file rename, reports-folder sync or prune is logged, and prune runs after the send. If only the claim's own folder sync fails, memory matches the file and nothing is sent (the plan's rule), and the period ends up "unknown" rather than risking a second email.
+  - **TypeScript** (3 MEDIUM and a test):
+    - The hero can no longer stick on "Loading the report".
+    - Load failures show the daemon's own sentence.
+    - The card re-reads the schedule after a 409, keeping unsaved edits.
+    - A time-zone-dependent test is fixed.
+  - **CodeQL** (2 high `py/path-injection`, 1 test warning):
+    - `schedule_dir` adds the normalise-then-prefix guard CodeQL recognises, after the uuid4 check.
+    - The flagged test asserts on the full addresses.
 
 ## Notes
 

@@ -99,7 +99,7 @@ def test_restore_keeps_only_the_first_card(box):
 
 def test_a_restore_while_a_report_is_sent_is_a_section_error(box):
     backup, gen, _ = box
-    sid = gen.create({"name": "W", "confirm": True})["id"]
+    sid = gen.create({"name": "W"})["id"]
     gen._meta = {**gen._meta, sid: {**gen._meta[sid], "claim": {"claim_id": "x"}}}
     data = _backup_of(gen)
     result = backup.import_config(data)
@@ -111,21 +111,19 @@ def test_a_same_settings_restore_stopped_between_its_writes_leaves_it_paused(
     box, monkeypatch
 ):
     backup, gen, root = box
-    sid = gen.create({"name": "W", "recipients": ["a@example.com"], "confirm": True})[
-        "id"
-    ]
+    sid = gen.upsert_card({"recipients": ["a@example.com"], "confirm": True})[0]["id"]
     items = gen.export_backup()  # the very same settings
-    real = report_schedule._write_durable
+    real = report_schedule._replace_file
 
     def stop_at_schedules(path, data):
         if path.name == "report_schedules.json":
             raise OSError("stopped")
         return real(path, data)
 
-    monkeypatch.setattr("services.report_generator._write_durable", stop_at_schedules)
+    monkeypatch.setattr("services.report_generator._replace_file", stop_at_schedules)
     with pytest.raises(OSError):
         gen.restore_backup(items)
-    monkeypatch.setattr("services.report_generator._write_durable", real)
+    monkeypatch.setattr("services.report_generator._replace_file", real)
     restarted = _generator(root)
     assert restarted.view(sid)["needs_review"]
     meta = json.loads((root / "report_schedule_meta.json").read_text())
@@ -214,3 +212,38 @@ async def test_an_export_with_unreadable_schedules_is_a_503_that_says_why(tmp_pa
         resp = await client.get("/api/backup/export")
         assert resp.status == 503
         assert (await resp.json())["error"] == UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"recipients": ["a@example.com,b@example.com"]},  # the old API took any string
+        {"recipients": ["owner"]},
+        {"name": "x" * 101},
+    ],
+)
+def test_a_stored_schedule_a_restore_refuses_is_left_out_not_fatal(
+    tmp_path, bad, caplog
+):
+    """Python review: one such schedule refused the whole backup download."""
+    legacy = {
+        "id": "5f0d0f6e-7b8a-4c3d-9e2f-1a2b3c4d5e6f",
+        "name": "Old",
+        "frequency": "weekly",
+        "format": "html",
+        "recipients": [],
+        "sections": ["traffic_summary"],
+        "enabled": True,
+        "last_run": None,
+        "next_run": None,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        **bad,
+    }
+    (tmp_path / "report_schedules.json").write_text(json.dumps([legacy]))
+    gen = _generator(tmp_path)
+    good = gen.create({"name": "Fine", "recipients": ["a@example.com"]})
+    paths = {k: str(tmp_path / f"{k}.json") for k in config_backup._DEFAULT_PATHS}
+    body, _ = ConfigBackup(paths, report_generator=gen).export_file()
+    exported = json.loads(bytes(body))["sections"]["report_schedules"]
+    assert [e["id"] for e in exported] == [good["id"]]
+    assert legacy["id"] in caplog.text and "a@example.com" not in caplog.text

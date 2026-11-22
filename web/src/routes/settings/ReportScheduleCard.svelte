@@ -2,14 +2,15 @@
   Settings › Notifications › Weekly report (NET-340): the one schedule the card manages (`card: true`,
   never just the first listed). Save always confirms (`confirm: true`) with the token and rev it was
   shown, so it confirms exactly these settings; the daemon creates the schedule on the first save.
-  Its refusals (a send in progress, settings changed in another window) show as they are.
+  Its refusals (a send in progress, settings changed in another window) show as they are; after a 409
+  the card reloads the schedule, so the next Save carries the current token and rev.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { getReportSchedules, upsertReportCard, type ReportSchedule } from '$lib/api/reports';
+	import { daemonReason, getReportSchedules, ReportsError, upsertReportCard, type ReportSchedule } from '$lib/api/reports';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import Feedback from './Feedback.svelte';
 
@@ -37,6 +38,8 @@
 	const NEW_FORM: Form = { enabled: true, weekday: 0, hour: 8, recipients: '' };
 
 	let phase = $state<'loading' | 'ready' | 'failed'>('loading');
+	/** The daemon's sentence for a failed load; null when NetTap couldn't be reached. */
+	let loadReason = $state<string | null>(null);
 	let schedule = $state.raw<ReportSchedule | null>(null);
 	let zone = $state<string | null>(null);
 	let form = $state<Form>({ ...NEW_FORM });
@@ -72,9 +75,36 @@
 			zone = card?.tz ?? list.tz ?? null;
 			adopt(card);
 			phase = 'ready';
-		} catch {
+		// OLD CODE: } catch { (TypeScript review: the daemon's sentence was dropped)
+		} catch (err) {
+			loadReason = daemonReason(err);
 			phase = 'failed';
 		}
+	}
+
+	/**
+	 * After a 409: the schedule as it is now, so the next Save carries its token and rev. The owner's
+	 * unsaved edits stay; untouched fields take the new values. Nothing changed means the 409 was a
+	 * send in progress, and the daemon's sentence stays.
+	 */
+	async function reloadAfterConflict(sentToken: string | undefined) {
+		let list;
+		try {
+			list = await getReportSchedules();
+		} catch {
+			// the daemon's 409 sentence stays on screen; the next Save meets the same 409 and tries again
+			return;
+		}
+		const fresh = list.schedules.find((s) => s.card) ?? null;
+		if (fresh?.confirm_token === sentToken) return;
+		const edited = !same(form, saved);
+		schedule = fresh;
+		zone = fresh?.tz ?? list.tz ?? zone;
+		saved = fresh ? formOf(fresh) : { ...NEW_FORM };
+		if (!edited) form = { ...saved };
+		message = edited
+			? 'These settings changed in another window. NetTap loaded them and kept your edits: check them and save again.'
+			: 'These settings changed in another window. NetTap loaded them: check them and save again.';
 	}
 
 	async function save() {
@@ -96,6 +126,8 @@
 			// the form stays as typed, so the owner can try again
 			message = err instanceof Error && err.message ? err.message : "Couldn't save the weekly report.";
 			isError = true;
+			// TypeScript review: every retry resent the stale token, so the card never recovered
+			if (err instanceof ReportsError && err.status === 409) await reloadAfterConflict(schedule?.confirm_token);
 		} finally {
 			saving = false;
 		}
@@ -110,7 +142,8 @@
 	{#if phase === 'loading'}
 		<CardState state="loading" title="Loading the weekly report" />
 	{:else if phase === 'failed'}
-		<CardState state="error" title={loadFailed('the weekly report')} message="Check that NetTap is running on the System page, then try again." onaction={load} />
+		<!-- OLD CODE: message="Check that NetTap is running on the System page, then try again." (TypeScript review: the daemon's sentence first) -->
+		<CardState state="error" title={loadFailed('the weekly report')} message={loadReason ?? 'Check that NetTap is running on the System page, then try again.'} onaction={load} />
 	{:else}
 		<div class="stack">
 			{#if schedule?.needs_review}

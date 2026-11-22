@@ -469,9 +469,11 @@ class _ReportsApp(AioHTTPTestCase):
             reports_dir=os.path.join(self.tmpdir, "reports"),
             schedules_file=os.path.join(self.tmpdir, "report_schedules.json"),
         )
-        self.sid = self.generator.create(
-            {"name": "Weekly report", "recipients": ["a@example.com"], "confirm": True}
-        )["id"]
+        # OLD CODE: self.sid = self.generator.create({..., "confirm": True})["id"]
+        # (security review: only the card's schedule can be confirmed)
+        self.sid = self.generator.upsert_card(
+            {"recipients": ["a@example.com"], "confirm": True}
+        )[0]["id"]
         super().setUp()
 
     def tearDown(self):
@@ -640,9 +642,53 @@ class TestUnavailableStore(AioHTTPTestCase):
             self.assertEqual((await resp.json())["error"], UNAVAILABLE)
 
 
+class TestOnlyTheCardConfirms(_ReportsApp):
+    """Security review: a confirmed API-only schedule emails like a hidden forwarding rule."""
+
+    @unittest_run_loop
+    async def test_a_confirming_create_is_a_400_and_saves_nothing(self):
+        before = self._stored()
+        resp = await self.client.post(
+            "/api/reports/schedules",
+            json={"name": "Hidden", "recipients": ["x@example.com"], "confirm": True},
+        )
+        self.assertEqual(resp.status, 400)
+        self.assertIn("Settings › Notifications", (await resp.json())["error"])
+        self.assertEqual(self._stored(), before)
+
+    @unittest_run_loop
+    async def test_a_confirming_put_on_another_schedule_is_a_400_and_changes_nothing(
+        self,
+    ):
+        other = self.generator.create({"name": "Deploy check"})
+        before = self._stored()
+        resp = await self.client.put(
+            f"/api/reports/schedules/{other['id']}",
+            json={
+                "recipients": ["x@example.com"],
+                "confirm": True,
+                "confirm_token": other["confirm_token"],
+            },
+        )
+        self.assertEqual(resp.status, 400)
+        self.assertEqual(self._stored(), before)
+        self.assertEqual(self.generator.view(other["id"])["rev"], other["rev"])
+
+    @unittest_run_loop
+    async def test_other_schedules_still_save_and_generate_by_hand(self):
+        resp = await self.client.post("/api/reports/schedules", json={"name": "Check"})
+        self.assertEqual(resp.status, 201)
+        sid = (await resp.json())["id"]
+        resp = await self.client.put(
+            f"/api/reports/schedules/{sid}", json={"name": "Check 2", "hour": 3}
+        )
+        self.assertEqual(resp.status, 200)
+
+
 class TestCardRoute(_ReportsApp):
     @unittest_run_loop
     async def test_the_card_is_created_then_updated_with_its_token(self):
+        self.generator.delete(self.sid)  # setUp's schedule is the card
         resp = await self.client.put(
             "/api/reports/card",
             json={"recipients": ["c@example.com"], "weekday": 4, "confirm": True},
@@ -713,14 +759,14 @@ class TestEventLoop(_ReportsApp):
         from services import report_schedule
 
         gate, entered = threading.Event(), threading.Event()
-        real = report_schedule._write_durable
+        real = report_schedule._replace_file  # the settings write in _commit
 
         def paused(path, data):
             entered.set()
             gate.wait(5)
             return real(path, data)
 
-        with patch("services.report_generator._write_durable", paused):
+        with patch("services.report_generator._replace_file", paused):
             put = asyncio.ensure_future(
                 self.client.put(
                     f"/api/reports/schedules/{self.sid}", json={"name": "Slow"}

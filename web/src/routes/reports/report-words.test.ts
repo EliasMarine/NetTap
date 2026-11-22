@@ -25,8 +25,9 @@ describe('report words (NET-340)', () => {
 		expect(zonedTime('2026-07-13T07:00:00Z', 'Europe/London')).toBe('Mon 13 Jul, 08:00');
 		expect(zonedTime('2026-11-16T08:00:12Z', 'Asia/Tokyo')).toBe('Mon 16 Nov, 17:00');
 		expect(zonedTime(null, 'Europe/London')).toBe('—');
-		// an unknown zone still shows the time rather than throwing
-		expect(zonedTime('2026-11-16T08:00:12Z', 'Not/AZone')).toMatch(/16 Nov/);
+		// an unknown zone falls back to the browser's zone rather than throwing
+		// OLD CODE: expect(zonedTime('2026-11-16T08:00:12Z', 'Not/AZone')).toMatch(/16 Nov/); (TypeScript review: 15 Nov under TZ=Pacific/Pago_Pago)
+		expect(zonedTime('2026-11-16T08:00:12Z', 'Not/AZone')).toBe(zonedTime('2026-11-16T08:00:12Z', undefined));
 	});
 
 	it.each([

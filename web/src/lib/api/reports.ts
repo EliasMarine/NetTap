@@ -212,6 +212,9 @@ export class ReportsError extends Error {
 	}
 }
 
+/** The daemon's own sentence for a failed request, or null when NetTap couldn't be reached (say something generic then). */
+export const daemonReason = (err: unknown): string | null => (err instanceof ReportsError && err.status > 0 ? err.message : null);
+
 // ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
