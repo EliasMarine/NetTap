@@ -90,7 +90,8 @@ export const POST: RequestHandler = async (event) => {
 	}
 	const { user } = result;
 
-	const token = generateToken({ username: user.username, role: user.role });
+	// OLD CODE: const token = generateToken({ username: user.username, role: user.role }); (NET-358: the token names the password it was issued against)
+	const token = generateToken(user);
 	setAuthCookie(event, token);
 
 	return json({

@@ -22,8 +22,8 @@ const callbacks = new Set<Callback>();
 const afterCallbacks = new Set<() => void>();
 const history = { entries: [] as URL[], index: 0 };
 
-// OLD CODE: export const page = $state({ url: new URL('http://localhost/settings') }); (NET-357: route pages read their params too)
-export const page = $state({ url: new URL('http://localhost/settings'), params: {} as Record<string, string> });
+// OLD CODE: export const page = $state({ url: new URL('http://localhost/settings') }); (NET-357: route pages read their params too; NET-358: Settings › Account reads page.data.username)
+export const page = $state({ url: new URL('http://localhost/settings'), params: {} as Record<string, string>, data: { username: 'admin' } as Record<string, unknown> });
 
 // OLD CODE: /** Start a test at `href` with a one-entry history. */ export function resetNavigation(href = 'http://localhost/settings'): void { (NET-357)
 /** Start a test at `href` with a one-entry history, and the route's `params` for a page that reads them. */
@@ -113,7 +113,8 @@ export const afterNavigate = vi.fn((callback: () => void) => {
 });
 
 /** What the store-backed `$app/state` page below exposes: all the pages read. */
-type PageLike = { url: URL; params?: Record<string, string> };
+// OLD CODE: type PageLike = { url: URL; params?: Record<string, string> }; (NET-358 review: the shell test renders Settings › Account, which reads page.data)
+type PageLike = { url: URL; params?: Record<string, string>; data?: Record<string, unknown> };
 // Test stores are typed loosely (unknown values, hand-written subscribe); the pages read only url and params
 type StoresModule = { page: Readable<unknown> };
 
@@ -123,7 +124,7 @@ type StoresModule = { page: Readable<unknown> };
  *
  *   vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(() => ({ page: readable(…) })));
  *
- * `page.url` and `page.params` follow the store, reactively.
+ * `page.url`, `page.params` and `page.data` follow the store, reactively.
  */
 export async function stateFromStores(factory: () => StoresModule | Promise<StoresModule>): Promise<{ page: Required<PageLike> }> {
 	const store = fromStore((await factory()).page as Readable<PageLike>);
@@ -134,6 +135,9 @@ export async function stateFromStores(factory: () => StoresModule | Promise<Stor
 			},
 			get params() {
 				return store.current.params ?? {};
+			},
+			get data() {
+				return store.current.data ?? {};
 			},
 		},
 	};

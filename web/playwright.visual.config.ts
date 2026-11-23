@@ -28,7 +28,8 @@ const tokenFile = path.join(root, 'daemon-token');
 export const STORAGE_STATE = path.join(root, 'storage-state.json');
 /** The `app` instance's DATA_DIR; auth.setup.ts reads its first-run setup code there (NET-229). */
 export const APP_DATA_DIR = path.join(root, 'app', 'data');
-/** The `firstrun` instance's DATA_DIR; firstrun.visual.ts reads its setup code there to open Go Live. */
+// OLD CODE: /** The `firstrun` instance's DATA_DIR; firstrun.visual.ts reads its setup code there to open Go Live. */ (NET-358: + account.firstrun.ts)
+/** The `firstrun` instance's DATA_DIR; firstrun.visual.ts reads its setup code there to open Go Live, account.firstrun.ts to create its admin. */
 export const FIRSTRUN_DATA_DIR = path.join(root, 'firstrun', 'data');
 
 function instanceEnv(name: string, origin: string): Record<string, string> {
@@ -114,6 +115,14 @@ export default defineConfig({
 		{
 			name: 'firstrun',
 			testMatch: '**/firstrun.visual.ts',
+			use: { baseURL: FIRSTRUN_URL },
+		},
+		// NET-358: creates an admin on the firstrun instance, so it runs only after firstrun's tests, which need none.
+		// CI runs this project, which runs firstrun first.
+		{
+			name: 'account',
+			testMatch: '**/account.firstrun.ts',
+			dependencies: ['firstrun'],
 			use: { baseURL: FIRSTRUN_URL },
 		},
 		// `npm run capture:media` only: rewrites the README media in .github/assets/media/.

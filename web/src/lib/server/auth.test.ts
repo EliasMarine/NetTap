@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({
 	writeFileSync: vi.fn(),
 	mkdirSync: vi.fn(),
 	renameSync: vi.fn(),
+	// NET-358: the durable writer's calls (durable-write.ts)
+	rmSync: vi.fn(),
+	openSync: vi.fn().mockReturnValue(7),
+	fsyncSync: vi.fn(),
+	closeSync: vi.fn(),
 	argonHash: vi.fn().mockResolvedValue('$argon2id$mock-hash'),
 	argonVerify: vi.fn().mockResolvedValue(false),
 	jwtSign: vi.fn().mockReturnValue('mock-jwt-token'),
@@ -19,6 +24,10 @@ vi.mock('fs', () => {
 		writeFileSync: mocks.writeFileSync,
 		mkdirSync: mocks.mkdirSync,
 		renameSync: mocks.renameSync,
+		rmSync: mocks.rmSync,
+		openSync: mocks.openSync,
+		fsyncSync: mocks.fsyncSync,
+		closeSync: mocks.closeSync,
 	};
 	return { ...fsMock, default: fsMock };
 });
@@ -28,6 +37,9 @@ vi.mock('argon2', () => ({
 	hash: mocks.argonHash,
 	verify: mocks.argonVerify,
 }));
+
+// NET-358: the signing key has its own module and tests (session-keys.test.ts)
+vi.mock('./session-keys.js', () => ({ getJwtSecret: () => 'test-key', initSessionKeys: vi.fn() }));
 
 vi.mock('jsonwebtoken', () => ({
 	default: {
@@ -44,7 +56,8 @@ import {
 	hasUsers,
 	getUser,
 	createUser,
-	updatePassword,
+	// OLD CODE: updatePassword, (NET-358: its compare-and-swap is tested against a real store in auth.store.test.ts)
+	passwordStamp,
 	UserStoreError,
 } from './auth';
 
@@ -55,6 +68,7 @@ describe('auth server module', () => {
 		mocks.writeFileSync.mockReset();
 		mocks.mkdirSync.mockReset();
 		mocks.renameSync.mockReset();
+		mocks.openSync.mockReset().mockReturnValue(7);
 		mocks.argonHash.mockReset().mockResolvedValue('$argon2id$mock-hash');
 		mocks.argonVerify.mockReset().mockResolvedValue(false);
 		mocks.jwtSign.mockReset().mockReturnValue('mock-jwt-token');
@@ -84,22 +98,43 @@ describe('auth server module', () => {
 	});
 
 	describe('generateToken', () => {
-		it('returns a JWT string', () => {
-			const token = generateToken({ username: 'admin', role: 'admin' });
+		// OLD CODE START — NET-358: the argument was signed as given; claims are built explicitly now
+		// it('returns a JWT string', () => {
+		// 	const token = generateToken({ username: 'admin', role: 'admin' });
+		// 	expect(token).toBe('mock-jwt-token');
+		// 	expect(mocks.jwtSign).toHaveBeenCalledWith(
+		// 		{ username: 'admin', role: 'admin' },
+		// 		expect.any(String),
+		// 		expect.objectContaining({ expiresIn: '24h' })
+		// 	);
+		// });
+		// OLD CODE END
+		it('signs only username, role and the password stamp, never the whole user', () => {
+			const user = { username: 'admin', passwordHash: '$argon2id$secret', role: 'admin', createdAt: 'c', updatedAt: 'u' };
+			const token = generateToken(user);
 			expect(token).toBe('mock-jwt-token');
 			expect(mocks.jwtSign).toHaveBeenCalledWith(
-				{ username: 'admin', role: 'admin' },
-				expect.any(String),
-				expect.objectContaining({ expiresIn: '24h' })
+				{ username: 'admin', role: 'admin', pwd: passwordStamp('$argon2id$secret') },
+				'test-key',
+				expect.objectContaining({ algorithm: 'HS256', expiresIn: '24h' })
 			);
 		});
 	});
 
 	describe('verifyToken', () => {
-		it('returns payload for valid token', () => {
-			mocks.jwtVerify.mockReturnValue({ username: 'admin', role: 'admin' });
-			const payload = verifyToken('valid-token');
-			expect(payload).toEqual({ username: 'admin', role: 'admin' });
+		// OLD CODE START — NET-358: a valid signature alone no longer makes a session
+		// it('returns payload for valid token', () => {
+		// 	mocks.jwtVerify.mockReturnValue({ username: 'admin', role: 'admin' });
+		// 	const payload = verifyToken('valid-token');
+		// 	expect(payload).toEqual({ username: 'admin', role: 'admin' });
+		// });
+		// OLD CODE END
+		it('returns the stored user for a valid token whose stamp matches the stored hash', () => {
+			mocks.jwtVerify.mockReturnValue({ username: 'admin', role: 'admin', pwd: passwordStamp('hash') });
+			mocks.readFileSync.mockReturnValue(
+				JSON.stringify({ users: [{ username: 'admin', passwordHash: 'hash', role: 'admin', createdAt: '', updatedAt: '' }] })
+			);
+			expect(verifyToken('valid-token')).toEqual({ username: 'admin', role: 'admin' });
 		});
 
 		it('returns null for invalid token', () => {
@@ -182,8 +217,13 @@ describe('auth server module', () => {
 
 			await createUser('newuser', 'password123');
 
-			const tmpPath = mocks.writeFileSync.mock.calls[0][0] as string;
+			// OLD CODE START — NET-358: the temp file is opened 0600 and written through its descriptor now
+			// const tmpPath = mocks.writeFileSync.mock.calls[0][0] as string;
+			// expect(tmpPath).toMatch(/users\.json\.tmp$/);
+			// OLD CODE END
+			const [tmpPath, flags, mode] = mocks.openSync.mock.calls[0] as [string, string, number];
 			expect(tmpPath).toMatch(/users\.json\.tmp$/);
+			expect([flags, mode]).toEqual(['wx', 0o600]);
 			expect(mocks.renameSync).toHaveBeenCalledWith(tmpPath, tmpPath.replace(/\.tmp$/, ''));
 		});
 
@@ -205,22 +245,25 @@ describe('auth server module', () => {
 		});
 	});
 
-	describe('updatePassword', () => {
-		it('updates the password hash for an existing user', async () => {
-			mocks.readFileSync.mockReturnValue(
-				JSON.stringify({
-					users: [{ username: 'admin', passwordHash: 'old-hash', role: 'admin', createdAt: '2025-01-01', updatedAt: '2025-01-01' }],
-				})
-			);
-			mocks.existsSync.mockReturnValue(true);
-
-			await updatePassword('admin', 'newpassword');
-			expect(mocks.writeFileSync).toHaveBeenCalled();
-		});
-
-		it('throws if user not found', async () => {
-			mocks.readFileSync.mockReturnValue('{"users":[]}');
-			await expect(updatePassword('ghost', 'pass')).rejects.toThrow('not found');
-		});
-	});
+	// OLD CODE START — NET-358: updatePassword(username, expectedHash, newPassword) is a compare-and-swap now,
+	// tested against a real store in auth.store.test.ts
+	// describe('updatePassword', () => {
+	// 	it('updates the password hash for an existing user', async () => {
+	// 		mocks.readFileSync.mockReturnValue(
+	// 			JSON.stringify({
+	// 				users: [{ username: 'admin', passwordHash: 'old-hash', role: 'admin', createdAt: '2025-01-01', updatedAt: '2025-01-01' }],
+	// 			})
+	// 		);
+	// 		mocks.existsSync.mockReturnValue(true);
+	//
+	// 		await updatePassword('admin', 'newpassword');
+	// 		expect(mocks.writeFileSync).toHaveBeenCalled();
+	// 	});
+	//
+	// 	it('throws if user not found', async () => {
+	// 		mocks.readFileSync.mockReturnValue('{"users":[]}');
+	// 		await expect(updatePassword('ghost', 'pass')).rejects.toThrow('not found');
+	// 	});
+	// });
+	// OLD CODE END
 });

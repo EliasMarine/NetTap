@@ -3,12 +3,14 @@ import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import SettingsNav from './SettingsNav.svelte';
 
 describe('SettingsNav (NET-273)', () => {
-	it('shows the four groups and ten tabs, each wired to its panel', () => {
+	// OLD CODE: it('shows the four groups and ten tabs, each wired to its panel', () => { (NET-358: + Account)
+	it('shows the four groups and eleven tabs, each wired to its panel', () => {
 		render(SettingsNav, { active: 'retention', onselect: vi.fn() });
 
 		const tablist = screen.getByRole('tablist', { name: 'Settings sections' });
 		const tabs = within(tablist).getAllByRole('tab');
-		expect(tabs).toHaveLength(10);
+		// OLD CODE: expect(tabs).toHaveLength(10); (NET-358)
+		expect(tabs).toHaveLength(11);
 		// the group labels are for the eye only: a tablist owns tabs
 		for (const group of ['Alerts & detection', 'Data', 'Network', 'General']) {
 			expect(screen.getByText(group, { selector: '.nav-group' })).toHaveAttribute('aria-hidden', 'true');

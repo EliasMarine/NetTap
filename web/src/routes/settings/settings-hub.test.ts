@@ -133,7 +133,8 @@ describe('Settings hub — tabs from the URL', () => {
 			expect(document.getElementById(t.getAttribute('aria-controls')!)).not.toBeNull();
 		}
 		const panels = Array.from(container.querySelectorAll<HTMLElement>('[role="tabpanel"]'));
-		expect(panels).toHaveLength(10);
+		// OLD CODE: expect(panels).toHaveLength(10); (NET-358: + Account)
+		expect(panels).toHaveLength(11);
 		expect(panels.filter((p) => !p.hidden).map((p) => p.id)).toEqual(['settings-panel-notifications']);
 		expect(panels.filter((p) => p.childElementCount > 0).map((p) => p.id)).toEqual(['settings-panel-notifications']);
 	});
@@ -482,6 +483,40 @@ describe('Settings hub — a change being sent holds navigation', () => {
 		await openTab('About');
 		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
 	});
+
+	// NET-358: a password change holds the switch and a reload until the server answers
+	it('a password change holds the switch with no Discard until it lands', async () => {
+		resetNavigation('http://localhost/settings?tab=account');
+		const change = gate();
+		stubFetch({
+			'/api/account/password': async () => {
+				await change.wait();
+				return { body: { success: true } };
+			},
+		});
+		render(Page);
+		await flush();
+		await fireEvent.input(screen.getByLabelText('Current password'), { target: { value: 'Old-Pass-1' } });
+		await fireEvent.input(screen.getByLabelText('New password'), { target: { value: 'New-Pass-1' } });
+		await fireEvent.input(screen.getByLabelText('Confirm new password'), { target: { value: 'New-Pass-1' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
+
+		await fireEvent.click(tab('About'));
+		await flush();
+		expect(screen.getByText(BUSY_BAR)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Discard and continue' })).not.toBeInTheDocument();
+		expect(panel()).toHaveAttribute('id', 'settings-panel-account');
+		expect(unload()).toBe(true);
+
+		change.open();
+		await flush();
+		expect(screen.getByText(/^Password changed\./)).toBeInTheDocument();
+		expect(screen.queryByText(BUSY_BAR)).not.toBeInTheDocument();
+		expect(unload()).toBe(false);
+
+		await openTab('About');
+		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+	});
 });
 
 describe('Settings hub — what does not hold navigation', () => {
@@ -532,6 +567,19 @@ describe('Settings hub — what does not hold navigation', () => {
 		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
 		expect(screen.queryByText(BUSY_BAR)).not.toBeInTheDocument();
 		update.open();
+	});
+
+	// NET-358: only a change being sent holds; a half-typed password is dropped on a switch
+	it('a typed, unsent password does not hold a tab switch', async () => {
+		resetNavigation('http://localhost/settings?tab=account');
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.input(screen.getByLabelText('Current password'), { target: { value: 'Old-Pass-1' } });
+
+		await openTab('About');
+		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+		expect(screen.queryByText(/You have unsaved changes/)).not.toBeInTheDocument();
 	});
 
 	it('the notification preferences loading does not hold a tab switch', async () => {

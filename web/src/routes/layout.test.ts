@@ -1,15 +1,17 @@
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach, onTestFinished } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
 import type { Writable } from 'svelte/store';
 // OLD CODE: import { page } from '$app/stores'; (kit 3 removed it; the mock below keeps the store in pageHolder; NET-315)
 import { goto } from '$app/navigation';
 import { SIGN_IN_FIRST } from '$lib/auth-errors';
+import { trackPasswordChange } from '$lib/password-change';
 import * as captureApi from '$api/capture';
 import * as systemApi from '$api/system';
 import { get } from 'svelte/store';
 import { _configure, alertSnapshots } from '$lib/stores/alertSnapshot';
 import Layout from './+layout.svelte';
+import AccountTab from './settings/tabs/AccountTab.svelte';
 import { captureMode as modeStore, initCaptureMode } from '$lib/stores/captureMode';
 
 // OLD CODE START — kit 3: $app/stores → $app/state (NET-315)
@@ -53,10 +55,24 @@ function health(status: string, iface = 'enp1s0'): captureApi.CaptureHealthRespo
 	return { mode: 'bridge', status, capture_interface: iface, link_up: true, promisc_enabled: true, issues: [] };
 }
 
-/** /api/system/ping answers with `ping`; everything else (NotificationBell's requests) 503. */
-function stubFetch(ping: () => Response | Promise<Response> = () => new Response(JSON.stringify({ status: 'ok' }))) {
-	const fetchMock = vi.fn(async (url: string) =>
-		url === '/api/system/ping' ? ping() : new Response('{}', { status: 503 }),
+/** /me refusing the session, as the web app does without a valid cookie. */
+const meRefused = () => new Response(JSON.stringify({ authenticated: false }), { status: 401 });
+
+// OLD CODE START — NET-358: the shell asks /api/auth/me again before it sends anyone to sign in
+// /** /api/system/ping answers with `ping`; everything else (NotificationBell's requests) 503. */
+// function stubFetch(ping: () => Response | Promise<Response> = () => new Response(JSON.stringify({ status: 'ok' }))) {
+// 	const fetchMock = vi.fn(async (url: string) =>
+// 		url === '/api/system/ping' ? ping() : new Response('{}', { status: 503 }),
+// 	);
+// OLD CODE END
+/** /api/system/ping answers with `ping`, /api/auth/me with `me`; everything else with `other` (NotificationBell's requests: 503). */
+function stubFetch(
+	ping: () => Response | Promise<Response> = () => new Response(JSON.stringify({ status: 'ok' })),
+	me: (init?: RequestInit) => Response | Promise<Response> = meRefused,
+	other: (url: string, init?: RequestInit) => Response | Promise<Response> = () => new Response('{}', { status: 503 }),
+) {
+	const fetchMock = vi.fn(async (url: string, init?: RequestInit) =>
+		url === '/api/system/ping' ? ping() : url === '/api/auth/me' ? me(init) : other(url, init),
 	);
 	vi.stubGlobal('fetch', fetchMock);
 	vi.stubGlobal('EventSource', class { addEventListener() {} close() {} });
@@ -381,6 +397,156 @@ describe('layout session expiry', () => {
 		expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
 	});
 
+	// NET-358: a 401 sent with the old cookie just before a password change landed must not throw away the
+	// change's result (the Account tab's message and warning); the shell asks /api/auth/me again first
+	describe('when a password change overlaps', () => {
+		const meAccepted = () => new Response(JSON.stringify({ authenticated: true }), { status: 200 });
+		const meCalls = (f: ReturnType<typeof vi.fn>) => f.mock.calls.filter(([u]) => u === '/api/auth/me').length;
+		const settle = async () => {
+			for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+		};
+		function deferred<T>() {
+			let resolve!: (value: T) => void;
+			const promise = new Promise<T>((res) => (resolve = res));
+			return { promise, resolve };
+		}
+
+		/** AbortSignal.timeout on the fake clock: Node's own timer doesn't follow vi.useFakeTimers. */
+		function timeoutsOnFakeClock() {
+			const spy = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+				const controller = new AbortController();
+				setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+				return controller.signal;
+			});
+			onTestFinished(() => spy.mockRestore());
+			return spy;
+		}
+		/** A request that never answers: it ends only when its signal aborts. */
+		const untilAborted = (init?: RequestInit) =>
+			new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+
+		it('waits for a change in flight before asking again, and stays once it has succeeded', async () => {
+			const change = deferred<Response>();
+			const tracked = trackPasswordChange(change.promise);
+			const f = stubFetch(signInFirst, meAccepted);
+			renderLayout();
+			await vi.waitFor(() => expect(pingCalls(f)).toBe(1));
+			await settle();
+			expect(meCalls(f)).toBe(0); // still waiting for the change
+
+			change.resolve(new Response(JSON.stringify({ success: true, warning: 'not on disk yet' })));
+			await tracked;
+			await vi.waitFor(() => expect(meCalls(f)).toBe(1));
+			await settle();
+
+			expect(goto).not.toHaveBeenCalled();
+			expect(screen.getByText('page body')).toBeInTheDocument();
+		});
+
+		it('drops a /me refusal that comes back after a change succeeded', async () => {
+			const me = deferred<Response>();
+			const f = stubFetch(signInFirst, () => me.promise);
+			renderLayout();
+			await vi.waitFor(() => expect(meCalls(f)).toBe(1)); // asked with the old cookie
+
+			await trackPasswordChange(Promise.resolve(new Response('{}', { status: 200 })));
+			me.resolve(meRefused());
+			await settle();
+
+			expect(goto).not.toHaveBeenCalled();
+		});
+
+		it('stays when /me still accepts the session after a ping 401', async () => {
+			const f = stubFetch(signInFirst, meAccepted);
+			renderLayout();
+			await vi.waitFor(() => expect(meCalls(f)).toBe(1));
+			await settle();
+			expect(goto).not.toHaveBeenCalled();
+			expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
+		});
+
+		it('still opens the sign-in page when /me refuses too and no change happened', async () => {
+			const f = stubFetch(signInFirst);
+			renderLayout();
+			await vi.waitFor(() => expect(goto).toHaveBeenCalledWith('/login?next=%2Fsystem'));
+			expect(meCalls(f)).toBe(1);
+		});
+
+		// Only /me's own 401 means the session is gone; an unanswered or failed check is "don't know"
+		it.each([
+			['is rejected', () => Promise.reject(new TypeError('Failed to fetch'))],
+			['answers 502', () => new Response('<html>Bad Gateway</html>', { status: 502 })],
+		])('stays when the /me recheck %s', async (_, me) => {
+			const f = stubFetch(signInFirst, me);
+			renderLayout();
+			await vi.waitFor(() => expect(meCalls(f)).toBe(1));
+			await settle();
+			expect(goto).not.toHaveBeenCalled();
+			expect(screen.getByText('page body')).toBeInTheDocument();
+		});
+
+		it('a change that never answers is given up after 30 s, and then the shell asks /me again', async () => {
+			vi.useFakeTimers();
+			timeoutsOnFakeClock();
+			const firstPing = deferred<Response>();
+			let pings = 0;
+			const f = stubFetch(
+				() => (++pings === 1 ? firstPing.promise : signInFirst()),
+				meRefused,
+				(url, init) => (url === '/api/account/password' ? untilAborted(init) : new Response('{}', { status: 503 })),
+			);
+			renderLayout();
+			render(AccountTab); // the real Settings › Account form sends the change
+			await fireEvent.input(screen.getByLabelText('Current password', { exact: true }), { target: { value: 'Old-Pass-1' } });
+			await fireEvent.input(screen.getByLabelText('New password', { exact: true }), { target: { value: 'New-Pass-1' } });
+			await fireEvent.input(screen.getByLabelText('Confirm new password', { exact: true }), { target: { value: 'New-Pass-1' } });
+			await fireEvent.submit(screen.getByRole('button', { name: 'Change password' }).closest('form')!);
+			firstPing.resolve(signInFirst()); // a ping sent with the old cookie comes back 401 while the change hangs
+			await vi.advanceTimersByTimeAsync(29_999);
+			expect(meCalls(f)).toBe(0);
+
+			await vi.advanceTimersByTimeAsync(1);
+			expect(meCalls(f)).toBe(1);
+			expect(goto).toHaveBeenCalledWith('/login?next=%2Fsystem');
+			expect(screen.getByText(/NetTap didn't answer, so the password may or may not have changed\./)).toBeInTheDocument();
+		});
+
+		it('gives up on a /me recheck after 10 s without leaving, so the next poll can ask again', async () => {
+			vi.useFakeTimers();
+			const timeouts = timeoutsOnFakeClock();
+			const f = stubFetch(signInFirst, untilAborted);
+			renderLayout();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(meCalls(f)).toBe(1);
+			expect(timeouts).toHaveBeenCalledWith(10_000);
+
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(goto).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(20_000); // the 30 s poll isn't held up by the check that hung
+			expect(meCalls(f)).toBe(2);
+		});
+
+		it('drops a /me refusal held across a fresh sign-in', async () => {
+			vi.useFakeTimers();
+			const me = deferred<Response>();
+			let pings = 0;
+			const f = stubFetch(() => (++pings === 1 ? signInFirst() : new Response(JSON.stringify({ status: 'ok' }))), () => me.promise);
+			renderLayout();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(meCalls(f)).toBe(1);
+
+			pageStore.set({ url: new URL('http://localhost/login?next=%2Fsystem') }); // the sign-in page has no shell
+			await vi.advanceTimersByTimeAsync(0);
+			pageStore.set({ url: new URL('http://localhost/system') }); // signed in: the shell polls again
+			await vi.advanceTimersByTimeAsync(0);
+			expect(pings).toBe(2);
+			me.resolve(meRefused());
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(goto).not.toHaveBeenCalled();
+		});
+	});
+
 	// The stream closes for good on a 401; it must come back with the shell after sign-in
 	it('opens a new notification stream when the shell mounts again after sign-in', async () => {
 		stubFetch();
@@ -434,7 +600,8 @@ describe('layout sidebar', () => {
 		renderLayout();
 		const nav = screen.getByRole('navigation', { name: 'Main' });
 		// the brand link also points home, so 23 links share 22 hrefs
-		const hrefs = within(nav).getAllByRole('link').map((a) => a.getAttribute('href'));
+		// OLD CODE: const hrefs = within(nav).getAllByRole('link').map((a) => a.getAttribute('href')); (NET-358: the foot's account link isn't a page link)
+		const hrefs = within(nav).getAllByRole('link').filter((a) => !a.closest('.side-foot')).map((a) => a.getAttribute('href'));
 		expect(new Set(hrefs).size).toBe(22);
 		expect(hrefs).toEqual(expect.arrayContaining(['/investigations', '/compliance', '/packets', '/local-services', '/reports']));
 	});
@@ -467,6 +634,10 @@ describe('layout sidebar', () => {
 	it('shows the signed-in user and a sign-out button inside the logout form', () => {
 		renderLayout('admin');
 		expect(screen.getByText('admin')).toBeInTheDocument();
+		// NET-358: the name opens the account settings, where the password is changed
+		const name = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'admin' });
+		expect(name).toHaveAttribute('href', '/settings?tab=account');
+		expect(name).toHaveAttribute('title', 'Account settings');
 		const button = screen.getByRole('button', { name: 'Sign out' });
 		const form = button.closest('form');
 		expect(form).toHaveAttribute('method', 'POST');

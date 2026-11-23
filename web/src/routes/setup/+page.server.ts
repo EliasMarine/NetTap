@@ -14,8 +14,10 @@ import {
 	ensureSetupCode,
 	generateToken,
 	hasUsers,
+	passwordProblem,
 	SetupAlreadyComplete,
 	setupToken,
+	type User,
 } from '$lib/server/auth.js';
 import { checkSetupCode } from '$lib/server/login.js';
 import { clearSetupCookie, hasSetupCookie, setAuthCookie, setSetupCookie } from '$lib/server/middleware.js';
@@ -118,32 +120,39 @@ export const actions: Actions = {
 			});
 		}
 
-		if (password.length < 8) {
-			return fail(400, {
-				error: 'Password must be at least 8 characters.',
-				username,
-			});
-		}
-
-		if (!/[A-Z]/.test(password)) {
-			return fail(400, {
-				error: 'Password must contain at least one uppercase letter.',
-				username,
-			});
-		}
-
-		if (!/[a-z]/.test(password)) {
-			return fail(400, {
-				error: 'Password must contain at least one lowercase letter.',
-				username,
-			});
-		}
-
-		if (!/[0-9]/.test(password)) {
-			return fail(400, {
-				error: 'Password must contain at least one number.',
-				username,
-			});
+		// OLD CODE START — NET-358: the rules moved to auth.ts passwordProblem, shared with Settings › Account
+		// (which adds a 1,024-character maximum)
+		// if (password.length < 8) {
+		// 	return fail(400, {
+		// 		error: 'Password must be at least 8 characters.',
+		// 		username,
+		// 	});
+		// }
+		//
+		// if (!/[A-Z]/.test(password)) {
+		// 	return fail(400, {
+		// 		error: 'Password must contain at least one uppercase letter.',
+		// 		username,
+		// 	});
+		// }
+		//
+		// if (!/[a-z]/.test(password)) {
+		// 	return fail(400, {
+		// 		error: 'Password must contain at least one lowercase letter.',
+		// 		username,
+		// 	});
+		// }
+		//
+		// if (!/[0-9]/.test(password)) {
+		// 	return fail(400, {
+		// 		error: 'Password must contain at least one number.',
+		// 		username,
+		// 	});
+		// }
+		// OLD CODE END
+		const problem = passwordProblem(password);
+		if (problem) {
+			return fail(400, { error: problem, username });
 		}
 
 		if (password !== confirmPassword) {
@@ -163,8 +172,10 @@ export const actions: Actions = {
 		// 	});
 		// }
 		// OLD CODE END
+		let admin: User;
 		try {
-			await createFirstAdmin(username, password);
+			// OLD CODE: await createFirstAdmin(username, password); (NET-358: the session is signed from the stored user)
+			admin = await createFirstAdmin(username, password);
 		} catch (err) {
 			if (err instanceof SetupAlreadyComplete) {
 				throw redirect(302, '/login');
@@ -189,7 +200,8 @@ export const actions: Actions = {
 
 		// Sign in only the winner, so the rest of the wizard and Go Live run
 		// with a session once the setup and bridge routes stop being public.
-		setAuthCookie(event, generateToken({ username, role: 'admin' }));
+		// OLD CODE: setAuthCookie(event, generateToken({ username, role: 'admin' })); (NET-358: the token names the password)
+		setAuthCookie(event, generateToken(admin));
 		return { success: true, username };
 	},
 };

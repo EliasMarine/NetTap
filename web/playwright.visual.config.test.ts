@@ -35,3 +35,17 @@ describe('playwright.visual.config media project', () => {
 		});
 	});
 });
+
+// NET-358: the password test creates an admin on the firstrun instance, whose own tests need none; CI runs
+// `--project=account`, so the dependency is also what runs the first-run tests there
+describe('playwright.visual.config account project', () => {
+	it('runs only the password spec, on the firstrun instance, after the firstrun project', async () => {
+		const { FIRSTRUN_URL } = await import('./playwright.visual.config.ts');
+		const account = (await loadProjects('')).find((p) => p.name === 'account');
+		expect(account).toMatchObject({
+			testMatch: '**/account.firstrun.ts',
+			dependencies: ['firstrun'],
+			use: { baseURL: FIRSTRUN_URL },
+		});
+	});
+});

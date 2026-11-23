@@ -83,9 +83,17 @@
 			</a>
 		{/if}
 		<div class="user">
+			<!-- OLD CODE START — NET-358: the name led nowhere; it opens the account settings (change password)
 			{#if username}
 				<span class="avatar"><Icon name="user" /></span>
 				<span><b>{username}</b></span>
+			{/if}
+			OLD CODE END -->
+			{#if username}
+				<a class="user-link" href="/settings?tab=account" title="Account settings" onclick={onnavigate}>
+					<span class="avatar"><Icon name="user" /></span>
+					<span><b>{username}</b></span>
+				</a>
 			{/if}
 			<form method="POST" action="/api/auth/logout">
 				<button class="icon-btn ghost" type="submit" aria-label="Sign out">
@@ -123,6 +131,19 @@
 		border-radius: var(--r-sm);
 	}
 	.foot-link:hover {
+		text-decoration: underline;
+	}
+	/* The avatar and name as one link to the account settings, laid out as the .user row lays them */
+	.user-link {
+		display: flex;
+		align-items: center;
+		gap: inherit;
+		min-width: 0;
+		color: inherit;
+		text-decoration: none;
+		border-radius: var(--r-sm);
+	}
+	.user-link:hover {
 		text-decoration: underline;
 	}
 </style>

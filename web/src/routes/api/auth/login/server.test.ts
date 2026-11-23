@@ -46,6 +46,8 @@ describe('POST /api/auth/login', () => {
 		expect(status).toBe(200);
 		expect(body).toEqual({ success: true, user: { username: 'admin', role: 'admin' } });
 		expect(mocks.setAuthCookie).toHaveBeenCalledWith(expect.anything(), 'jwt');
+		// NET-358: the token is signed from the stored user, so it names the password it was issued against
+		expect(mocks.generateToken).toHaveBeenCalledWith(ADMIN);
 	});
 
 	it('rejects non-string credentials with 400 instead of throwing', async () => {

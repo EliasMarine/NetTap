@@ -1,13 +1,17 @@
 // OLD CODE: import type { Handle, ServerInit } from '@sveltejs/kit'; (kit 3 moved the hook types to @sveltejs/kit/hooks; NET-315)
 import type { Handle, ServerInit } from '@sveltejs/kit/hooks';
 import { json, redirect } from '@sveltejs/kit';
-import { verifyToken, hasUsers, ensureSetupCode } from '$lib/server/auth.js';
+// OLD CODE: import { verifyToken, hasUsers, ensureSetupCode } from '$lib/server/auth.js'; (NET-358: init sets up the session keys)
+import { verifyToken, hasUsers, ensureSetupCode, initSessionKeys } from '$lib/server/auth.js';
 import { hasSetupCookie } from '$lib/server/middleware.js';
 import { SIGN_IN_FIRST } from '$lib/auth-errors.js';
 
 /** A13 (NET-229): make the first-run setup code at start, so the installer can print it. The code
- * itself is never logged; reading it needs a shell on the box. */
+ * itself is never logged; reading it needs a shell on the box.
+ * NET-358: first, the session keys: the legacy key is replaced and this release's key made before any
+ * request is served. A failure there throws, so the web app doesn't start on a half-done migration. */
 export const init: ServerInit = () => {
+	initSessionKeys();
 	try {
 		if (ensureSetupCode()) {
 			console.info(

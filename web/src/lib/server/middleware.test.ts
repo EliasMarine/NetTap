@@ -19,7 +19,7 @@ function eventWith(setupCookie?: string) {
 beforeEach(() => {
 	dataDir = mkdtempSync(join(tmpdir(), 'nettap-middleware-'));
 	vi.stubEnv('DATA_DIR', dataDir);
-	vi.stubEnv('JWT_SECRET', 'middleware-test-secret');
+	// OLD CODE: vi.stubEnv('JWT_SECRET', 'middleware-test-secret'); (NET-358: the web app no longer reads JWT_SECRET)
 	vi.resetModules();
 });
 

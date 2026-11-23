@@ -13,6 +13,7 @@ export type TabId =
 	| 'integrations'
 	| 'api-keys'
 	| 'display'
+	| 'account'
 	| 'about';
 
 export interface SettingsTab {
@@ -57,6 +58,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
 		tabs: [
 			// OLD CODE: { id: 'display', label: 'Display', intro: 'The theme, the time range pages open on and the Live map, saved in this browser.' }, (F4: + the time zone, saved on NetTap)
 			{ id: 'display', label: 'Display', intro: 'The theme, the time range pages open on and the Live map, saved in this browser, and the time zone NetTap counts your usage in.' },
+			{ id: 'account', label: 'Account', intro: 'Your sign-in to this NetTap: change the password you open the dashboard with.' },
 			{ id: 'about', label: 'About', intro: 'The NetTap version and uptime of this appliance.' },
 		],
 	},

@@ -75,6 +75,7 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
    npm install
    npm run dev
    ```
+   `npm run dev` keeps its data (the dev account, session keys and the setup code) in a private folder for each checkout, `~/.nettap-web-dev/<id>/`, outside the repository, so none of it reaches a Docker build. To start again from the setup wizard, stop the dev server and delete that folder (`rm -rf ~/.nettap-web-dev` clears every checkout's). To use another folder, set `DATA_DIR`.
 
 4. **Start the full stack (requires bridge-capable hardware):**
    ```bash
