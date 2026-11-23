@@ -662,7 +662,8 @@ describe('Alerts — drawer', () => {
 	});
 
 	// NET-349: the owner's audit had to open Raw JSON to see what a DNS alert looked up
-	it('shows the name a DNS alert looked up among the facts, with Raw JSON still closed', async () => {
+	// OLD CODE: it('shows the name a DNS alert looked up among the facts, with Raw JSON still closed', async () => { (NET-355: under Evidence now)
+	it('shows the name a DNS alert looked up under Evidence, with Raw JSON still closed', async () => {
 		const dnsAlert = alert('d1', {
 			signature: 'IPFire DBL [Phishing] Blocked DNS Query',
 			plain_description: 'A device looked up a blocked name.',
@@ -674,10 +675,22 @@ describe('Alerts — drawer', () => {
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: /A device looked up a blocked name/ }));
 		const drawer = screen.getByRole('complementary', { name: 'Alert details' });
-		expect(within(drawer).getByText('DNS name')).toBeInTheDocument();
+		// OLD CODE: expect(within(drawer).getByText('DNS name')).toBeInTheDocument(); (NET-355: Evidence › Fields Suricata recorded)
+		expect(within(drawer).getByText('DNS names')).toBeInTheDocument();
 		expect(within(drawer).getByText('ntp2.aliyun.com')).toBeInTheDocument();
 		// Raw JSON is collapsed (DrawerSection renders its body only when open), so the name above is the facts' own
 		expect(within(drawer).queryByText(/"rrname"/)).not.toBeInTheDocument();
+	});
+
+	// NET-355: the evidence sits right under the explanation, before the advice
+	it('shows Evidence between the explanation and What to do', async () => {
+		const drawer = await openFromRow();
+		const evidence = within(drawer).getByRole('region', { name: 'Evidence' });
+		const explanation = within(drawer).getByText('The device may be infected.');
+		const advice = within(drawer).getByText('What to do');
+		expect(explanation.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(evidence.compareDocumentPosition(advice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(within(evidence).getByText('Packets near the alert time')).toBeInTheDocument();
 	});
 
 	it('says there is no advice instead of inventing one, and titles by category without a description', async () => {

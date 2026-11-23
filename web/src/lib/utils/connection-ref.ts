@@ -9,8 +9,8 @@ import { connectionDurationMs, epochMs } from './connection-duration';
 import type { LanPolicy } from '$lib/api/network';
 import { connectionUrl, nsEpoch, type ConnectionRef } from './packet-query';
 
-/** A port from a number, digit text or a one-item array; null for anything else. */
-function port(value: unknown): number | null {
+/** A port from a number, digit text or a one-item array; null for anything else. Shared with the alert drawer (NET-355). */
+export function port(value: unknown): number | null {
 	const v = Array.isArray(value) ? value[0] : value;
 	const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d{1,5}$/.test(v.trim()) ? Number(v) : NaN;
 	return Number.isInteger(n) && n >= 0 && n <= 65535 ? n : null;

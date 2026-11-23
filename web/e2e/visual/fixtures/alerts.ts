@@ -37,6 +37,8 @@ interface AlertSeed {
 	risk: string;
 	fix: string;
 	acked?: boolean;
+	/** NET-355: the drawer's Evidence block looks up Zeek records by it */
+	communityId?: string;
 }
 
 function toAlert(s: AlertSeed, i: number): Alert {
@@ -55,11 +57,12 @@ function toAlert(s: AlertSeed, i: number): Alert {
 		plain_description: s.plain,
 		risk_context: s.risk,
 		recommendation: s.fix,
+		...(s.communityId ? { network: { community_id: s.communityId } } : {}),
 	};
 }
 
 const ALERT_SEEDS: AlertSeed[] = [
-	{ minsAgo: 6, severity: 1, signature: 'ET MALWARE Example Agent.Gen CnC Checkin', sid: 2900001, category: 'A Network Trojan was detected', src: ['192.168.1.42', 51842], dest: ['203.0.113.45', 8080], proto: 'TCP', plain: 'A device on your network contacted a server that is known to control infected computers.', risk: 'High: the device may be infected and taking orders from an attacker.', fix: 'Disconnect the device, run a malware scan, and change the passwords used on it.' },
+	{ minsAgo: 6, severity: 1, signature: 'ET MALWARE Example Agent.Gen CnC Checkin', sid: 2900001, category: 'A Network Trojan was detected', src: ['192.168.1.42', 51842], dest: ['203.0.113.45', 8080], proto: 'TCP', plain: 'A device on your network contacted a server that is known to control infected computers.', risk: 'High: the device may be infected and taking orders from an attacker.', fix: 'Disconnect the device, run a malware scan, and change the passwords used on it.', communityId: '1:BHcgw+xc46L4m7IOXm9O5K6Vg8o=' },
 	{ minsAgo: 18, severity: 1, signature: 'ET TROJAN Example Win32/Stealer Exfil Beacon', sid: 2900002, category: 'A Network Trojan was detected', src: ['192.168.1.42', 51990], dest: ['198.51.100.17', 443], proto: 'TCP', plain: 'A program on this device sent data to a server linked to credential-stealing malware.', risk: 'High: saved passwords or files may have left your network.', fix: 'Isolate the device and rotate the passwords stored on it.' },
 	{ minsAgo: 41, severity: 2, signature: 'ET SCAN Example Port Sweep Detected', sid: 2900010, category: 'Detection of a Network Scan', src: ['192.168.1.57', 40122], dest: ['192.0.2.88', 22], proto: 'TCP', plain: 'This device probed many ports on another host, which is what a scanner does.', risk: 'Medium: normal for a security tool, unusual for a TV.', fix: 'Check whether anyone on the network runs a scanner; otherwise investigate the device.' },
 	{ minsAgo: 70, severity: 2, signature: 'ET EXPLOIT Example Web App Command Injection Attempt', sid: 2900020, category: 'Web Application Attack', src: ['198.51.100.200', 44213], dest: ['192.168.1.23', 8080], proto: 'TCP', plain: 'An outside host tried to run commands on a web service in your network.', risk: 'Medium: the attempt was blocked by the router, but the service is exposed.', fix: 'Close the port forward to 192.168.1.23 or update the service.' },
