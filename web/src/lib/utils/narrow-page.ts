@@ -56,13 +56,26 @@ export function narrowTo(url: Pick<URL, 'pathname' | 'search'>, shown: DrillWind
 	return goto(`${url.pathname}?${q.toString()}`, { replace: same, reset: false });
 }
 
-/** This page's URL with its Custom window and picked figure dropped, for a range pill. */
-// OLD CODE: export function withoutWindow(url: URL): string { const q = new URLSearchParams(url.searchParams); (kit 3: page.url is a read-only URL; NET-315)
-export function withoutWindow(url: Pick<URL, 'pathname' | 'search'>): string {
+// OLD CODE START — NET-357: a pill that dropped the window also dropped the range, so the range lived in
+// page state only and Back (or a reload) lost it
+// /** This page's URL with its Custom window and picked figure dropped, for a range pill. */
+// // OLD CODE: export function withoutWindow(url: URL): string { const q = new URLSearchParams(url.searchParams); (kit 3: page.url is a read-only URL; NET-315)
+// export function withoutWindow(url: Pick<URL, 'pathname' | 'search'>): string {
+// 	const q = new URLSearchParams(url.search);
+// 	for (const key of ['from', 'to', 'range', 'count', 'bytes']) q.delete(key);
+// 	const rest = q.toString();
+// 	return rest ? `${url.pathname}?${rest}` : url.pathname;
+// }
+// OLD CODE END
+/**
+ * A range pill's URL: this page's own, with its Custom window and picked figure dropped and `range` set.
+ * The page reads its range from the URL (NET-357), so Back, Forward and a reload keep it.
+ */
+export function withRange(url: Pick<URL, 'pathname' | 'search'>, range: string): string {
 	const q = new URLSearchParams(url.search);
-	for (const key of ['from', 'to', 'range', 'count', 'bytes']) q.delete(key);
-	const rest = q.toString();
-	return rest ? `${url.pathname}?${rest}` : url.pathname;
+	for (const key of ['from', 'to', 'count', 'bytes']) q.delete(key);
+	q.set('range', range);
+	return `${url.pathname}?${q}`;
 }
 
 /**

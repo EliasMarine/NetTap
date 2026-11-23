@@ -3,6 +3,12 @@ import { render, screen, fireEvent } from '@testing-library/svelte';
 import HomePage from './+page.svelte';
 import { _configure } from '$lib/stores/alertSnapshot';
 import { SETTLE_MS } from '$lib/utils/window-trend';
+import { resetNavigation } from '../tests/app-navigation.svelte';
+
+// NET-357: a range pill only writes ?range=, so goto must move the URL the page reads its range from
+vi.mock('$app/state', () => import('../tests/app-navigation.svelte'));
+vi.mock('$app/navigation', () => import('../tests/app-navigation.svelte'));
+beforeEach(() => resetNavigation('http://localhost/'));
 
 // OLD CODE START — NET-228 (audit TRF-6): the trend compared the window ending now, still filling in
 // (Zeek writes a connection when it ends), with the one before it, through a second summary and count

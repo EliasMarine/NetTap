@@ -226,7 +226,8 @@ describe('Settings hub — unsaved edits', () => {
 
 		save.open();
 		await flush();
-		expect(await screen.findByText('Saved. The weekly report is on.')).toBeInTheDocument();
+		// OLD CODE: expect(await screen.findByText('Saved. The weekly report is on.')).toBeInTheDocument(); (NET-357: a new schedule starts off, and only the addresses were edited)
+		expect(await screen.findByText('Saved. The weekly report is off.')).toBeInTheDocument();
 	});
 
 	it('holds a tab switch: Keep editing stays, Discard and continue goes', async () => {

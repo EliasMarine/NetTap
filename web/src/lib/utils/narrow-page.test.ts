@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { goto } from '$app/navigation';
-import { bucketWords, narrowTo, pickedLine, withoutWindow } from './narrow-page';
+// OLD CODE: import { bucketWords, narrowTo, pickedLine, withoutWindow } from './narrow-page'; (NET-357)
+import { bucketWords, narrowTo, pickedLine, withRange } from './narrow-page';
 import { toTimeChart as timeChart } from './chart-pick';
 import type { TimeChart } from './drilldown';
 
@@ -47,10 +48,19 @@ describe('narrowTo (NET-249)', () => {
 	});
 });
 
-describe('withoutWindow (NET-249)', () => {
-	it('drops the window, its range and the picked figure, and keeps the rest', () => {
-		expect(withoutWindow(new URL(`http://x/dns?domain=a&from=${WIN.from}&to=${WIN.to}&range=7d&count=3&bytes=4`))).toBe('/dns?domain=a');
-		expect(withoutWindow(new URL(`http://x/devices/10.0.0.2?from=${WIN.from}&to=${WIN.to}`))).toBe('/devices/10.0.0.2');
+// OLD CODE START — NET-357: withoutWindow became withRange (the pill writes ?range=)
+// describe('withoutWindow (NET-249)', () => {
+// 	it('drops the window, its range and the picked figure, and keeps the rest', () => {
+// 		expect(withoutWindow(new URL(`http://x/dns?domain=a&from=${WIN.from}&to=${WIN.to}&range=7d&count=3&bytes=4`))).toBe('/dns?domain=a');
+// 		expect(withoutWindow(new URL(`http://x/devices/10.0.0.2?from=${WIN.from}&to=${WIN.to}`))).toBe('/devices/10.0.0.2');
+// 	});
+// });
+// OLD CODE END
+describe('withRange (NET-357)', () => {
+	it('drops the window and the picked figure, sets the range, and keeps the rest', () => {
+		expect(withRange(new URL(`http://x/dns?domain=a&from=${WIN.from}&to=${WIN.to}&range=7d&count=3&bytes=4`), '6h')).toBe('/dns?domain=a&range=6h');
+		expect(withRange(new URL(`http://x/devices/10.0.0.2?from=${WIN.from}&to=${WIN.to}`), '1h')).toBe('/devices/10.0.0.2?range=1h');
+		expect(withRange(new URL('http://x/traffic/streaming?range=24h'), '30d')).toBe('/traffic/streaming?range=30d');
 	});
 });
 

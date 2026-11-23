@@ -1,22 +1,28 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
-import { readable, get } from 'svelte/store';
+import { get } from 'svelte/store';
 import * as devices from '$api/devices';
 import { getSmartAlerts } from '$api/alerts';
 import { getSystemHealth } from '$api/system';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { resetNavigation } from '../../../tests/app-navigation.svelte';
 
 // PLAN.md §5.5: the loader awaits every request (connections included), reports what
 // succeeded, and a slower, older range never overwrites a newer one.
 
 const { IP } = vi.hoisted(() => ({ IP: '192.168.1.10' }));
 
-// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
-vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
-	page: readable({ url: new URL(`http://localhost/devices/${IP}`), params: { ip: IP } }),
-})));
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// OLD CODE START — NET-357: a range pill only writes ?range=, so goto must move the URL the page reads its range from
+// // kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+// vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
+// 	page: readable({ url: new URL(`http://localhost/devices/${IP}`), params: { ip: IP } }),
+// })));
+// OLD CODE END
+vi.mock('$app/state', () => import('../../../tests/app-navigation.svelte'));
+beforeEach(() => resetNavigation(`http://localhost/devices/${IP}`, { ip: IP }));
+// OLD CODE: vi.mock('$app/navigation', () => ({ goto: vi.fn() })); (NET-357)
+vi.mock('$app/navigation', () => import('../../../tests/app-navigation.svelte'));
 vi.mock('$api/devices', () => ({
 	getDeviceDetail: vi.fn(),
 	getDeviceCategories: vi.fn(),

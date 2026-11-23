@@ -1,14 +1,19 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
-import { readable } from 'svelte/store';
 import DnsPage from './+page.svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+import { resetNavigation } from '../../tests/app-navigation.svelte';
 
-// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
-vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(() => ({
-	page: readable({ url: new URL('http://localhost/dns') }),
-})));
+// OLD CODE START — NET-357: a range pill only writes ?range=, so goto must move the URL the page reads its range from
+// // kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+// vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svelte')).stateFromStores(() => ({
+// 	page: readable({ url: new URL('http://localhost/dns') }),
+// })));
+// OLD CODE END
+vi.mock('$app/state', () => import('../../tests/app-navigation.svelte'));
+vi.mock('$app/navigation', () => import('../../tests/app-navigation.svelte'));
+beforeEach(() => resetNavigation('http://localhost/dns'));
 
 // #96: a failed suspicious-DNS check read as "No suspicious DNS patterns detected", and a
 // complete detection list (hundreds of entries on a busy network) rendered in full.
@@ -293,5 +298,17 @@ describe('DNS page — the range set', () => {
 		});
 		// OLD CODE: expect(screen.getByText(/Queries per 6 hours · last 30 days/)).toBeInTheDocument(); (NET-249)
 		expect(screen.getByText(/Queries per 3 hours · last 30 days/)).toBeInTheDocument();
+	});
+
+	it('opens on the URL range (NET-357)', async () => {
+		resetNavigation('http://localhost/dns?range=7d');
+		stubDaemon(null);
+		render(DnsPage);
+		await vi.waitFor(() => {
+			const timeline = vi.mocked(fetch).mock.calls.map((c) => String(c[0])).find((u) => u.startsWith('/api/dns/timeline'))!;
+			const q = new URL(timeline, 'http://x').searchParams;
+			expect((Date.parse(q.get('to')!) - Date.parse(q.get('from')!)) / 86_400_000).toBeCloseTo(7);
+		});
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
 	});
 });

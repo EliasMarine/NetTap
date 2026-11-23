@@ -76,6 +76,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe('Traffic category — the chart drills into a window (NET-249)', () => {
 	it("asks for each range's bucket from the owner's table", async () => {
 		chartReply = (u) => slots([1000, 3000], u.searchParams.get('interval')!)(u); // the daemon echoes the bucket asked for
+		// NET-357: a pill only writes ?range=, so goto moves the page's URL
+		vi.mocked(goto).mockImplementation(async (h) => nav.set(String(h).replace('/traffic/streaming', '')));
 		render(CategoryPage);
 		await loaded();
 		expect(chartCall().searchParams.get('interval')).toBe('5m');
@@ -134,7 +136,8 @@ describe('Traffic category — a Custom window from the URL (NET-249 §1a)', () 
 		render(CategoryPage);
 		await loaded();
 		await fireEvent.click(screen.getByRole('button', { name: '6h' }));
-		expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/traffic/streaming');
+		// OLD CODE: expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/traffic/streaming'); (NET-357: the pill writes its range too)
+		expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/traffic/streaming?range=6h');
 		await vi.waitFor(() => expect(asked('/api/traffic/bandwidth')).toHaveLength(1));
 		expect(chartCall().searchParams.get('interval')).toBe('5m');
 		// OLD CODE: expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument(); (NET-348: the pill is named by its window)

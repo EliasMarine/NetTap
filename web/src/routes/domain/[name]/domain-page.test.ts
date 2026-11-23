@@ -92,7 +92,8 @@ describe('Domain page', () => {
 		const answers = card('What it resolved to');
 		expect(within(answers).getByRole('link', { name: '198.51.100.10' })).toHaveAttribute('href', '/address/198.51.100.10');
 		expect(within(answers).getByRole('link', { name: '2001:db8::10' })).toHaveAttribute('href', '/address/2001%3Adb8%3A%3A10');
-		expect(within(answers).getByRole('link', { name: 'edge.example.net' })).toHaveAttribute('href', '/domain/edge.example.net');
+		// OLD CODE: …toHaveAttribute('href', '/domain/edge.example.net'); (NET-357 review: a CNAME link carries the page's range)
+		expect(within(answers).getByRole('link', { name: 'edge.example.net' })).toHaveAttribute('href', '/domain/edge.example.net?range=24h');
 		const askers = card('Devices that looked it up');
 		await vi.waitFor(() => expect(within(askers).getByRole('link', { name: 'Living room TV' })).toHaveAttribute('href', '/devices/192.168.1.22'));
 		const tls = card('TLS');

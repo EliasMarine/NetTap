@@ -78,6 +78,8 @@ describe('Device detail — the bandwidth chart drills into a window (NET-249)',
 	it("asks for each range's bucket from the owner's table", async () => {
 		// the daemon echoes the bucket asked for
 		vi.mocked(getDeviceDetail).mockImplementation(((ip: string, q: { interval?: string } = {}) => detail([1000, 3000], { interval: q.interval })(ip, q)) as never);
+		// NET-357: a pill only writes ?range=, so goto moves the page's URL
+		vi.mocked(goto).mockImplementation(async (h) => nav.set(String(h).replace(`/devices/${IP}`, '')));
 		render(Page);
 		await loaded();
 		expect(detailCalls().at(-1)!.interval).toBe('5m');
@@ -143,7 +145,8 @@ describe('Device detail — a Custom window from the URL (NET-249 §1a)', () => 
 		render(Page);
 		await loaded();
 		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
-		expect(String(vi.mocked(goto).mock.calls[0][0])).toBe(`/devices/${IP}`);
+		// OLD CODE: expect(String(vi.mocked(goto).mock.calls[0][0])).toBe(`/devices/${IP}`); (NET-357: the pill writes its range too)
+		expect(String(vi.mocked(goto).mock.calls[0][0])).toBe(`/devices/${IP}?range=7d`);
 		await vi.waitFor(() => expect(detailCalls().at(-1)!.interval).toBe('1h'));
 		const q = detailCalls().at(-1)!;
 		expect((Date.parse(q.to!) - Date.parse(q.from!)) / 86_400_000).toBeCloseTo(7);

@@ -69,6 +69,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe('Domain page — the chart drills into a window (NET-249)', () => {
 	it("asks for each range's bucket from the owner's table", async () => {
 		summary = (u) => withSlots([4, 6, 1], u.searchParams.get('interval')!)(u); // the daemon echoes the bucket asked for
+		// NET-357: a pill only writes ?range=, so goto moves the page's URL
+		vi.mocked(goto).mockImplementation(async (h) => nav.set(String(h).replace('/domain/stream.example.net', '')));
 		render(Page);
 		await loaded();
 		expect(domainCalls().at(-1)!.searchParams.get('interval')).toBe('5m');
@@ -131,7 +133,8 @@ describe('Domain page — a Custom window from the URL (NET-249 §1a)', () => {
 		render(Page);
 		await loaded();
 		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
-		expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/domain/stream.example.net');
+		// OLD CODE: expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/domain/stream.example.net'); (NET-357: the pill writes its range too)
+		expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/domain/stream.example.net?range=7d');
 		await vi.waitFor(() => expect(domainCalls().at(-1)!.searchParams.get('interval')).toBe('1h'));
 		const u = domainCalls().at(-1)!;
 		expect((Date.parse(u.searchParams.get('to')!) - Date.parse(u.searchParams.get('from')!)) / 86_400_000).toBeCloseTo(7);

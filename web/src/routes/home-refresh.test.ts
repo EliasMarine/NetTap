@@ -4,6 +4,12 @@ import { get } from 'svelte/store';
 import HomePage from './+page.svelte';
 import { pageRefresh, refreshPage, type LoadResult } from '$lib/stores/pageRefresh';
 import { _configure } from '$lib/stores/alertSnapshot';
+import { resetNavigation } from '../tests/app-navigation.svelte';
+
+// NET-357: a range pill only writes ?range=, so goto must move the URL the page reads its range from
+vi.mock('$app/state', () => import('../tests/app-navigation.svelte'));
+vi.mock('$app/navigation', () => import('../tests/app-navigation.svelte'));
+beforeEach(() => resetNavigation('http://localhost/'));
 
 // The page refresh contract (PLAN.md §5.5) against Home's real loader: it awaits every request,
 // reports ok / partial / failed, and a load that is no longer current writes nothing.

@@ -47,7 +47,8 @@
 	import {
 		bucketFor, chartTime, customRange, DRILL_RANGES, fmt, linkedCount, pickedTotal, pickWindow, rangeWindow, SCAN_CAP, startRange, type TimeChart,
 	} from '$lib/utils/drilldown';
-	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	// OLD CODE: import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page'; (NET-357: the pill writes ?range=)
+	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withRange } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import { getDomainSummary, type DomainSummary } from '$lib/api/drilldown';
@@ -106,8 +107,10 @@
 	// ---------------------------------------------------------------------------
 
 	// OLD CODE: let selectedTimeRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
-	let selectedTimeRange = $state<string>(startRange('24h'));
+	// OLD CODE: let selectedTimeRange = $state<string>(startRange('24h')); (NET-357: kept only in state, so Back and a link's range were lost)
 	const params = $derived(page.url.searchParams);
+	/** The URL's range (a link or a pill writes it), else Settings › Display's default */
+	const selectedTimeRange = $derived<string>(TIME_RANGES.find((r) => r.value === params.get('range'))?.value ?? startRange('24h'));
 	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every card follows it */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The queries the pick carried, compared with the narrowed chart's own total */
@@ -620,11 +623,18 @@
 	// 	refresh.run();
 	// }
 	// OLD CODE END
-	/** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	// OLD CODE START — NET-357: the range lived in state; the URL changed only when a Custom window went
+	// /** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	// function handleTimeRangeChange(value: string) {
+	// 	if (value === 'custom') return;
+	// 	selectedTimeRange = value;
+	// 	if (custom) void goto(withoutWindow(page.url), { reset: false });
+	// }
+	// OLD CODE END
+	/** A range pill writes ?range=; leaving a pick's window pushes (Back returns to it), otherwise it replaces (NET-357) */
 	function handleTimeRangeChange(value: string) {
 		if (value === 'custom') return;
-		selectedTimeRange = value;
-		if (custom) void goto(withoutWindow(page.url), { reset: false });
+		void goto(withRange(page.url, value), { replace: !custom, reset: false });
 	}
 
 	/** #96: another window's figures must not stand in for this one's if its load fails */

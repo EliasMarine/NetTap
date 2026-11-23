@@ -12,6 +12,7 @@
 	 */
 	import { onDestroy, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import Card from '$components/ui/Card.svelte';
 	import CardState from '$components/ui/CardState.svelte';
 	import KpiCard from '$components/ui/KpiCard.svelte';
@@ -90,7 +91,9 @@
 	const RANGE_OPTIONS = RANGES.map(({ value, label }) => ({ value, label }));
 
 	// OLD CODE: let range = $state<RangeKey>('24h'); (NET-195: Settings › Display's default, read where the range starts so the first load uses it)
-	let range = $state<RangeKey>(startRange('24h'));
+	// OLD CODE: let range = $state<RangeKey>(startRange('24h')); (NET-357: kept only in state, so Back from a card lost it)
+	/** The URL's range (a pill writes it), else Settings › Display's default: Back, Forward and a reload keep it */
+	const range = $derived<RangeKey>(RANGES.find((r) => r.value === page.url.searchParams.get('range'))?.value ?? startRange('24h'));
 	// OLD CODE: ?? RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	const span = $derived(RANGES.find((r) => r.value === range) ?? RANGES.find((r) => r.value === '24h')!);
 	const windowText = $derived(span.window.toLowerCase());
@@ -115,6 +118,8 @@
 	/** The `unknown` service split into conversations, one-way connections and ICMP (NET-219). Null when the reply has none */
 	let unidentified = $state<ProtocolsResponse['unidentified'] | null>(null);
 	let categories = $state<TrafficCategory[]>([]);
+	/** The window the categories on screen were counted over, from their reply: each bar links to it (NET-357) */
+	let categoriesWin = $state<DrillWindow | null>(null);
 	// OLD CODE START — NET-160 slice 2b-3: the figure alone; the card's link needs the window it was counted over
 	// let deviceCount = $state<number | null>(null); // null until a count loads
 	// OLD CODE END
@@ -233,7 +238,11 @@
 				bandwidth = { series: v.series, from: v.from, to: v.to, step: bucketMs };
 			}),
 			protocolsDone,
-			settle(guard, g, 'categories', getTrafficCategories(win), (v) => (categories = v.categories)),
+			// OLD CODE: settle(guard, g, 'categories', getTrafficCategories(win), (v) => (categories = v.categories)), (NET-357: a bar links to the window it was counted over)
+			settle(guard, g, 'categories', getTrafficCategories(win), (v) => {
+				categories = v.categories;
+				categoriesWin = { from: v.from, to: v.to };
+			}),
 			// OLD CODE: settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCount = v.count)), (slice 2b-3: the card links to the reply's window)
 			settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCountReply = v)),
 			settle(guard, g, 'newDevices', getNewDeviceCount(since), (v) => (newDeviceCount = v.count), () => (newDeviceCount = null)),
@@ -287,6 +296,7 @@
 		services = [];
 		unidentified = null;
 		categories = [];
+		categoriesWin = null;
 		// OLD CODE: deviceCount = null; (slice 2b-3: the reply carries the figure and its window)
 		deviceCountReply = null;
 		// OLD CODE: prevAlertCount = null; (NET-228)
@@ -298,6 +308,21 @@
 		failed = {};
 		handle.run();
 	}
+
+	/** A range pill writes the URL; the range follows it. Replace, not push: a pill is no history step (NET-357) */
+	function pickRange(value: string) {
+		void goto(`/?range=${value}`, { replace: true, reset: false });
+	}
+
+	// A new range in the URL (a pill, Back, Forward) clears the last range's figures and loads once.
+	// The first load is the effect below, so the range on mount is not loaded twice.
+	let loadedRange = untrack(() => range);
+	$effect(() => {
+		const r = range;
+		if (r === loadedRange) return;
+		loadedRange = r;
+		untrack(changeRange);
+	});
 
 	// The first load, a load on each Auto toggle (as before), then every 30 s while Auto is on.
 	// A tick never cancels a load still running, or a slow range would never land.
@@ -729,7 +754,9 @@
 			label: cat.label,
 			value: cat.total_bytes,
 			display: formatBytes(cat.total_bytes),
-			href: '/traffic/' + cat.name,
+			// OLD CODE: href: '/traffic/' + cat.name, (NET-357: the category page opened on its own default range)
+			// the window this bar was counted over, as the Devices and Alerts cards link theirs
+			href: `/traffic/${cat.name}?${categoriesWin ? windowQuery(categoriesWin, range) : `range=${range}`}`,
 		})),
 	);
 
@@ -806,7 +833,8 @@
 		<p class="page-sub">Traffic, alerts and capture health · {windowText}</p>
 	</div>
 	<div class="head-actions">
-		<Pills options={RANGE_OPTIONS} bind:value={range} onchange={changeRange} ariaLabel="Time range" />
+		<!-- OLD CODE: <Pills options={RANGE_OPTIONS} bind:value={range} onchange={changeRange} ariaLabel="Time range" /> (NET-357: the range lives in the URL) -->
+		<Pills options={RANGE_OPTIONS} value={range} onchange={pickRange} ariaLabel="Time range" />
 		<!-- OLD CODE START — NET-192 PR 4: this button, now AutoRefreshButton so every page has it
 		<button
 			class="btn"

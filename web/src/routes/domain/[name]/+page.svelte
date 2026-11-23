@@ -19,7 +19,8 @@
 		bucketFor, DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, customRange, fmt, linkedCount, logsHrefForQuery, pickedTotal, pickWindow, rangeWindow,
 		startRange, windowQuery, type DrillRange, type DrillRangeValue, type DrillWindow,
 	} from '$lib/utils/drilldown';
-	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	// OLD CODE: import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page'; (NET-357: the pill writes ?range=)
+	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withRange } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
@@ -50,11 +51,14 @@
 
 	// OLD CODE: let rangeValue = $state<DrillRangeValue>('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	// OLD CODE: let rangeValue = $state<DrillRangeValue>(startRange('24h')); (a Threats link's ?range= is where it starts)
-	let rangeValue = $state<DrillRangeValue>(DRILL_RANGES.find((r) => r.value === page.url.searchParams.get('range'))?.value ?? startRange('24h'));
+	// OLD CODE: let rangeValue = $state<DrillRangeValue>(DRILL_RANGES.find((r) => r.value === page.url.searchParams.get('range'))?.value ?? startRange('24h')); (NET-357: read once, so Back to another range kept this one)
+	const params = $derived(page.url.searchParams);
+	/** The URL's range (a link or a pill writes it), else Settings › Display's default */
+	const rangeValue = $derived<DrillRangeValue>(DRILL_RANGES.find((r) => r.value === params.get('range'))?.value ?? startRange('24h'));
 	// OLD CODE: ?? DRILL_RANGES[0]); (NET-192 PR 4: 1h and 6h added, 24h is index 2)
 	// OLD CODE: ?? DRILL_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES.find((r) => r.value === '24h')!);
-	const params = $derived(page.url.searchParams);
+	// OLD CODE: const params = $derived(page.url.searchParams); (NET-357: declared above, before the range reads it)
 	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every figure follows it */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The lookups the pick carried, compared with the narrowed chart's own total */
@@ -103,11 +107,18 @@
 		untrack(() => refresh.run());
 	});
 
-	/** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	// OLD CODE START — NET-357: the range lived in state; the URL changed only when a Custom window went
+	// /** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	// function pickRange(value: string) {
+	// 	if (value === 'custom') return;
+	// 	rangeValue = value as DrillRangeValue;
+	// 	if (custom) void goto(withoutWindow(page.url), { reset: false });
+	// }
+	// OLD CODE END
+	/** A range pill writes ?range=; leaving a pick's window pushes (Back returns to it), otherwise it replaces (NET-357) */
 	function pickRange(value: string) {
 		if (value === 'custom') return;
-		rangeValue = value as DrillRangeValue;
-		if (custom) void goto(withoutWindow(page.url), { reset: false });
+		void goto(withRange(page.url, value), { replace: !custom, reset: false });
 	}
 
 	async function load(guard: LoadGuard): Promise<LoadResult> {
@@ -227,8 +238,9 @@
 {#snippet askerLookupsCell(a: DomainAsker)}{fmt(a.lookups)}{/snippet}
 {#snippet askerSeenCell(a: DomainAsker)}<span class="num">{formatWhen(a.last_seen)}</span>{/snippet}
 {#snippet answerCell(a: DomainAnswer)}
+	<!-- OLD CODE: <a class="mono" href={domainHref(a.value)}> (NET-357 review: the range is in the URL now, so a CNAME link carries it) -->
 	{#if a.kind === 'ip'}<IPAddress ip={a.value} />
-	{:else if a.kind === 'name'}<a class="mono" href={domainHref(a.value)}>{a.value}</a>
+	{:else if a.kind === 'name'}<a class="mono" href="{domainHref(a.value)}?range={rangeValue}">{a.value}</a>
 	{:else}<span class="mono trunc" title={a.value}>{a.value}</span>{/if}
 {/snippet}
 {#snippet answerKindCell(a: DomainAnswer)}{KIND_WORDS[a.kind]}{/snippet}
