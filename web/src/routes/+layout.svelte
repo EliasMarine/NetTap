@@ -14,6 +14,7 @@
 	import type { StorageStatus } from '$api/system';
 	import { captureMode as modeStore, initCaptureMode } from '$lib/stores/captureMode';
 	import { SIGN_IN_FIRST } from '$lib/auth-errors';
+	import { passwordChangeCount, passwordChangeSettled } from '$lib/password-change';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots } from '$lib/stores/alertSnapshot';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Sidebar from '$lib/components/shell/Sidebar.svelte';
@@ -114,11 +115,43 @@
 	/** Bumped when the poller stops, so a ping that began in an earlier run can't act on its reply. */
 	let shellRun = 0;
 
-	/** NET-198: the session ran out, so open the sign-in page, which brings the user back to this page. */
-	async function sendToSignIn() {
+	// OLD CODE START — NET-358: left on the first 401, which can be a ping sent with the old cookie just
+	// before a password change landed; the sign-in page then bounced to / and the change's result was lost
+	// /** NET-198: the session ran out, so open the sign-in page, which brings the user back to this page. */
+	// async function sendToSignIn() {
+	// 	if (redirecting) return;
+	// 	redirecting = true;
+	// 	try {
+	// 		await goto(`/login?next=${encodeURIComponent(page.url.pathname + page.url.search)}`);
+	// 	} catch (err) {
+	// 		console.error('Could not open the sign-in page:', err);
+	// 	} finally {
+	// 		redirecting = false; // a navigation that fell through leaves the shell polling, which asks again
+	// 	}
+	// }
+	// OLD CODE END
+
+	/** NET-358: true only if the session is still refused once any password change in flight has settled,
+	 * and no change succeeded while the question was out (a check sent before it carries the old cookie). */
+	async function sessionRefused(): Promise<boolean> {
+		await passwordChangeSettled();
+		const changes = passwordChangeCount();
+		try {
+			// OLD CODE: const res = await fetch('/api/auth/me'); (NET-358 review: a hung check held `redirecting`, so the shell stopped polling)
+			const res = await fetch('/api/auth/me', { signal: AbortSignal.timeout(10_000) });
+			return res.status === 401 && passwordChangeCount() === changes;
+		} catch {
+			return false; // unknown: stay, and the next poll asks again
+		}
+	}
+
+	/** NET-198: the session ran out, so open the sign-in page, which brings the user back to this page.
+	 * `run` is the shell run the 401 came from: a reply from before a fresh sign-in is dropped. */
+	async function sendToSignIn(run: number) {
 		if (redirecting) return;
 		redirecting = true;
 		try {
+			if (!(await sessionRefused()) || run !== shellRun) return;
 			await goto(`/login?next=${encodeURIComponent(page.url.pathname + page.url.search)}`);
 		} catch (err) {
 			console.error('Could not open the sign-in page:', err);
@@ -145,7 +178,8 @@
 			// OLD CODE END
 			// No username: the shell opened without a session (Go Live before the first admin), so none ran out
 			if (res.status === 401 && body?.error === SIGN_IN_FIRST) {
-				if (data.username) void sendToSignIn();
+				// OLD CODE: if (data.username) void sendToSignIn(); (NET-358: it rechecks, then checks the run again)
+				if (data.username) void sendToSignIn(run);
 				return;
 			}
 			daemonOffline = body?.status !== 'ok';

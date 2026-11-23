@@ -746,9 +746,10 @@ describe('Settings — section tabs', () => {
 		const tablist = screen.getByRole('tablist', { name: 'Settings sections' });
 		const tabs = within(tablist).getAllByRole('tab');
 		// OLD CODE: 'Notifications', 'Retention', 'Capture', 'API keys', 'Network', 'Integrations', 'Display', 'About' (NET-273: grouped, with three more)
+		// OLD CODE: 'Network', 'Integrations', 'API keys', 'Display', 'About', (NET-358: + Account)
 		expect(tabs.map((t) => t.textContent?.trim())).toEqual([
 			'Notifications', 'Suricata rules', 'Storage & retention', 'Capture', 'Backup & restore',
-			'Network', 'Integrations', 'API keys', 'Display', 'About',
+			'Network', 'Integrations', 'API keys', 'Display', 'Account', 'About',
 		]);
 		const first = screen.getByRole('tab', { name: 'Notifications' });
 		expect(first).toHaveAttribute('aria-selected', 'true');

@@ -186,7 +186,8 @@ jobs:
         working-directory: web/
 
       - name: Run first-run visual tests
-        run: npm run test:visual -- --project=firstrun
+        # NET-358: the account project runs firstrun first (its dependency), then the change-password test
+        run: npm run test:visual -- --project=account
         working-directory: web/
 
       - name: Upload test results

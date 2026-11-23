@@ -1,6 +1,7 @@
 /** NET-357: the test router's history, which page tests use to check Back and Forward. */
 import { describe, it, expect } from 'vitest';
-import { goto, historyState, page, resetNavigation, traverse } from './app-navigation.svelte';
+import { writable } from 'svelte/store';
+import { goto, historyState, page, resetNavigation, stateFromStores, traverse } from './app-navigation.svelte';
 
 describe('app-navigation test router', () => {
 	it('pushes an entry for a plain goto, and Back returns to the one before', async () => {
@@ -24,5 +25,19 @@ describe('app-navigation test router', () => {
 		traverse(-1);
 		await goto('/traffic/streaming?range=24h', { replace: true });
 		expect(historyState()).toEqual({ entries: ['/traffic/streaming?range=24h', '/traffic/streaming?from=a&to=b'], index: 0 });
+	});
+});
+
+describe('stateFromStores', () => {
+	it('follows the store for url, params and data, with empty defaults', async () => {
+		const store = writable<{ url: URL; params?: Record<string, string>; data?: Record<string, unknown> }>({
+			url: new URL('http://localhost/settings'),
+			data: { username: 'admin' },
+		});
+		const state = await stateFromStores(() => ({ page: store }));
+		expect([state.page.url.pathname, state.page.params, state.page.data]).toEqual(['/settings', {}, { username: 'admin' }]);
+
+		store.set({ url: new URL('http://localhost/devices/a'), params: { ip: 'a' } });
+		expect([state.page.url.pathname, state.page.params, state.page.data]).toEqual(['/devices/a', { ip: 'a' }, {}]);
 	});
 });

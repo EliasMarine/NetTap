@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SIGN_IN_FIRST } from '$lib/auth-errors';
@@ -86,11 +86,12 @@ const BRIDGE_API = '/api/bridge/create';
 beforeEach(async () => {
 	dataDir = mkdtempSync(join(tmpdir(), 'nettap-hooks-'));
 	vi.stubEnv('DATA_DIR', dataDir);
-	vi.stubEnv('JWT_SECRET', 'hooks-store-test-secret');
+	// OLD CODE: vi.stubEnv('JWT_SECRET', 'hooks-store-test-secret'); (NET-358: the web app no longer reads JWT_SECRET)
 	vi.resetModules();
 	({ handle } = await import('./hooks.server'));
 	auth = await import('$lib/server/auth.js');
-	sessionToken = auth.generateToken({ username: 'admin', role: 'admin' });
+	// OLD CODE: sessionToken = auth.generateToken({ username: 'admin', role: 'admin' }); (NET-358: a session names ADMIN_STORE's password)
+	sessionToken = auth.generateToken({ username: 'admin', role: 'admin', passwordHash: 'x' });
 	resolve.mockClear();
 });
 
@@ -407,5 +408,48 @@ describe('exact pre-Account wizard requests', () => {
 	it('a page with no store still goes to setup', async () => {
 		await expect(run('/alerts')).rejects.toMatchObject({ status: 302, location: '/setup' });
 		expect(resolve).not.toHaveBeenCalled();
+	});
+});
+
+// NET-358: a session names the password it was issued against
+describe('sessions after a password change, with a real user store', () => {
+	it('refuses the old session (401 for an API call, sign-in for a page) and lets the new one in', async () => {
+		writeStore(ADMIN_STORE);
+		const admin = auth.getUser('admin')!;
+		const { user } = await auth.updatePassword('admin', admin.passwordHash, 'NewPassw0rd');
+		const newToken = auth.generateToken(user);
+
+		await expectUnauthorised(run('/api/system/ping', 'GET', sessionToken));
+		await expect(run('/alerts', 'GET', sessionToken)).rejects.toMatchObject({ status: 302, location: '/login' });
+		expect(resolve).not.toHaveBeenCalled();
+
+		await run('/api/system/ping', 'GET', newToken);
+		await run('/alerts', 'GET', newToken);
+		expect(resolve).toHaveBeenCalledTimes(2);
+	});
+});
+
+// NET-358 (plan step 3a): the keys are migrated at start, before any request
+describe('init', () => {
+	const legacyKey = () => readFileSync(join(dataDir, 'jwt-secret.txt'), 'utf-8').trim();
+
+	it('replaces the legacy key and makes the v2 key on a cold start with no request', async () => {
+		const before = 'a'.repeat(128);
+		writeFileSync(join(dataDir, 'jwt-secret.txt'), before);
+		const { init } = await import('./hooks.server');
+
+		await init();
+
+		expect(legacyKey()).toMatch(/^[0-9a-f]{128}$/);
+		expect(legacyKey()).not.toBe(before);
+		expect(existsSync(join(dataDir, 'jwt-secret-v2.txt'))).toBe(true);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('throws, so the app does not start, when the v2 key file is damaged', async () => {
+		writeFileSync(join(dataDir, 'jwt-secret-v2.txt'), 'short');
+		const { init } = await import('./hooks.server');
+
+		expect(() => init()).toThrow(/jwt-secret-v2\.txt doesn't hold a valid session key/);
 	});
 });

@@ -27,6 +27,7 @@
 	import IntegrationsTab from './tabs/IntegrationsTab.svelte';
 	import ApiKeysTab from './tabs/ApiKeysTab.svelte';
 	import DisplayTab from './tabs/DisplayTab.svelte';
+	import AccountTab from './tabs/AccountTab.svelte';
 	import AboutTab from './tabs/AboutTab.svelte';
 
 	// OLD CODE START — NET-273: the tab was page state set once on mount, so a ?tab= link inside the
@@ -250,7 +251,7 @@ OLD CODE END -->
 			</div>
 		{/if}
 
-		<!-- Ten stable panels, so every tab's aria-controls resolves; only the open one has its component -->
+		<!-- One stable panel per tab, so every tab's aria-controls resolves; only the open one has its component -->
 		{#each SETTINGS_TABS as tab (tab.id)}
 			<div
 				class="settings-panel"
@@ -282,6 +283,9 @@ OLD CODE END -->
 						<ApiKeysTab bind:dirty bind:busy />
 					{:else if tab.id === 'display'}
 						<DisplayTab bind:dirty />
+					{:else if tab.id === 'account'}
+						<!-- NET-358: only a change being sent holds navigation; a typed, unsent password doesn't -->
+						<AccountTab bind:busy />
 					{:else}
 						<AboutTab />
 					{/if}

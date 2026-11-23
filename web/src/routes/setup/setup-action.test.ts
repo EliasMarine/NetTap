@@ -55,7 +55,7 @@ function storedUsers(): { username: string }[] {
 beforeEach(async () => {
 	dataDir = mkdtempSync(join(tmpdir(), 'nettap-setup-'));
 	vi.stubEnv('DATA_DIR', dataDir);
-	vi.stubEnv('JWT_SECRET', 'setup-action-test-secret');
+	// OLD CODE: vi.stubEnv('JWT_SECRET', 'setup-action-test-secret'); (NET-358: the web app no longer reads JWT_SECRET)
 	vi.resetModules();
 	auth = await import('$lib/server/auth.js');
 	({
@@ -86,11 +86,19 @@ describe('createFirstAdmin', () => {
 	});
 
 	it('refuses once any user exists', async () => {
-		writeFileSync(join(dataDir, 'users.json'), JSON.stringify({ users: [{ username: 'root' }] }));
+		// OLD CODE START — NET-358: a record without its password hash and role is a damaged store now
+		// writeFileSync(join(dataDir, 'users.json'), JSON.stringify({ users: [{ username: 'root' }] }));
+		// await expect(auth.createFirstAdmin('alice', 'Passw0rdOK')).rejects.toBeInstanceOf(
+		// 	auth.SetupAlreadyComplete
+		// );
+		// expect(storedUsers()).toEqual([{ username: 'root' }]);
+		// OLD CODE END
+		const root = { username: 'root', passwordHash: 'x', role: 'admin', createdAt: '', updatedAt: '' };
+		writeFileSync(join(dataDir, 'users.json'), JSON.stringify({ users: [root] }));
 		await expect(auth.createFirstAdmin('alice', 'Passw0rdOK')).rejects.toBeInstanceOf(
 			auth.SetupAlreadyComplete
 		);
-		expect(storedUsers()).toEqual([{ username: 'root' }]);
+		expect(storedUsers()).toEqual([root]);
 	});
 
 	it('keeps serving after a failed attempt', async () => {
@@ -132,6 +140,27 @@ describe('createAdmin action', () => {
 		expect(losers[0].reason).toMatchObject({ status: 302, location: '/login' });
 		expect(a.cookies.set.mock.calls.length + b.cookies.set.mock.calls.length).toBe(1);
 		expect(storedUsers()).toHaveLength(1);
+	});
+
+	// NET-358: the rules moved to passwordProblem; the wizard's sentences are unchanged
+	it.each([
+		['Short1', 'Password must be at least 8 characters.'],
+		['passw0rdok', 'Password must contain at least one uppercase letter.'],
+		['PASSW0RDOK', 'Password must contain at least one lowercase letter.'],
+		['PasswordOK', 'Password must contain at least one number.'],
+		[`Aa1${'x'.repeat(1022)}`, 'Password must be at most 1,024 characters.'],
+	])('refuses the password %#, saying the rule it breaks', async (password, error) => {
+		const { event, cookies } = adminEvent('alice');
+		const body = await event.request.formData();
+		body.set('password', password);
+		body.set('confirmPassword', password);
+		const request = new Request('http://localhost/setup?/createAdmin', { method: 'POST', body });
+
+		const result = await createAdmin({ ...event, request } as typeof event);
+
+		expect(result).toMatchObject({ status: 400, data: { error, username: 'alice' } });
+		expect(cookies.set).not.toHaveBeenCalled();
+		expect(existsSync(join(dataDir, 'users.json'))).toBe(false);
 	});
 
 	it('redirects to /login without a cookie once an admin exists', async () => {

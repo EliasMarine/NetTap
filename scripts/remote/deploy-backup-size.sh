@@ -42,13 +42,18 @@ check_eq() {  # check_eq LABEL ACTUAL EXPECTED
     if [ "$2" = "$3" ]; then check "$1" 0 "$2"; else check "$1" 1 "$2, expected $3"; fi
 }
 
-# A 60-second session, signed inside nettap-web with its own secret. It is never printed and
-# never on a command line: printf is a shell builtin and curl reads the header from stdin.
-MINT='const fs=require("fs"),jwt=require("jsonwebtoken");const d=process.env.DATA_DIR||"/var/lib/nettap-web";const s=process.env.JWT_SECRET||fs.readFileSync(d+"/jwt-secret.txt","utf8").trim();const u=JSON.parse(fs.readFileSync(d+"/users.json","utf8")).users[0].username;process.stdout.write(jwt.sign({username:u,role:"admin"},s,{expiresIn:60}))'
+# A 60-second session, signed inside nettap-web by scripts/remote/mint-session.cjs (NET-358). It is never
+# printed and never on a command line: printf is a shell builtin and curl reads the header from stdin.
+# OLD CODE START — NET-358: sessions now name their password and use the v2 key, so this inline signer's
+# tokens get 401 on the new image; mint-session.cjs is the one signer for every script
+# MINT='const fs=require("fs"),jwt=require("jsonwebtoken");const d=process.env.DATA_DIR||"/var/lib/nettap-web";const s=process.env.JWT_SECRET||fs.readFileSync(d+"/jwt-secret.txt","utf8").trim();const u=JSON.parse(fs.readFileSync(d+"/users.json","utf8")).users[0].username;process.stdout.write(jwt.sign({username:u,role:"admin"},s,{expiresIn:60}))'
+# OLD CODE END
 
 signed_in() {  # signed_in CURL_ARGS...: one curl through nginx with a fresh session; prints nosession if none
     local session
-    session=$(sudo docker exec -w /app nettap-web node -e "$MINT" 2>/dev/null)
+    # OLD CODE: session=$(sudo docker exec -w /app nettap-web node -e "$MINT" 2>/dev/null) (NET-358: mint-session.cjs)
+    # shellcheck disable=SC2024  # the user reads the file; only docker needs sudo
+    session=$(sudo docker exec -i -w /app nettap-web node - < scripts/remote/mint-session.cjs 2>/dev/null)
     if [ -z "$session" ]; then echo "nosession"; return; fi
     printf 'Cookie: nettap_token=%s\n' "$session" | curl -sk -H @- "$@"
 }

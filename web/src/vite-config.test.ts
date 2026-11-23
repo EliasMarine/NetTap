@@ -46,4 +46,9 @@ describe('vite.config', () => {
 		expect(content).toContain("from 'vitest/config'");
 		expect(content).toContain('defineConfig');
 	});
+
+	// NET-358: only `npm run dev` (scripts/dev.mjs) picks a private data folder; preview, Vitest and builds keep the default
+	it('does not set DATA_DIR', () => {
+		expect(content).not.toContain('DATA_DIR');
+	});
 });

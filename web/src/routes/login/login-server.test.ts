@@ -191,6 +191,8 @@ describe('Login form action — throttling (real +page.server.ts)', () => {
 	it('redirects home on the right password', async () => {
 		expect(await submit('admin', 'right')).toMatchObject({ status: 302, location: '/' });
 		expect(real.setAuthCookie).toHaveBeenCalledWith(expect.anything(), 'jwt');
+		// NET-358: the token is signed from the stored user, so it names the password it was issued against
+		expect(real.generateToken).toHaveBeenCalledWith({ username: 'admin', passwordHash: '$argon2id$real', role: 'admin' });
 	});
 
 	// NET-198: the sign-in page sends the user back to the page a lapsed session was on

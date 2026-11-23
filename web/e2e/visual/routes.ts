@@ -76,6 +76,8 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/settings?tab=suricata-rules', marker: 'Rules Suricata runs' },
 	// F6 (NET-339): the Network tab, with the monthly data cap card (no cap when empty, one set when populated)
 	{ path: '/settings?tab=network', marker: 'Monthly data cap' },
+	// NET-358: the change-password form (no API on open, so both modes look the same)
+	{ path: '/settings?tab=account', marker: 'Password' },
 	{ path: '/system', marker: 'System' },
 	{ path: '/system/cyberchef', marker: 'CyberChef' },
 	{ path: '/system/updates', marker: 'Software updates' },
