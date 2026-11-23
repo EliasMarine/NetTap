@@ -9,6 +9,7 @@ import {
 	inPolygon,
 	fitAxis,
 	fitByteAxis,
+	labelIndices,
 	labelStep,
 	nearestIndex,
 	tipBox,
@@ -217,6 +218,59 @@ describe('fitAxis', () => {
 			expect(top).toBeGreaterThan(0);
 			expect(values.every(Number.isFinite)).toBe(true);
 		}
+	});
+});
+
+// NET-354: day labels on hourly or 3-hour points printed the same day twice, at odd hours
+describe('labelIndices', () => {
+	const HOUR = 3_600_000;
+	const day = (ms: number) => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+	/** `count` points `stepH` hours apart from a local start, as day labels */
+	const days = (start: Date, stepH: number, count: number) => Array.from({ length: count }, (_, k) => day(start.getTime() + k * stepH * HOUR));
+	/** Kept labels are unique, in order, at least minGap apart, each on the first point of its day */
+	function sane(texts: string[], kept: number[], slot: number, minGap: number) {
+		expect(new Set(kept.map((i) => texts[i])).size).toBe(kept.length);
+		kept.slice(1).forEach((i, k) => {
+			expect(i).toBeGreaterThan(kept[k]);
+			expect((i - kept[k]) * slot).toBeGreaterThanOrEqual(minGap);
+		});
+		kept.filter((i) => i > 0).forEach((i) => expect(texts[i]).not.toBe(texts[i - 1]));
+	}
+
+	it('labels every Nth point when no two neighbours read the same, as before', () => {
+		const texts = Array.from({ length: 10 }, (_, i) => `${i}:00`);
+		expect(labelIndices(texts, 3, 50, 64, false)).toEqual([0, 3, 6, 9]);
+	});
+
+	it('labels each day once, from the first whole day, for 3-hour points that start at 22:00 (the owner\'s 12–20 Nov window)', () => {
+		const texts = days(new Date(2026, 10, 11, 22), 3, 65);
+		const slot = 880 / 64;
+		const kept = labelIndices(texts, 5, slot, 64, false);
+		expect(kept[0]).toBe(1); // 01:00 on 12 Nov, not the 22:00 stub of 11 Nov
+		expect(kept.map((i) => texts[i])).toEqual(['12 Nov', '13 Nov', '14 Nov', '15 Nov', '16 Nov', '17 Nov', '18 Nov', '19 Nov']);
+		sane(texts, kept, slot, 64);
+	});
+
+	it('keeps a first point that starts its day, even when the next day is closer than minGap (30 days of 3-hour points at 640 px)', () => {
+		const texts = days(new Date(2026, 9, 24), 3, 240);
+		const slot = 578 / 239;
+		const kept = labelIndices(texts, 27, slot, 64, true);
+		expect(kept[0]).toBe(0);
+		expect(kept.length).toBeGreaterThan(5);
+		sane(texts, kept, slot, 64);
+	});
+
+	it('skips a partial first day while a later day starts on the chart (7 days of hours from 05:00 at 640 px)', () => {
+		const texts = days(new Date(2026, 10, 16, 5), 1, 168);
+		const slot = 578 / 167;
+		const kept = labelIndices(texts, 19, slot, 64, false);
+		expect(kept[0]).toBe(19); // the first midnight
+		sane(texts, kept, slot, 64);
+	});
+
+	it('labels the first point when every point reads the same, and nothing for no points', () => {
+		expect(labelIndices(['12 Nov', '12 Nov', '12 Nov'], 1, 100, 64, false)).toEqual([0]);
+		expect(labelIndices([], 1, 100, 64, false)).toEqual([]);
 	});
 });
 

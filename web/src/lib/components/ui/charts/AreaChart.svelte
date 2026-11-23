@@ -21,7 +21,7 @@
 
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { monotonePath, finiteRuns, emptyRuns, fitAxis, fitByteAxis, labelStep, nearestIndex, tipBox, type Point } from './geometry';
+	import { monotonePath, finiteRuns, emptyRuns, fitAxis, fitByteAxis, labelIndices, labelStep, nearestIndex, tipBox, type Point } from './geometry';
 	import { observeWidth } from './resize';
 
 	let {
@@ -88,10 +88,21 @@
 	// every value a whole number (a count): the ticks are whole numbers too
 	const whole = $derived(series.every((s) => s.points.every((p) => !Number.isFinite(p.v) || Number.isInteger(p.v))));
 	const axis = $derived(bytes ? fitByteAxis(peak) : fitAxis(peak, 5, whole));
+	// OLD CODE: const labelGap = $derived(Math.max(64, Math.max(0, ...ts.map((t) => formatX(t).length)) * 6.2 + 16)); (NET-354: the texts are kept for labelIndices)
+	const texts = $derived(ts.map((t) => formatX(t)));
 	// "Nov 4, 04:00 PM" needs more room than "21:00": space labels by the longest, at tipBox's 6.2 px a character
-	const labelGap = $derived(Math.max(64, Math.max(0, ...ts.map((t) => formatX(t).length)) * 6.2 + 16));
+	const labelGap = $derived(Math.max(64, Math.max(0, ...texts.map((s) => s.length)) * 6.2 + 16));
 	const every = $derived(labelStep(n, iw, labelGap));
 	const slot = $derived(n > 1 ? iw / (n - 1) : iw);
+	/** NET-354: the point before the first, in the first point's own form (a number, or an ISO string), would read differently */
+	const firstIsChange = $derived.by(() => {
+		if (ts.length < 2) return false;
+		const [a, b] = [new Date(ts[0]).getTime(), new Date(ts[1]).getTime()];
+		if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+		const before = typeof ts[0] === 'number' ? a - (b - a) : new Date(a - (b - a)).toISOString();
+		return formatX(before) !== texts[0];
+	});
+	const shownLabels = $derived(labelIndices(texts, every, slot, labelGap, firstIsChange));
 	const highlight = $derived(
 		highlightIndex !== undefined && highlightIndex >= 0 && highlightIndex < n ? highlightIndex : null,
 	);
@@ -315,10 +326,15 @@
 				<line class="gl" class:dash={v > 0} x1={PAD.l} x2={w - PAD.r} y1={Y(v).toFixed(1)} y2={Y(v).toFixed(1)} />
 				<text class="ax" x={PAD.l - 10} y={(Y(v) + 4).toFixed(1)} text-anchor="end">{formatY(v)}</text>
 			{/each}
+			<!-- OLD CODE START — NET-354: every Nth point, so a day label on hourly points printed the same day twice
 			{#each ts as t, i (i)}
 				{#if i % every === 0}
 					<text class="ax" x={X(i).toFixed(1)} y={h - 6} text-anchor="middle">{formatX(t)}</text>
 				{/if}
+			{/each}
+			OLD CODE END -->
+			{#each shownLabels as i (i)}
+				<text class="ax" x={X(i).toFixed(1)} y={h - 6} text-anchor="middle">{texts[i]}</text>
 			{/each}
 			<!-- chart gaps: each stretch with no value is hatched from the last point before it to the first after it -->
 			{#each holes as [a, b] (a)}
