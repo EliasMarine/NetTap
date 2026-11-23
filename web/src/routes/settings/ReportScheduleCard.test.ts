@@ -30,6 +30,7 @@ const recipients = () => screen.getByLabelText('Email addresses, one per line') 
 // OLD CODE: const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save weekly report' })); (the 409 reload holds "Saving…" a moment longer)
 const save = async () => fireEvent.click(await screen.findByRole('button', { name: 'Save weekly report' }));
 const listed = (schedules: ReportSchedule[], tz = 'Europe/London'): Reply => ({ status: 200, body: { schedules, tz } });
+const toggle = () => screen.getByRole('switch', { name: 'Make a weekly report' });
 
 describe('Weekly report card (NET-340)', () => {
 	afterEach(() => vi.unstubAllGlobals());
@@ -41,7 +42,8 @@ describe('Weekly report card (NET-340)', () => {
 		expect(await screen.findByDisplayValue('Monday')).toBeInTheDocument();
 		expect((screen.getByLabelText('Time') as HTMLSelectElement).value).toBe('8');
 		expect(recipients().value).toBe('owner@example.com\nfamily@example.com');
-		expect(screen.getByRole('switch', { name: 'Email a weekly report' })).toBeChecked();
+		// OLD CODE: expect(screen.getByRole('switch', { name: 'Email a weekly report' })).toBeChecked(); (NET-357: with no addresses the report is only kept)
+		expect(screen.getByRole('switch', { name: 'Make a weekly report' })).toBeChecked();
 		expect(screen.queryByDisplayValue(/noc@example.com/)).not.toBeInTheDocument();
 	});
 
@@ -88,10 +90,23 @@ describe('Weekly report card (NET-340)', () => {
 		expect(await screen.findByText('Times are in Europe/London.')).toBeInTheDocument();
 		expect(recipients().value).toBe('');
 		await fireEvent.change(screen.getByLabelText('Day'), { target: { value: '4' } });
+		// NET-357: a new schedule starts off, so turning it on is part of the first save
+		await fireEvent.click(toggle());
 		await save();
 
 		await screen.findByText(/^Saved\./);
 		expect(putBodies(fn)).toEqual([{ enabled: true, weekday: 4, hour: 8, recipients: [], confirm: true }]);
+	});
+
+	it('with no card schedule the switch starts off, and saving it untouched keeps it off (NET-357)', async () => {
+		const fn = stub({ status: 200, body: SCHEDULES_EMPTY });
+		render(Card);
+
+		expect(await screen.findByRole('switch', { name: 'Make a weekly report' })).not.toBeChecked();
+		await save();
+
+		expect(await screen.findByText('Saved. The weekly report is off.')).toBeInTheDocument();
+		expect(putBodies(fn)[0]).toMatchObject({ enabled: false });
 	});
 
 	it("names NetTap's zone when the daemon sends none", async () => {
@@ -128,17 +143,18 @@ describe('Weekly report card (NET-340)', () => {
 		/** The schedule another window saved: a new token and rev, and 18:00. */
 		const CHANGED = { ...CARD_SCHEDULE, hour: 18, rev: 4, confirm_token: 'fresh-token' };
 
-		/** The list answers SCHEDULES, then the changed schedule; the first PUT is refused, later ones save. */
-		function stubStale() {
+		// OLD CODE: /** The list answers SCHEDULES, then the changed schedule; the first PUT is refused, later ones save. */ function stubStale() { (NET-357: per test)
+		/** The list answers `first`, then `changed`; the first PUT is refused, later ones save. */
+		function stubStale(first: unknown = SCHEDULES, changed: ReportSchedule = CHANGED) {
 			let lists = 0;
 			let puts = 0;
 			const fn = vi.fn(async (url: string, init?: RequestInit) => {
 				if (url === '/api/reports/card' && init?.method === 'PUT') {
 					const body = JSON.parse(String(init.body));
-					const reply = ++puts === 1 ? { status: 409, body: { error: STALE } } : { status: 200, body: { ...CHANGED, ...body, rev: 5, confirm_token: 'next-token' } };
+					const reply = ++puts === 1 ? { status: 409, body: { error: STALE } } : { status: 200, body: { ...changed, ...body, rev: 5, confirm_token: 'next-token' } };
 					return { ok: reply.status < 400, status: reply.status, json: async () => reply.body };
 				}
-				const body = ++lists === 1 ? SCHEDULES : { schedules: [CHANGED], tz: 'Europe/London' };
+				const body = ++lists === 1 ? first : { schedules: [changed], tz: 'Europe/London' };
 				return { ok: true, status: 200, json: async () => body };
 			});
 			vi.stubGlobal('fetch', fn);
@@ -176,6 +192,43 @@ describe('Weekly report card (NET-340)', () => {
 			await save();
 			await screen.findByText('Saved. The weekly report is on.');
 			expect(putBodies(fn)[1]).toMatchObject({ recipients: ['mine@example.com'], confirm_token: 'fresh-token', rev: 4 });
+		});
+
+		// NET-357: the retry sent this window's whole form, so the other window's switch and addresses were undone
+		it("an edit to the day alone keeps the other window's switch and addresses", async () => {
+			const fn = stubStale(SCHEDULES, { ...CHANGED, enabled: false, recipients: ['owner@example.com'] });
+			render(Card);
+			await screen.findByDisplayValue('Monday');
+
+			await fireEvent.change(screen.getByLabelText('Day'), { target: { value: '4' } });
+			await save();
+			expect(await screen.findByText(/NetTap loaded them and kept your edits: check them and save again\.$/)).toBeInTheDocument();
+			expect(toggle()).not.toBeChecked();
+			expect(recipients().value).toBe('owner@example.com');
+
+			await save();
+			await screen.findByText('Saved. The weekly report is off.');
+			expect(putBodies(fn)[1]).toMatchObject({ enabled: false, weekday: 4, hour: 18, recipients: ['owner@example.com'], confirm_token: 'fresh-token', rev: 4 });
+		});
+
+		it('when both windows changed the addresses, the saved list shows, yours is named, and a removed one is not sent back', async () => {
+			const withBob = { ...CARD_SCHEDULE, recipients: ['owner@example.com', 'bob@example.com'] };
+			const fn = stubStale({ schedules: [withBob], tz: 'Europe/London' }, { ...CHANGED, recipients: ['owner@example.com'] });
+			render(Card);
+			await screen.findByDisplayValue('Monday');
+
+			await fireEvent.input(recipients(), { target: { value: 'owner@example.com\nbob@example.com\nnew@example.com' } });
+			await save();
+			expect(
+				await screen.findByText(
+					'These settings changed in another window. NetTap loaded them and kept your other edits. The addresses changed there too, so the saved ones are shown; yours were: owner@example.com, bob@example.com, new@example.com. Check them and save again.',
+				),
+			).toBeInTheDocument();
+			expect(recipients().value).toBe('owner@example.com');
+
+			await save();
+			await screen.findByText('Saved. The weekly report is on.');
+			expect(putBodies(fn)[1]).toMatchObject({ recipients: ['owner@example.com'], confirm_token: 'fresh-token', rev: 4 });
 		});
 
 		it("a 409 where nothing changed (a send in progress) keeps the daemon's words", async () => {

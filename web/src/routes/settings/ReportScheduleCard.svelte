@@ -34,8 +34,10 @@
 		recipients: string;
 	}
 
-	/** A new schedule's starting point: on, Monday at 08:00, no addresses yet. */
-	const NEW_FORM: Form = { enabled: true, weekday: 0, hour: 8, recipients: '' };
+	// OLD CODE: /** A new schedule's starting point: on, Monday at 08:00, no addresses yet. */
+	// OLD CODE: const NEW_FORM: Form = { enabled: true, weekday: 0, hour: 8, recipients: '' }; (NET-357: the switch showed on while nothing was saved, and Reports said none was set up)
+	/** Before the first save there is no schedule, so the switch is off: Monday at 08:00, no addresses yet. */
+	const NEW_FORM: Form = { enabled: false, weekday: 0, hour: 8, recipients: '' };
 
 	let phase = $state<'loading' | 'ready' | 'failed'>('loading');
 	/** The daemon's sentence for a failed load; null when NetTap couldn't be reached. */
@@ -97,14 +99,41 @@
 		}
 		const fresh = list.schedules.find((s) => s.card) ?? null;
 		if (fresh?.confirm_token === sentToken) return;
-		const edited = !same(form, saved);
+		// OLD CODE START — NET-357: any edit kept the whole local form, so a retry after changing only the day
+		// sent this window's switch and addresses over the other window's
+		// const edited = !same(form, saved);
+		// schedule = fresh;
+		// zone = fresh?.tz ?? list.tz ?? zone;
+		// saved = fresh ? formOf(fresh) : { ...NEW_FORM };
+		// if (!edited) form = { ...saved };
+		// message = edited
+		// 	? 'These settings changed in another window. NetTap loaded them and kept your edits: check them and save again.'
+		// 	: 'These settings changed in another window. NetTap loaded them: check them and save again.';
+		// OLD CODE END
+		const started = saved;
+		const next = fresh ? formOf(fresh) : { ...NEW_FORM };
+		const mine = addresses(form.recipients);
+		const addressesEdited = mine.join('\n') !== addresses(started.recipients).join('\n');
+		// both windows changed the addresses: the saved list stays, so nothing removed there comes back unasked
+		// OLD CODE: const addressClash = addressesEdited && addresses(next.recipients).join('\n') !== addresses(started.recipients).join('\n'); (review: both windows typing the same list is no clash)
+		const theirs = addresses(next.recipients).join('\n');
+		const addressClash = addressesEdited && theirs !== addresses(started.recipients).join('\n') && theirs !== mine.join('\n');
+		const merged: Form = {
+			enabled: form.enabled !== started.enabled ? form.enabled : next.enabled,
+			weekday: form.weekday !== started.weekday ? form.weekday : next.weekday,
+			hour: form.hour !== started.hour ? form.hour : next.hour,
+			recipients: addressesEdited && !addressClash ? form.recipients : next.recipients,
+		};
+		const edited = !same(form, started);
 		schedule = fresh;
 		zone = fresh?.tz ?? list.tz ?? zone;
-		saved = fresh ? formOf(fresh) : { ...NEW_FORM };
-		if (!edited) form = { ...saved };
-		message = edited
-			? 'These settings changed in another window. NetTap loaded them and kept your edits: check them and save again.'
-			: 'These settings changed in another window. NetTap loaded them: check them and save again.';
+		saved = next;
+		form = merged;
+		message = !edited
+			? 'These settings changed in another window. NetTap loaded them: check them and save again.'
+			: addressClash
+				? `These settings changed in another window. NetTap loaded them and kept your other edits. The addresses changed there too, so the saved ones are shown; yours were: ${mine.join(', ') || 'none'}. Check them and save again.`
+				: 'These settings changed in another window. NetTap loaded them and kept your edits: check them and save again.';
 	}
 
 	async function save() {
@@ -138,7 +167,8 @@
 	onMount(load);
 </script>
 
-<Card title="Weekly report" sub="What your network did over the last week, emailed once a week · past reports are on the Reports page" class="c-12">
+<!-- OLD CODE: sub="What your network did over the last week, emailed once a week · past reports are on the Reports page" (NET-357: email is optional) -->
+<Card title="Weekly report" sub="What your network did over the last week, made once a week · kept on the Reports page, and emailed to the addresses below" class="c-12">
 	{#if phase === 'loading'}
 		<CardState state="loading" title="Loading the weekly report" />
 	{:else if phase === 'failed'}
@@ -152,7 +182,8 @@
 			<Feedback {message} {isError} />
 			<div class="switch-row">
 				<input type="checkbox" role="switch" class="switch" id="report-enabled" bind:checked={form.enabled} disabled={saving} />
-				<label class="label" for="report-enabled">Email a weekly report</label>
+				<!-- OLD CODE: <label class="label" for="report-enabled">Email a weekly report</label> (NET-357: with no addresses the report is only kept, not emailed) -->
+				<label class="label" for="report-enabled">Make a weekly report</label>
 			</div>
 			<div class="form-grid">
 				<div class="field">
@@ -180,7 +211,8 @@
 					placeholder="you@example.com"
 					aria-describedby="report-what"
 				></textarea>
-				<p class="field-help" id="report-what">{WHAT_IS_SENT}. With no addresses, reports are kept on the Reports page only.</p>
+				<!-- OLD CODE: {WHAT_IS_SENT}. With no addresses, reports are kept on the Reports page only. (NET-357: email also needs the email server) -->
+				<p class="field-help" id="report-what">{WHAT_IS_SENT}. With no addresses, reports are kept on the Reports page only. Email also needs the email server, set in Settings › API keys.</p>
 			</div>
 			<div class="form-actions">
 				{#if unsaved}<span class="unsaved">Unsaved changes</span>{/if}

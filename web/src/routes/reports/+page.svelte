@@ -259,11 +259,12 @@
 		{:else if !view}
 			<CardState state="error" title={loadFailed('the reports')} message={failReason ?? RUNNING_HINT} onaction={() => refresh.run()} />
 		{:else if !schedule}
+			<!-- OLD CODE: message="Turn it on in Settings › Notifications: NetTap emails what your network did each week, and keeps each report here." (NET-357: name the step, save, and what email needs) -->
 			<CardState
 				state="empty"
 				icon="logs"
 				title="No weekly report set up."
-				message="Turn it on in Settings › Notifications: NetTap emails what your network did each week, and keeps each report here."
+				message="Turn on Make a weekly report in Settings › Notifications and save. NetTap keeps each report here. To have it emailed too, add addresses there and set up the email server in Settings › API keys."
 				href={SETTINGS_HREF}
 				actionLabel="Open Settings › Notifications"
 			/>
@@ -289,11 +290,12 @@
 		{:else if !view}
 			<CardState state="error" title={loadFailed('the report history')} message={failReason ?? RUNNING_HINT} onaction={() => refresh.run()} />
 		{:else if rows.length === 0}
+			<!-- OLD CODE: … : 'Set up the weekly report in Settings › Notifications.' (NET-357: name the step) -->
 			<CardState
 				state="empty"
 				icon="logs"
 				title="No reports yet."
-				message={schedule ? 'Each report is listed here once it is made.' : 'Set up the weekly report in Settings › Notifications.'}
+				message={schedule ? 'Each report is listed here once it is made.' : 'Turn on Make a weekly report in Settings › Notifications and save.'}
 				href={schedule ? undefined : SETTINGS_HREF}
 				actionLabel={schedule ? undefined : 'Open Settings › Notifications'}
 			/>

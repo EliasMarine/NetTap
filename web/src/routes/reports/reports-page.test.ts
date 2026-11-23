@@ -223,6 +223,20 @@ describe('Reports page (NET-340)', () => {
 		expect(calls.some((c) => c.url.startsWith('/api/reports/history'))).toBe(false);
 	});
 
+	// NET-357: the copy names the switch and the save, and says email is optional
+	it('empty: the hero and History name the step that sets the report up', async () => {
+		stubFetch({ schedules: () => ok(SCHEDULES_EMPTY) });
+		render(Page);
+
+		expect(
+			await screen.findByText(
+				'Turn on Make a weekly report in Settings › Notifications and save. NetTap keeps each report here. To have it emailed too, add addresses there and set up the email server in Settings › API keys.',
+			),
+		).toBeInTheDocument();
+		expect(screen.getByText('No reports yet.')).toBeInTheDocument();
+		expect(screen.getByText('Turn on Make a weekly report in Settings › Notifications and save.')).toBeInTheDocument();
+	});
+
 	it('a schedule with no reports yet says when the first one comes', async () => {
 		stubFetch({ history: ok({ reports: [] }) });
 		render(Page);
