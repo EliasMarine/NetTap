@@ -182,7 +182,8 @@ export function verifyToken(token: string): TokenPayload | null {
 	}
 	if (typeof claims.username !== 'string' || typeof claims.pwd !== 'string') return null;
 	const user = storedUser(claims.username);
-	if (!user || !sameText(claims.pwd, passwordStamp(user.passwordHash))) return null;
+	// OLD CODE: if (!user || !sameText(claims.pwd, passwordStamp(user.passwordHash))) return null; (NET-358 CodeQL js/insufficient-password-hash: sameText SHA-256s its inputs; a fixed-length stamp needs no hash to compare in constant time)
+	if (!user || !stampMatches(claims.pwd, passwordStamp(user.passwordHash))) return null;
 	return { username: user.username, role: user.role };
 }
 
@@ -432,6 +433,13 @@ export function ensureSetupCode(): string | null {
 	writeFileSync(tmpFile, `${code}\n`, { mode: 0o600 });
 	renameSync(tmpFile, SETUP_CODE_FILE);
 	return code;
+}
+
+/** A token's stamp against the stored one, in constant time: stamps are a fixed length, so unequal byte lengths simply fail. */
+function stampMatches(claimed: string, stored: string): boolean {
+	const a = Buffer.from(claimed);
+	const b = Buffer.from(stored);
+	return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /** Constant-time string comparison (hashed first, so different lengths compare too). */

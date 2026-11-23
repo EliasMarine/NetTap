@@ -111,6 +111,13 @@ describe('verifyToken', () => {
 		expect(auth.verifyToken(auth.generateToken(user('admin', 'hash-0')))).toBeNull();
 	});
 
+	it('refuses a stamp of the right length in characters but not in bytes, without throwing', () => {
+		const stamp = auth.passwordStamp('hash-1');
+		const wide = 'é' + stamp.slice(1); // 22 characters, 23 bytes
+		expect(auth.verifyToken(jwt.sign({ username: 'admin', role: 'admin', pwd: wide }, key))).toBeNull();
+		expect(auth.verifyToken(jwt.sign({ username: 'admin', role: 'admin', pwd: stamp.slice(1) }, key))).toBeNull();
+	});
+
 	it('refuses a token for an unknown user', () => {
 		expect(auth.verifyToken(auth.generateToken(user('ghost', 'hash-1')))).toBeNull();
 	});
