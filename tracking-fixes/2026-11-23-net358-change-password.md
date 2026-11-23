@@ -55,6 +55,10 @@ The owner couldn't change their password in the dashboard; it took editing `user
 - `trackPasswordChange` takes the fetch's promise only. `npm run dev` starts plain `vite`; its test puts a stand-in first on `PATH`.
 - `deploy-change-password.sh`: when the new container doesn't start, it points to the log instead of a restart loop, and says when rolling back is safe.
 
+- **CodeQL on the PR** flagged `js/insufficient-password-hash`: the stamp went through `sameText`, which SHA-256s both sides.
+  - It was a false positive in substance, since the stamp is a fingerprint of the argon2 hash, not a password.
+  - Fixed anyway: `stampMatches` compares the fixed-length bytes with `timingSafeEqual`, with no hash involved.
+
 ## Deploy
 - `bash scripts/remote/deploy-change-password.sh` on the G11. Everyone signs in again once.
 - Rollback: `bash scripts/remote/rollback-change-password.sh`. Don't roll back past March 2026 (`aa234d73`).
