@@ -1,6 +1,6 @@
 # NET-354: chart "No data" stretches and repeated day labels
 
-**Date:** 2026-11-23 · **Branch:** `fix/chart-no-data-gaps` · **Status:** in review
+**Date:** 2026-11-23 · **Branch:** `fix/chart-no-data-gaps` · **Status:** merged (PR #354 → `5f4f1be0`) and deployed on the G11 (web image `ef68ec00`, every check passed)
 
 ## What the owner saw
 An 8-day bandwidth window (12–20 Nov, 3-hour buckets) on `/moment` was hatched "No data" from 12 Nov to 18 Nov. The x-axis read "11 Nov, 12 Nov, 13 Nov, 13 Nov, 14 Nov, 15 Nov, 15 Nov …". Home's 7d and 30d charts repeated day labels the same way.
@@ -44,5 +44,5 @@ An 8-day bandwidth window (12–20 Nov, 3-hour buckets) on `/moment` was hatched
 - When a bucket size changes (NET-249), check every formatter that assumed the old size.
 
 ## Next
-- Restore 1–18 Nov from Zeek's archive. This is a separate task: it affects the usage ledger, data-cap warnings, the weekly report's coverage and live ingestion lag (Codex round 5 findings).
+- Restore 1–18 Nov from Zeek's archive (NET-356, waiting on the owner). This is a separate task: it affects the usage ledger, data-cap warnings, the weekly report's coverage and live ingestion lag (Codex round 5 findings).
 - Follow-ups: a retention-aware "No data" band; the Retention input's `min=7` isn't enforced on save; stray `arkime_sessions3-601120` / `700101` indices from bad timestamps.
