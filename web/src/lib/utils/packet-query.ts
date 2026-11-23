@@ -68,6 +68,9 @@ export interface ConnectionRef {
 	/** Seconds */
 	duration: number | null;
 }
+/** The five fields connectionFilter reads (NET-355). */
+export type ConnectionTuple = Pick<ConnectionRef, 'proto' | 'srcIp' | 'srcPort' | 'dstIp' | 'dstPort'>;
+
 export interface Segment {
 	index: number;
 	count: number;
@@ -298,7 +301,8 @@ function isPort(p: number | null): p is number {
  * family); otherwise all traffic between the two addresses, exact=false. Throws on an address
  * that isn't an IP, or on two address families.
  */
-export function connectionFilter(c: ConnectionRef): { filter: string; exact: boolean; label: string } {
+// OLD CODE: export function connectionFilter(c: ConnectionRef): { filter: string; exact: boolean; label: string } { (NET-355: the alert drawer has a tuple, no start or duration)
+export function connectionFilter(c: ConnectionTuple): { filter: string; exact: boolean; label: string } {
 	const a = addressFilter(c.srcIp);
 	const b = addressFilter(c.dstIp);
 	if (a.startsWith('ipv6.') !== b.startsWith('ipv6.')) throw new Error('A connection has both its addresses in one family, IPv4 or IPv6.');
