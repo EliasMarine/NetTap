@@ -18,7 +18,8 @@
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	// OLD CODE: import { chartTime, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-249: a pick narrows the page)
 	import { bucketFor, chartTime, customRange, DRILL_RANGES, linkedCount, pickedTotal, pickWindow, rangeWindow, startRange, type TimeChart } from '$lib/utils/drilldown';
-	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	// OLD CODE: import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page'; (NET-357: the pill writes ?range=)
+	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withRange } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { goto } from '$app/navigation';
 	// OLD CODE START — the category colour tinted the chart and bars; system charts use data-1/2
@@ -119,12 +120,15 @@
 
 	let category = $derived((page.params as Record<string, string>).category ?? 'other');
 	// OLD CODE START: let meta = $derived(CATEGORY_META[category] ?? CATEGORY_META['other']); OLD CODE END
+	const params = $derived(page.url.searchParams);
 	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
-	let selectedRange = $state<string>(startRange('24h'));
+	// OLD CODE: let selectedRange = $state<string>(startRange('24h')); (NET-357: kept only in state, so Back and a link's range were lost)
+	/** The URL's range (a link or a pill writes it), else Settings › Display's default */
+	const selectedRange = $derived<string>(DRILL_RANGES.find((r) => r.value === params.get('range'))?.value ?? startRange('24h'));
 	// OLD CODE: let rangeText = $derived(TIME_RANGES.find((r) => r.value === selectedRange)?.text ?? selectedRange); (NET-196)
 	/** The window after "last" or "previous": "hour", "6 hours", "7 days". */
 	let rangeText = $derived(rangeOf(selectedRange).words.replace(/^last /, ''));
-	const params = $derived(page.url.searchParams);
+	// OLD CODE: const params = $derived(page.url.searchParams); (NET-357: declared above, before the range reads it)
 	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every card follows it, and nothing is compared */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The bytes the pick carried, compared with the narrowed chart's own total */
@@ -510,6 +514,8 @@
 		// OLD CODE: const view = `${cat}|${range}`; (NET-249)
 		const view = `${cat}|${viewKey}`;
 		if (view !== loadedView) {
+			// NET-357: everything left on screen is now this view's or empty, so Back to the last view clears too
+			loadedView = view;
 			data = null;
 			// OLD CODE: prevData = null; (NET-228)
 			trendSeries = null;
@@ -544,7 +550,7 @@
 		if (detailRes.status === 'fulfilled') {
 			data = detailRes.value;
 			topServices = detailRes.value.services ?? [];
-			loadedView = view;
+			// OLD CODE: loadedView = view; (NET-357: set when the view's figures were cleared, so this repeated it)
 		} else {
 			console.error('[traffic/category] detail failed:', detailRes.reason);
 		}
@@ -595,10 +601,17 @@
 	});
 
 	/** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	// OLD CODE START — NET-357: the range lived in state; the URL changed only when a Custom window went
+	// function pickRange(value: string) {
+	// 	if (value === 'custom') return;
+	// 	selectedRange = value;
+	// 	if (custom) void goto(withoutWindow(page.url), { reset: false });
+	// }
+	// OLD CODE END
+	/** A range pill writes ?range=; leaving a pick's window pushes (Back returns to it), otherwise it replaces */
 	function pickRange(value: string) {
 		if (value === 'custom') return;
-		selectedRange = value;
-		if (custom) void goto(withoutWindow(page.url), { reset: false });
+		void goto(withRange(page.url, value), { replace: !custom, reset: false });
 	}
 
 	/** A pick on the chart (NET-249): this page over the picked slots, with the bytes they drew */

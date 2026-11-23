@@ -19,6 +19,11 @@ const PAGES = [
 	{ path: '/alerts', pills: 'Time range', endpoint: '/api/alerts/timeline', also: [] },
 	// the range is derived from the URL, with the saved one as its fallback, and drawn by the server
 	{ path: '/devices', pills: 'Seen in the last', endpoint: '/api/devices', also: [] },
+	// NET-357: the narrow pages derive the range from the URL, with the saved one as its fallback
+	{ path: '/traffic/streaming', pills: 'Time range', endpoint: '/api/traffic/categories/streaming', also: [] },
+	{ path: '/dns', pills: 'Time range', endpoint: '/api/dns/stats', also: [] },
+	{ path: '/domain/stream.example.net', pills: 'Time range', endpoint: '/api/domains/stream.example.net', also: [] },
+	{ path: '/devices/192.168.1.20', pills: 'Time range', endpoint: '/api/devices/192.168.1.20', also: [] },
 ] as const;
 
 test.describe('the saved default range on a hard load (NET-195)', () => {

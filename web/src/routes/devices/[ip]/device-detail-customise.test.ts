@@ -13,18 +13,26 @@ import Page from './+page.svelte';
 const { IP, IP2, page } = vi.hoisted(() => ({
 	IP: '192.168.1.10',
 	IP2: '192.168.1.11',
-	page: { set: (_ip: string) => {} },
+	// OLD CODE: page: { set: (_ip: string) => {} }, (NET-357: and a query, which a range pill's goto writes)
+	page: { set: (_ip: string, _query?: string) => {} },
 }));
 
 // kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
 vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(async () => {
 	const { writable } = await import('svelte/store');
-	const at = (ip: string) => ({ url: new URL(`http://localhost/devices/${ip}`), params: { ip } });
+	// OLD CODE: const at = (ip: string) => ({ url: new URL(`http://localhost/devices/${ip}`), params: { ip } }); (NET-357)
+	const at = (ip: string, query = '') => ({ url: new URL(`http://localhost/devices/${ip}${query}`), params: { ip } });
 	const store = writable(at(IP));
-	page.set = (ip: string) => store.set(at(ip));
+	page.set = (ip: string, query?: string) => store.set(at(ip, query));
 	return { page: store };
 }));
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// OLD CODE: vi.mock('$app/navigation', () => ({ goto: vi.fn() })); (NET-357: a range pill only writes ?range=, so goto must move the URL)
+vi.mock('$app/navigation', () => ({
+	goto: vi.fn(async (href: string) => {
+		const url = new URL(href, 'http://localhost');
+		page.set(decodeURIComponent(url.pathname.split('/').at(-1)!), url.search);
+	}),
+}));
 vi.mock('$api/devices', () => ({
 	getDeviceDetail: vi.fn(),
 	getDeviceCategories: vi.fn(),

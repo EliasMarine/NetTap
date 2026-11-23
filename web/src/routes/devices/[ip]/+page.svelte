@@ -41,7 +41,8 @@
 		bucketFor, chartTime as timeLabel, customRange, DRILL_RANGES, linkedCount, logsHrefForQuery, NO_EXACT_ALERT_LIST, pickedTotal, pickWindow, rangeWindow, ruleHref, smartAlertHref,
 		startRange, withCount, type DrillRangeValue, type DrillWindow, type TimeChart,
 	} from '$lib/utils/drilldown';
-	import { bucketWords, DEVICE_IPV6_NOTE, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	// OLD CODE: import { bucketWords, DEVICE_IPV6_NOTE, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page'; (NET-357: the pill writes ?range=)
+	import { bucketWords, DEVICE_IPV6_NOTE, NARROW_HINT, narrowTo, pickedLine, withRange } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { formatTime } from '$lib/utils/time';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
@@ -281,8 +282,10 @@
 	const RANGE_OPTIONS = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));
 	const rangeOf = (key: RangeKey) => DRILL_RANGES.find((r) => r.value === key)!;
 	// OLD CODE: let range = $state<RangeKey>('24h'); (NET-195: Settings › Display's default, read where the range starts)
-	let range = $state<RangeKey>(startRange('24h'));
+	// OLD CODE: let range = $state<RangeKey>(startRange('24h')); (NET-357: kept only in state, so Back and a link's range were lost)
 	const params = $derived(page.url.searchParams);
+	/** The URL's range (a link or a pill writes it), else Settings › Display's default */
+	const range = $derived<RangeKey>(DRILL_RANGES.find((r) => r.value === params.get('range'))?.value ?? startRange('24h'));
 	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every card follows it */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The bytes the pick carried, compared with the narrowed chart's own total */
@@ -298,11 +301,18 @@
 	const capital = (words: string) => words.charAt(0).toUpperCase() + words.slice(1);
 	/** The window as a KPI note says it ("Last 7 days"); card subtitles use the list's lower-case words. A Custom window's words stand under every key. */
 	const RANGE_LABEL = $derived(Object.fromEntries(DRILL_RANGES.map((r) => [r.value, capital(custom ? custom.words : r.words)])) as Record<RangeKey, string>);
-	/** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	// OLD CODE START — NET-357: the range lived in state; the URL changed only when a Custom window went
+	// /** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	// function pickRange(value: string) {
+	// 	if (value === 'custom') return;
+	// 	range = value as RangeKey;
+	// 	if (custom) void goto(withoutWindow(page.url), { reset: false });
+	// }
+	// OLD CODE END
+	/** A range pill writes ?range=; leaving a pick's window pushes (Back returns to it), otherwise it replaces (NET-357) */
 	function pickRange(value: string) {
 		if (value === 'custom') return;
-		range = value as RangeKey;
-		if (custom) void goto(withoutWindow(page.url), { reset: false });
+		void goto(withRange(page.url, value), { replace: !custom, reset: false });
 	}
 	// The window of the last fetch; connection pages reuse it so paging doesn't slide in time
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
@@ -460,6 +470,8 @@
 		span = s;
 		// A refresh of the same view keeps its last good figures; another view must not show them
 		if (view !== loadedView) {
+			// NET-357: everything left on screen is now this view's or empty, so Back to the last view clears too
+			loadedView = view;
 			device = null;
 			bandwidthChart = null;
 			bandwidthInterval = undefined;
@@ -497,7 +509,7 @@
 			const { from, to, bandwidth_interval: interval } = deviceRes.value;
 			bandwidthChart = from && to ? toTimeChart({ from, to, interval }, d.bandwidth_series.map((p) => p.timestamp), d.bandwidth_series.map((p) => p.bytes)) : null;
 			bandwidthInterval = interval;
-			loadedView = view;
+			// OLD CODE: loadedView = view; (NET-357: set when the view's figures were cleared, so this repeated it)
 			// NET-349: the reply's own window, else the one this load asked for (never the live span)
 			// OLD CODE: quiet = !d.mac && d.connection_count === 0 ? { ip, ...(from && to ? { from, to } : s), match: 'pending' } : null; (NET-349 review: every refresh dropped the registry link until a new lookup came back)
 			const known = quiet?.ip === ip && quiet.match !== 'pending' && quiet.match !== 'unknown' ? quiet.match : 'pending';
@@ -1241,7 +1253,10 @@ OLD CODE END -->
 		<!-- OLD CODE: sub="Sessions to or from this device · …" (NET-226: the device's IPv6 is in its KPIs, not in this list) -->
 		<Card class="c-12" title="Recent connections" sub="Sessions to or from this address · {RANGE_LABEL[range].toLowerCase()}">
 			{#snippet actions()}
-				<span class="chip">{connectionsFailed ? 'load failed' : `${formatNumber(connectionsTotal)} total`}</span>
+				<!-- OLD CODE: <span class="chip">…</span> unconditionally (NET-357: the last window's total stood beside the new window's label while its list loaded) -->
+				{#if !connectionsLoading}
+					<span class="chip">{connectionsFailed ? 'load failed' : `${formatNumber(connectionsTotal)} total`}</span>
+				{/if}
 			{/snippet}
 			<div class="toolbar">
 				<Pills ariaLabel="Protocol" options={PROTO_OPTIONS} bind:value={protoFilter} onchange={() => fetchConnections(1)} />

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
-import { readable } from 'svelte/store';
 import { getSmartAlerts, suppressAlert } from '$api/alerts';
 import { getDeviceDetail } from '$api/devices';
 import { ENCRYPTED_DNS_NOTE } from '$lib/api/dns';
@@ -9,19 +8,25 @@ import { getSystemHealth } from '$api/system';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
+import { resetNavigation } from '../../../tests/app-navigation.svelte';
 
 const { IP } = vi.hoisted(() => ({ IP: '192.168.1.10' }));
 
-// kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
-vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
-	page: readable({ url: new URL(`http://localhost/devices/${IP}`), params: { ip: IP } }),
-})));
+// OLD CODE START — NET-357: a range pill only writes ?range=, so goto must move the URL the page reads its range from
+// // kit 3: $app/stores → $app/state; the store mock below now backs a $app/state page (NET-315)
+// vi.mock('$app/state', async () => (await import('../../../tests/app-navigation.svelte')).stateFromStores(() => ({
+// 	page: readable({ url: new URL(`http://localhost/devices/${IP}`), params: { ip: IP } }),
+// })));
+// OLD CODE END
+vi.mock('$app/state', () => import('../../../tests/app-navigation.svelte'));
+beforeEach(() => resetNavigation(`http://localhost/devices/${IP}`, { ip: IP }));
 // NET-225: the page asks the shared store at load; these tests set the mode on it directly
 vi.mock('$lib/stores/captureMode', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/stores/captureMode')>()),
 	initCaptureMode: vi.fn(async () => {}),
 }));
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// OLD CODE: vi.mock('$app/navigation', () => ({ goto: vi.fn() })); (NET-357)
+vi.mock('$app/navigation', () => import('../../../tests/app-navigation.svelte'));
 vi.mock('$api/devices', () => ({
 	getDeviceDetail: vi.fn(async () => ({
 		device: {

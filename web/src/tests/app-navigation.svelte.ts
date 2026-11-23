@@ -22,11 +22,14 @@ const callbacks = new Set<Callback>();
 const afterCallbacks = new Set<() => void>();
 const history = { entries: [] as URL[], index: 0 };
 
-export const page = $state({ url: new URL('http://localhost/settings') });
+// OLD CODE: export const page = $state({ url: new URL('http://localhost/settings') }); (NET-357: route pages read their params too)
+export const page = $state({ url: new URL('http://localhost/settings'), params: {} as Record<string, string> });
 
-/** Start a test at `href` with a one-entry history. */
-export function resetNavigation(href = 'http://localhost/settings'): void {
+// OLD CODE: /** Start a test at `href` with a one-entry history. */ export function resetNavigation(href = 'http://localhost/settings'): void { (NET-357)
+/** Start a test at `href` with a one-entry history, and the route's `params` for a page that reads them. */
+export function resetNavigation(href = 'http://localhost/settings', params: Record<string, string> = {}): void {
 	page.url = new URL(href);
+	page.params = params;
 	history.entries = [page.url];
 	history.index = 0;
 }
@@ -63,7 +66,12 @@ function push(type: NavigationType, href: string | URL): void {
 	history.index += 1;
 }
 
-export const goto = vi.fn(async (href: string | URL) => push('goto', href));
+// OLD CODE: export const goto = vi.fn(async (href: string | URL) => push('goto', href)); (NET-357: `replace` swaps the current entry, as SvelteKit does)
+export const goto = vi.fn(async (href: string | URL, opts?: { replace?: boolean }) => {
+	if (!opts?.replace) return push('goto', href);
+	const url = new URL(String(href), page.url);
+	if (attempt('goto', url)) history.entries = history.entries.map((u, i) => (i === history.index ? url : u));
+});
 
 /** A click on an in-app link, as SvelteKit's router handles it. */
 export function followLink(link: HTMLAnchorElement): void {

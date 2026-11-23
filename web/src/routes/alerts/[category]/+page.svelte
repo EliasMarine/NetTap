@@ -513,8 +513,9 @@
 	});
 
 	/** A range pill: a rolling window ending now, so the link's exact window (Custom) goes (NET-185). */
+	// OLD CODE: if (value !== 'custom') void goto(`${page.url.pathname}?range=${value}`, { replace: true, reset: false }); (NET-357: leaving a pick pushes, so Back returns to it, as on the other narrow pages)
 	function pickRange(value: string) {
-		if (value !== 'custom') void goto(`${page.url.pathname}?range=${value}`, { replace: true, reset: false });
+		if (value !== 'custom') void goto(`${page.url.pathname}?range=${value}`, { replace: !custom, reset: false });
 	}
 
 	/**

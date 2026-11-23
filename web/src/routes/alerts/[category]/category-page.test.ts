@@ -317,6 +317,9 @@ describe('Alert category page — the window in its URL', () => {
 		expect(screen.getByRole('button', { name: windowWords(from, to) })).toHaveAttribute('aria-pressed', 'true');
 		const bar = new URL((await screen.findByRole('link', { name: /ET SCAN Nmap/ })).getAttribute('href')!, 'http://localhost');
 		expect([bar.searchParams.get('from'), bar.searchParams.get('to'), bar.searchParams.get('range')]).toEqual([from, to, '7d']);
+		// NET-357: leaving the window is a history step, so Back returns to it
+		screen.getByRole('button', { name: '6h' }).click();
+		expect(goto).toHaveBeenCalledWith('/alerts/scan?range=6h', { replace: false, reset: false });
 	});
 
 	it('loads ?range=7d over the last 7 days, and a pill writes its range to the URL', async () => {

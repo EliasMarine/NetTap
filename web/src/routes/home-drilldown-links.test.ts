@@ -5,8 +5,11 @@ import { refreshPage } from '$lib/stores/pageRefresh';
 import { goto } from '$app/navigation';
 import { _configure } from '$lib/stores/alertSnapshot';
 import type { SmartAlert, SmartAlertKey } from '$api/alerts';
+import { resetNavigation } from '../tests/app-navigation.svelte';
 
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// OLD CODE: vi.mock('$app/navigation', () => ({ goto: vi.fn() })); (NET-357: a range pill only writes ?range=, so goto must move the URL)
+vi.mock('$app/state', () => import('../tests/app-navigation.svelte'));
+vi.mock('$app/navigation', () => import('../tests/app-navigation.svelte'));
 
 // NET-160 slice 2b-1: Home's figures open the list that holds them, over the window of the
 // response on screen: a smart alert's ×N, and the Alerts, Connections and Bandwidth cards.
@@ -124,6 +127,7 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 		_configure({ now: () => Date.now() });
 		overrides = {};
+		resetNavigation('http://localhost/');
 		stubDaemon();
 	});
 
@@ -311,6 +315,7 @@ describe('Home — the bandwidth chart drills into a moment (NET-249)', () => {
 		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 		_configure({ now: () => Date.now() });
 		overrides = {};
+		resetNavigation('http://localhost/');
 		vi.mocked(goto).mockClear();
 		stubDaemon();
 	});

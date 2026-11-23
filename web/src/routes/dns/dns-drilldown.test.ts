@@ -86,6 +86,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe('DNS page — the timeline drills into a window (NET-249)', () => {
 	it("asks for each range's bucket from the owner's table", async () => {
 		timeline = (u) => slots([4, 6, 1], u.searchParams.get('interval')!)(u); // the daemon echoes the bucket asked for
+		// NET-357: a pill only writes ?range=, so goto moves the page's URL
+		vi.mocked(goto).mockImplementation(async (href) => nav.set(String(href).replace(/^\/dns/, '')));
 		render(DnsPage);
 		await settle();
 		expect(lastTimeline().searchParams.get('interval')).toBe('5m'); // 24h
@@ -161,7 +163,8 @@ describe('DNS page — a Custom window from the URL (NET-249 §1a)', () => {
 		render(DnsPage);
 		await settle();
 		await fireEvent.click(screen.getByRole('button', { name: '6h' }));
-		expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/dns?domain=a.example');
+		// OLD CODE: expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/dns?domain=a.example'); (NET-357: the pill writes its range too)
+		expect(String(vi.mocked(goto).mock.calls[0][0])).toBe('/dns?range=6h&domain=a.example'); // the link's own range is replaced where it stood
 		await vi.waitFor(() => expect(lastTimeline().searchParams.get('interval')).toBe('5m'));
 		const u = lastTimeline();
 		expect((Date.parse(u.searchParams.get('to')!) - Date.parse(u.searchParams.get('from')!)) / 3_600_000).toBeCloseTo(6);

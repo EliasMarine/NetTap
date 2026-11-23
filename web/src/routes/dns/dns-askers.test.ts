@@ -17,7 +17,8 @@ vi.mock('$app/state', async () => (await import('../../tests/app-navigation.svel
 	nav.set = (query) => page.set({ url: new URL(`http://localhost/dns${query}`) });
 	return { page };
 }));
-vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}) }));
+// OLD CODE: vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}) })); (NET-357: a range pill only writes ?range=, so goto must move the URL)
+vi.mock('$app/navigation', () => ({ goto: vi.fn(async (href: string) => nav.set(new URL(href, 'http://localhost').search)) }));
 
 const F = '2026-11-13T10:00:00.000Z';
 const T = '2026-11-13T10:04:59.999Z';
