@@ -177,6 +177,17 @@ describe('Settings — retention save', () => {
 		expect(screen.getByText(/Alerts follow the Hot tier/)).toBeInTheDocument();
 	});
 
+	// NET-354: the G11 ran 5-day retention and the charts' older part read "No data" with no word why
+	it('says a short Hot tier leaves gaps in the charts built from these logs', async () => {
+		stubFetch({});
+		render(Page);
+		await flush();
+		await openTab('Storage & retention');
+
+		expect(screen.getByText(/can show gaps where older logs have been deleted/)).toBeInTheDocument();
+		expect(screen.getByText(/daily totals are kept separately/)).toBeInTheDocument();
+	});
+
 	it('will not save the built-in defaults when the daemon did not answer', async () => {
 		// OLD CODE: stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
 		// L11: a dead daemon is a 503 from the route now (A16), not mock figures

@@ -210,6 +210,23 @@ export function labelStep(count: number, plotWidth: number, minGap = 64): number
 	return Math.max(1, Math.ceil(count / fit));
 }
 
+/**
+ * The points that get an x label (NET-354). Distinct labels: every `every`th point, as before.
+ * Labels that repeat (a day label on hourly points): only where the text changes, the first point
+ * of each day, kept at least `minGap` px apart from left to right. Point 0 counts as a change only
+ * when `firstIsChange` (the point before it would read differently), so a partial first day is not
+ * labelled while a later day starts on the chart.
+ * shortcut: a day label sits on its day's first bucket, up to one bucket (≤ 3 h) after local
+ * midnight; interpolate calendar ticks if chart buckets ever grow past 3 h.
+ */
+export function labelIndices(texts: readonly string[], every: number, slot: number, minGap: number, firstIsChange: boolean): number[] {
+	const repeats = texts.some((t, i) => i > 0 && t === texts[i - 1]);
+	if (!repeats) return texts.flatMap((_, i) => (i % every === 0 ? [i] : []));
+	const changes = texts.flatMap((t, i) => ((i === 0 ? firstIsChange : t !== texts[i - 1]) ? [i] : []));
+	if (changes.length === 0) return texts.length ? [0] : [];
+	return changes.reduce<number[]>((kept, i) => (kept.length && (i - kept[kept.length - 1]) * slot < minGap ? kept : [...kept, i]), []);
+}
+
 /** Index of the evenly spaced point nearest to `x`, clamped to the data. */
 export function nearestIndex(x: number, left: number, plotWidth: number, count: number): number {
 	if (count <= 1 || !(plotWidth > 0) || !Number.isFinite(x)) return 0;

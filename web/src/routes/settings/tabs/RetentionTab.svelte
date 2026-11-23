@@ -396,7 +396,8 @@
 						<input class="input" id="hot-days" type="number" bind:value={retentionConfig.hot_days} min={7} max={365} />
 						<span class="dim">days</span>
 					</div>
-					<p class="field-help">Zeek logs and Suricata alerts share one daily index, so both are deleted after this many days.</p>
+					<!-- OLD CODE: <p class="field-help">Zeek logs and Suricata alerts share one daily index, so both are deleted after this many days.</p> (NET-354: a 5-day setting emptied the charts and nothing here said so) -->
+					<p class="field-help">Zeek logs and Suricata alerts share one daily index, so both are deleted after this many days. Charts built from these logs, such as Home's bandwidth, can show gaps where older logs have been deleted. Bandwidth's daily totals are kept separately.</p>
 				</div>
 				<div class="field">
 					<!-- OLD CODE START — 2026-11-02: no Malcolm index is warm; alerts follow the Hot tier

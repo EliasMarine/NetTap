@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import AreaChart, { type AreaSeries } from './AreaChart.svelte';
+import { chartTime } from '$lib/utils/drilldown';
 
 const DOWN = [0.5, 0.35, 0.25, 0.25, 0.25, 0.35, 0.75, 1.35, 1.6, 1.45, 1.25, 1.35, 1.5, 1.45, 1.35, 1.6, 2, 2.6, 3.2, 3.7, 4.3, 4.7, 3.55, 1.7];
 const UP = DOWN.map((v) => v / 10);
@@ -546,6 +547,43 @@ describe('AreaChart', () => {
 			expect(container.querySelectorAll('path.flag')).toHaveLength(1);
 			expect(container.querySelectorAll('rect.nodata')).toHaveLength(1);
 			noNaN(container);
+		});
+	});
+	// NET-354: a day-only formatter on 1 h / 3 h points printed "13 Nov" twice, and a 22:00 stub as "11 Nov"
+	describe('day labels', () => {
+		const HOUR = 3_600_000;
+		/** ISO points `stepH` hours apart from a local start, as the daemon sends them */
+		const isoSeries = (start: Date, stepH: number, count: number): AreaSeries => ({
+			key: 'down',
+			label: 'down',
+			colour: 1,
+			points: Array.from({ length: count }, (_, k) => ({ t: new Date(start.getTime() + k * stepH * HOUR).toISOString(), v: 1 + (k % 5) })),
+		});
+		const dayOnly = (t: number | string) => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+		const xLabels = (container: HTMLElement) =>
+			[...container.querySelectorAll('text.ax[text-anchor="middle"]')].map((t) => ({ text: t.textContent, x: Number(t.getAttribute('x')) }));
+		// the fallback width: 640 px less PAD.l 50 and PAD.r 12
+		const xAt = (i: number, count: number) => Number((50 + (578 / (count - 1)) * i).toFixed(1));
+
+		it('labels a chart that starts at local midnight with its first day, at the first point', () => {
+			const series = isoSeries(new Date(2026, 10, 12), 3, 64);
+			const labels = xLabels(draw([series], { formatX: dayOnly }).container);
+			expect(labels[0]).toEqual({ text: '12 Nov', x: xAt(0, 64) });
+			expect(new Set(labels.map((l) => l.text)).size).toBe(labels.length);
+		});
+
+		it('skips a 22:00 stub and starts at the next day\'s first point, through chartTime as the DNS page passes it', () => {
+			const series = isoSeries(new Date(2026, 10, 11, 22), 3, 65);
+			const labels = xLabels(draw([series], { formatX: (t: number | string) => chartTime(String(t), 192) }).container);
+			expect(labels[0]).toEqual({ text: '12 Nov', x: xAt(1, 65) });
+			expect(labels.map((l) => l.text)).not.toContain('11 Nov');
+		});
+
+		it('prints each day once, left to right, on hourly points', () => {
+			const series = isoSeries(new Date(2026, 10, 16, 5), 1, 168);
+			const labels = xLabels(draw([series], { formatX: dayOnly }).container);
+			expect(new Set(labels.map((l) => l.text)).size).toBe(labels.length);
+			labels.slice(1).forEach((l, k) => expect(l.x).toBeGreaterThan(labels[k].x));
 		});
 	});
 });
