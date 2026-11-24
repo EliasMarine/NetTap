@@ -53,7 +53,8 @@
 	// Trigger alert→notification conversion pipeline (best-effort)
 	async function triggerAlertNotifications() {
 		try {
-			await fetch('/api/notifications/from-alerts');
+			// OLD CODE: await fetch('/api/notifications/from-alerts'); (NET-361: a hung call held up the first list)
+			await fetch('/api/notifications/from-alerts', { signal: AbortSignal.timeout(LIST_TIMEOUT_MS) });
 		} catch {
 			// Best-effort — don't block notification display
 		}

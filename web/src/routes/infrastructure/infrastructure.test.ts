@@ -46,7 +46,8 @@ describe('Infrastructure capture detail', () => {
 
 	async function openCaptureDetail() {
 		render(InfrastructurePage);
-		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/capture/mode'));
+		// OLD CODE: await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/capture/mode')); (NET-361: the call carries a signal)
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/capture/mode', { signal: undefined }));
 		await new Promise((r) => setTimeout(r, 0));
 	}
 

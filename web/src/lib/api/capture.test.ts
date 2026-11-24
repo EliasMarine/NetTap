@@ -133,6 +133,14 @@ describe('capture API client', () => {
 	// -- getCaptureMode -------------------------------------------------------
 
 	describe('getCaptureMode', () => {
+		// NET-361: the shared mode store gives it a deadline
+		it("hands the caller's signal to fetch", async () => {
+			mockFetchSuccess({ mode: 'mirror', interface: 'enp2s0' });
+			const signal = new AbortController().signal;
+			await getCaptureMode(signal);
+			expect(fetch).toHaveBeenCalledWith('/api/capture/mode', { signal });
+		});
+
 		it('returns parsed mode on success', async () => {
 			mockFetchSuccess({ mode: 'mirror', interface: 'enp2s0' });
 

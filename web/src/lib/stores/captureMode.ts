@@ -37,6 +37,8 @@ export type StoreCaptureMode = 'bridge' | 'mirror' | 'dhcp_gateway';
 export const captureMode = writable<StoreCaptureMode | 'unknown' | null>(null);
 
 const MODES: readonly string[] = ['bridge', 'mirror', 'dhcp_gateway'];
+/** NET-361: a request that never settled left `pending` stuck, so every caller joined it and the chip read "Checking mode…". */
+const MODE_TIMEOUT_MS = 15_000;
 let answered = false;
 let pending: Promise<void> | null = null;
 
@@ -50,7 +52,8 @@ let pending: Promise<void> | null = null;
 /** Asks until the daemon names a known mode; a failure or an unknown mode is asked again on the next call. */
 export function initCaptureMode(): Promise<void> {
 	if (answered) return Promise.resolve();
-	pending ??= getCaptureMode()
+	// OLD CODE: pending ??= getCaptureMode() (NET-361: no deadline)
+	pending ??= getCaptureMode(AbortSignal.timeout(MODE_TIMEOUT_MS))
 		.then((result) => {
 			answered = MODES.includes(result.mode);
 			// OLD CODE: captureMode.set(answered ? (result.mode as StoreCaptureMode) : null);

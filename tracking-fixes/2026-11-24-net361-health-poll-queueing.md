@@ -31,10 +31,13 @@ Both tabs reported HTTP/1.1.
   - one list request at a time, shared by mount, the dropdown and the poll;
   - a 15 s deadline;
   - no poll while the tab is hidden (the stream still reaches it).
-- `getCaptureHealth`, `getStorageStatus`, `getNotifications` and `getAlertCount` take an optional `AbortSignal`. Other callers are unchanged.
+- `getCaptureHealth`, `getStorageStatus`, `getNotifications`, `getAlertCount` and `getCaptureMode` take an optional `AbortSignal`. Other callers are unchanged.
+- Review fixes (TypeScript review of #367):
+  - `web/src/lib/stores/captureMode.ts`: the shared mode request has a 15 s deadline. Before, one that never settled left `pending` stuck, so every later `initCaptureMode()`/`refreshCaptureMode()` joined it and the chip stayed on "Checking mode…". A timeout reads 'unknown', and the next call asks again.
+  - The bell's `/api/notifications/from-alerts` call has the same 15 s deadline, so a hung conversion no longer holds up the first list.
 
 ## Files
-`docker/nginx.conf`, `docker/docker-compose.yml`, `SECURITY.md`, `web/src/routes/+layout.svelte`, `web/src/lib/components/NotificationBell.svelte`, `web/src/lib/stores/alertSnapshot.ts`, `web/src/lib/api/{capture,system,notifications,alerts}.ts`. Tests: `daemon/tests/test_nginx_http2.py` (new), `tests/scripts/test_nginx_conf.bats`, `web/src/routes/layout.test.ts`, `web/src/lib/components/NotificationBell.render.test.ts`, `web/src/lib/stores/alertSnapshot-deadline.test.ts` (new), `web/src/lib/api/{capture,system,notifications,alerts}.test.ts`, `web/src/routes/infrastructure/infrastructure.test.ts`.
+`docker/nginx.conf`, `docker/docker-compose.yml`, `SECURITY.md`, `web/src/routes/+layout.svelte`, `web/src/lib/components/NotificationBell.svelte`, `web/src/lib/stores/alertSnapshot.ts`, `web/src/lib/api/{capture,system,notifications,alerts}.ts`, `web/src/lib/stores/captureMode.ts`. Tests: `daemon/tests/test_nginx_http2.py` (new), `tests/scripts/test_nginx_conf.bats`, `web/src/routes/layout.test.ts`, `web/src/lib/components/NotificationBell.render.test.ts`, `web/src/lib/stores/alertSnapshot-deadline.test.ts` (new), `web/src/lib/stores/captureMode.test.ts`, `web/src/lib/api/{capture,system,notifications,alerts}.test.ts`, `web/src/routes/infrastructure/infrastructure.test.ts`.
 
 ## Tests
 - New, each failing without its fix:
@@ -63,3 +66,5 @@ Both tabs reported HTTP/1.1.
   - check `nginx -v` (1.30.8), `curl --http2 … %{http_version}` (2) and that the running web image ID matches the build.
 - Owner acceptance: 8 Home tabs in one profile show `h2`. While Home refreshes are out, an investigation create spends under 1 s queued or stalled and returns `201`.
 - Follow-up: the bell's interval is always 30 s, because `stream.isConnected()` is read before the stream opens.
+- Follow-up (review Low #2): a ping that times out reads as "Can't reach NetTap", although the box may only be slow, or the browser queue full on an HTTP/1.1 fallback.
+- Follow-up (review Low #3): no refresh on `visibilitychange`. A tab coming back from the background waits for the next tick (≤ 30 s) for fresh shell values and notifications.
