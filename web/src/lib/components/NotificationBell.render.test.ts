@@ -75,3 +75,81 @@ describe('NotificationBell when the request fails (#96)', () => {
 		}
 	});
 });
+
+// NET-370 (QA 2026-11-23 #10): Escape left the popover open and aria-expanded true
+describe('NotificationBell Escape (NET-370)', () => {
+	const bell = () => screen.getByRole('button', { name: /^Notifications/ });
+	const panelOpen = () => screen.queryByText('View all alerts') !== null;
+
+	async function openWithUnread() {
+		stubFetch(() => ({ ok: true, status: 200, body: { notifications: [NOTE], unreadCount: 1 } }));
+		await openBell();
+		return screen.findByRole('button', { name: 'Mark all read' });
+	}
+
+	function expectClosedOnBell() {
+		expect(panelOpen()).toBe(false);
+		expect(bell()).toHaveAttribute('aria-expanded', 'false');
+		expect(bell()).toHaveFocus();
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('closes from the bell and keeps focus there', async () => {
+		await openWithUnread();
+		expect(bell()).toHaveAttribute('aria-expanded', 'true');
+
+		await fireEvent.keyDown(bell(), { key: 'Escape' });
+		expectClosedOnBell();
+	});
+
+	it('closes from inside the panel, returns focus to the bell and marks nothing read', async () => {
+		const markAll = await openWithUnread();
+		markAll.focus();
+
+		await fireEvent.keyDown(markAll, { key: 'Escape' });
+		expectClosedOnBell();
+		expect(fetch).not.toHaveBeenCalledWith('/api/notifications', expect.objectContaining({ method: 'POST' }));
+	});
+
+	it('closes after Mark all read removed the focused button', async () => {
+		const markAll = await openWithUnread();
+		markAll.focus();
+		await fireEvent.click(markAll);
+		await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Mark all read' })).not.toBeInTheDocument());
+		expect(panelOpen()).toBe(true);
+		expect(document.activeElement).toBe(document.body);
+
+		await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+		expectClosedOnBell();
+	});
+
+	it('keeps the Escape to itself, so an open alert detail stays open', async () => {
+		const markAll = await openWithUnread();
+		const onWindow = vi.fn();
+		window.addEventListener('keydown', onWindow);
+		try {
+			await fireEvent.keyDown(markAll, { key: 'Escape' });
+			expect(panelOpen()).toBe(false);
+			expect(onWindow).not.toHaveBeenCalled();
+		} finally {
+			window.removeEventListener('keydown', onWindow);
+		}
+	});
+
+	it("leaves Escape on a control outside the bell to that control", async () => {
+		await openWithUnread();
+		const outside = document.body.appendChild(document.createElement('input'));
+		try {
+			outside.focus();
+			await fireEvent.keyDown(outside, { key: 'Escape' });
+			expect(panelOpen()).toBe(true);
+			expect(bell()).toHaveAttribute('aria-expanded', 'true');
+			expect(outside).toHaveFocus();
+		} finally {
+			outside.remove();
+		}
+	});
+});

@@ -17,16 +17,19 @@
 	} = $props();
 
 	let isOpen = $state(defaultExpanded);
+	const uid = $props.id();
 </script>
 
 <div class="drawer-section" class:collapsed={!isOpen}>
-	<button class="section-header" type="button" onclick={() => isOpen = !isOpen}>
+	<!-- OLD CODE: <button class="section-header" type="button" onclick={() => isOpen = !isOpen}> (NET-369: a screen reader couldn't tell open from closed) -->
+	<!-- aria-controls only while the body exists, so it never names a missing id -->
+	<button class="section-header" type="button" aria-expanded={isOpen} aria-controls={isOpen ? `${uid}-body` : undefined} onclick={() => isOpen = !isOpen}>
 		<span class="section-title eyebrow">{title}</span>
 		<span class="section-chevron" class:rotated={isOpen}><Icon name="chevdown" /></span>
 	</button>
 
 	{#if isOpen}
-		<div class="section-body">
+		<div class="section-body" id="{uid}-body">
 			{@render children()}
 		</div>
 	{/if}

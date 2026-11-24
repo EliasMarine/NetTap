@@ -1632,12 +1632,13 @@ OLD CODE END -->
 {#if unifiStatus && !unifiStatus.configured}
 	<div class="grid">
 		<Card title="UniFi network integration" sub="Devices, networks and security policies from your UniFi controller" class="c-12">
+			<!-- OLD CODE: href="/settings" (NET-363: opened the default Notifications tab, not the UniFi controller) -->
 			<CardState
 				state="empty"
 				icon="infra"
 				title="UniFi isn't connected"
 				message="Connect your UniFi controller to view network devices, security policies, and infrastructure topology."
-				href="/settings"
+				href="/settings?tab=integrations"
 				actionLabel="Configure UniFi"
 			/>
 		</Card>
