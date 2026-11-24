@@ -15,6 +15,7 @@ from api.error_replies import incomplete
 from api.offload import in_thread
 from api.time_range import parse_time_range, slot_interval
 from services.dns_analytics import TIMELINE_INTERVALS, DNSAnalytics
+from services.excluded_ips import parse_single_ip
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.dns")
@@ -76,7 +77,13 @@ def handle_top_domains(request: web.Request) -> web.Response:
 @in_thread
 def handle_device_dns(request: web.Request) -> web.Response:
     """GET /api/dns/device/{ip}?from=&to="""
-    device_ip = request.match_info["ip"]
+    # OLD CODE START — NET-364: any text went into the source.ip term, so a typo was a 502
+    # ("check that NetTap is running") instead of a plain refusal
+    # device_ip = request.match_info["ip"]
+    # OLD CODE END
+    device_ip = parse_single_ip(request.match_info["ip"])
+    if device_ip is None:
+        return web.json_response({"error": "That is not an IP address."}, status=400)
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]
     excluded_ips_list = request.app.get("excluded_ips", [])

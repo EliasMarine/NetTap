@@ -51,7 +51,8 @@
 	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withRange } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
-	import { getDomainSummary, type DomainSummary } from '$lib/api/drilldown';
+	import { getDomainSummary, HttpError, type DomainSummary } from '$lib/api/drilldown';
+	import { isSearchIp } from '$lib/components/shell/topbar';
 	import { getRegistryDevices } from '$lib/api/devices-registry';
 	import { namesByIp } from '$lib/utils/device-names';
 	import DomainAskers from './DomainAskers.svelte';
@@ -138,6 +139,8 @@
 	let typesFailed = $state(false);
 	let timelineFailed = $state(false);
 	let deviceDnsFailed = $state(false);
+	/** NET-364: the daemon's reason when it refused the lookup (400): trying again can't help */
+	let deviceDnsReason = $state('');
 	let topDomains = $state<TopDomain[]>([]);
 	let nxdomains = $state<NxdomainEntry[]>([]);
 	let queryTypes = $state<QueryTypeEntry[]>([]);
@@ -159,6 +162,8 @@
 	let selectedDeviceIp = $state('');
 	let deviceDns = $state<DeviceDnsEntry[]>([]);
 	let deviceLoading = $state(false);
+	/** NET-364: what is wrong with the typed address; nothing is looked up until it is one */
+	let deviceIpError = $state('');
 	// Only the newest lookup writes the table, so a slower answer for the last range never wins (I13)
 	let deviceLookupSeq = 0;
 	/** The daemon lists at most this many domains per device (its terms size). */
@@ -468,13 +473,53 @@
 	// 	}
 	// }
 	// OLD CODE END
-	async function lookupDevice() {
+	// OLD CODE START — NET-364: any typed text was looked up, so a typo read as "check that NetTap is running";
+	// and a range change looked up whatever was in the box, not the device on screen
+	// async function lookupDevice() {
+	// 	const ip = deviceIpInput.trim() || selectedDeviceIp;
+	// 	if (!ip) return;
+	//
+	// 	const seq = ++deviceLookupSeq;
+	// 	deviceLoading = true;
+	// 	selectedDeviceIp = ip;
+	// 	const { from, to } = getTimeRange();
+	//
+	// 	try {
+	// 		const result = await getDeviceDns(ip, { from, to });
+	// 		if (seq !== deviceLookupSeq) return;
+	// 		deviceDns = result.domains;
+	// 		deviceDnsFailed = false;
+	// 		listWindow = { ...listWindow, device: { from, to } };
+	// 		if (selected?.source === 'device') clearPick();
+	// 	} catch {
+	// 		if (seq !== deviceLookupSeq) return;
+	// 		deviceDns = [];
+	// 		deviceDnsFailed = true;
+	// 	} finally {
+	// 		if (seq === deviceLookupSeq) deviceLoading = false;
+	// 	}
+	// }
+	// OLD CODE END
+	/** Lookup and Enter: the typed address must be one before anything is asked (NET-364) */
+	function submitDeviceIp() {
 		const ip = deviceIpInput.trim() || selectedDeviceIp;
+		if (!ip) return;
+		if (!isSearchIp(ip)) {
+			deviceIpError = 'That is not an IP address. Enter one like 192.168.1.100 or 2001:db8::1.';
+			return;
+		}
+		deviceIpError = '';
+		selectedDeviceIp = ip;
+		lookupDevice();
+	}
+
+	/** The device on screen, for this window: a submit, a pick, a range change or Try again */
+	async function lookupDevice() {
+		const ip = selectedDeviceIp;
 		if (!ip) return;
 
 		const seq = ++deviceLookupSeq;
 		deviceLoading = true;
-		selectedDeviceIp = ip;
 		const { from, to } = getTimeRange();
 
 		try {
@@ -482,12 +527,15 @@
 			if (seq !== deviceLookupSeq) return;
 			deviceDns = result.domains;
 			deviceDnsFailed = false;
+			deviceDnsReason = '';
 			listWindow = { ...listWindow, device: { from, to } };
 			if (selected?.source === 'device') clearPick();
-		} catch {
+		} catch (e) {
 			if (seq !== deviceLookupSeq) return;
 			deviceDns = [];
 			deviceDnsFailed = true;
+			// a refusal (the address, or a window the daemon won't read) says why; anything else is a failure
+			deviceDnsReason = e instanceof HttpError && e.status === 400 ? e.message : '';
 		} finally {
 			if (seq === deviceLookupSeq) deviceLoading = false;
 		}
@@ -561,6 +609,7 @@
 	function selectDeviceIp(ip: string) {
 		deviceIpInput = ip;
 		selectedDeviceIp = ip;
+		deviceIpError = '';
 		lookupDevice();
 		// OLD CODE START — NET-348: never cleared, so it ran after teardown ("document is not defined" in CI)
 		// setTimeout(() => {
@@ -950,7 +999,8 @@
 		oncopy={copyDomain}
 	/>
 
-	<Card title="DNS by device" sub="Domains one device looked up · {rangeWords}" class="c-12">
+	<!-- OLD CODE: <Card title="DNS by device" sub="Domains one device looked up · {rangeWords}" class="c-12"> (NET-364: the rows name their device) -->
+	<Card title="DNS by device" sub="{selectedDeviceIp ? `Domains ${selectedDeviceIp} looked up` : 'Domains one device looked up'} · {rangeWords}" class="c-12">
 		<span id="device-section" class="anchor"></span>
 		<!-- OLD CODE START — the selected domain's chips moved to its "Devices that looked it up" card
 		{#if selectedDomain}
@@ -970,18 +1020,30 @@
 				class="input mono device-ip"
 				placeholder="Enter device IP (e.g. 192.168.1.100)"
 				bind:value={deviceIpInput}
-				onkeydown={(e) => e.key === 'Enter' && lookupDevice()}
+				aria-invalid={deviceIpError ? 'true' : undefined}
+				aria-describedby={deviceIpError ? 'dns-device-ip-error' : undefined}
+				onkeydown={(e) => e.key === 'Enter' && submitDeviceIp()}
 			/>
-			<button class="btn primary" type="button" onclick={lookupDevice} disabled={deviceLoading}>
+			<!-- OLD CODE: onkeydown/onclick called lookupDevice (NET-364: the address is checked first) -->
+			<button class="btn primary" type="button" onclick={submitDeviceIp} disabled={deviceLoading}>
 				{deviceLoading ? 'Looking up…' : 'Lookup'}
 			</button>
 		</div>
+		{#if deviceIpError}
+			<p class="field-error device-ip-error" id="dns-device-ip-error" role="alert">{deviceIpError}</p>
+		{/if}
 		{#if !selectedDeviceIp}
 			<CardState state="empty" icon="devices" title="No device chosen" message="Enter a device IP, or pick a client from the NXDOMAIN errors, to see the domains it looked up." />
 		{:else if deviceLoading}
 			<CardState state="loading" title="Loading DNS data for {selectedDeviceIp}" />
 		{:else if deviceDnsFailed}
-			<CardState state="error" title={loadFailed(`DNS records for ${selectedDeviceIp}`)} message={RETRY_HINT} onaction={lookupDevice} />
+			<!-- OLD CODE: message={RETRY_HINT} onaction={lookupDevice} (NET-364: a refusal says why, and the same request can't succeed) -->
+			<CardState
+				state="error"
+				title={loadFailed(`DNS records for ${selectedDeviceIp}`)}
+				message={deviceDnsReason || RETRY_HINT}
+				onaction={deviceDnsReason ? undefined : lookupDevice}
+			/>
 		{:else if deviceDns.length === 0}
 			<!-- OLD CODE: message="This device made no DNS queries in this time range." (NET-225: DoH, DoT and, in bridge mode, NAT hide lookups) -->
 			<CardState
@@ -1083,6 +1145,7 @@
 	/* OLD CODE: .selected { align-items: center; margin-bottom: var(--sp-3); } (the chips moved to DomainAskers) */
 	.pick-hint { margin-top: var(--sp-2); }
 	.device-ip { flex: 0 1 20rem; }
+	.device-ip-error { margin-bottom: var(--sp-3); }
 	.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 	.finding { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); padding: var(--sp-3) 0; min-width: 0; }
 	.finding + .finding { border-top: 1px solid var(--line); }

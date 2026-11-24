@@ -2,6 +2,8 @@
  * Client-side API helpers for DNS analytics endpoints.
  */
 
+import { getJson } from './drilldown';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -106,16 +108,25 @@ export async function getDeviceDns(
 	opts: { from?: string; to?: string } = {}
 ): Promise<{ device_ip: string; from: string; to: string; domains: DeviceDnsEntry[] }> {
 	const query = buildQuery({ from: opts.from, to: opts.to });
-	const res = await fetch(`/api/dns/device/${encodeURIComponent(ip)}${query}`);
-
-	// OLD CODE START — #96: a failed request read as "No DNS records" for the device
-	// if (!res.ok) {
-	// 	return { device_ip: ip, from: '', to: '', domains: [] };
-	// }
+	// OLD CODE START — NET-364: the daemon's reason was dropped, so a refused address read as a failure
+	// const res = await fetch(`/api/dns/device/${encodeURIComponent(ip)}${query}`);
+	//
+	// // OLD CODE START — #96: a failed request read as "No DNS records" for the device
+	// // if (!res.ok) {
+	// // 	return { device_ip: ip, from: '', to: '', domains: [] };
+	// // }
+	// // OLD CODE END
+	// if (!res.ok) throw new Error(`Device DNS failed: HTTP ${res.status}`);
+	//
+	// return res.json();
 	// OLD CODE END
-	if (!res.ok) throw new Error(`Device DNS failed: HTTP ${res.status}`);
-
-	return res.json();
+	// A failure throws HttpError: its status (400 = the request was refused) and the daemon's reason
+	return getJson(`/api/dns/device/${encodeURIComponent(ip)}${query}`, 'Device DNS') as Promise<{
+		device_ip: string;
+		from: string;
+		to: string;
+		domains: DeviceDnsEntry[];
+	}>;
 }
 
 export async function getNxdomains(
