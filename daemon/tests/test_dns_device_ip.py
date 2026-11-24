@@ -42,6 +42,4 @@ class TestDeviceDnsAddress(AioHTTPTestCase):
 
         resp = await self.client.get("/api/dns/device/2001:DB8::1")
         self.assertEqual(resp.status, 200)
-        self.assertEqual(
-            self.analytics.get_device_dns.call_args.args[0], "2001:db8::1"
-        )
+        self.assertEqual(self.analytics.get_device_dns.call_args.args[0], "2001:db8::1")
