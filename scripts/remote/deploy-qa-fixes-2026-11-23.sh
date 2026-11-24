@@ -169,6 +169,12 @@ check_eq "signed-in /api/system/ping says ok" "$(printf '%s' "$PING" | grep -o '
 for page in / /settings?tab=integrations /infrastructure /iot /investigations /bandwidth /dns /connections /pcap /tools/subnet-calc; do
     check_eq "signed-in GET $page" "$(signed_in -o /dev/null -w '%{http_code}' "$BASE$page")" 200
 done
+# NET-364: a value that isn't an IP address is refused, not a 502 "is NetTap running"
+check_eq "DNS by device refuses a non-address" "$(signed_in -o /dev/null -w '%{http_code}' "$BASE/api/dns/device/not-an-address")" 400
+# NET-373: a window no capture holds; PCAP Search's tab (reply=page) reads it as a page, the plain API stays JSON
+EMPTY_WINDOW="$BASE/api/pcap/download?filter=ip.addr%20%3D%3D%20192.0.2.123&from=2001-01-01T00:00:00.000Z&to=2001-01-01T00:01:00.000Z"
+check_eq "a refused PCAP download from PCAP Search is a readable page" "$(signed_in -H 'Sec-Fetch-Site: same-origin' -o /dev/null -w '%{http_code} %{content_type}' "$EMPTY_WINDOW&reply=page" | cut -d';' -f1)" "404 text/html"
+check_eq "a refused PCAP download from the API stays JSON" "$(signed_in -H 'Sec-Fetch-Site: same-origin' -o /dev/null -w '%{http_code} %{content_type}' "$EMPTY_WINDOW" | cut -d';' -f1)" "404 application/json"
 echo ""
 
 echo "→ Step 8: Container status..."
