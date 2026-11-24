@@ -819,11 +819,12 @@ OLD CODE END -->
 			<form class="etpro-form" onsubmit={handleSaveEtPro} novalidate>
 				<div class="field">
 					<label class="label" for="etpro-code">ET Pro code</label>
+					<!-- OLD CODE: autocomplete="off" (NET-367: Chrome's password manager ignores "off" and could fill the NetTap login here; one-time-code is a field it never fills) -->
 					<input
 						class="input mono"
 						id="etpro-code"
 						type="password"
-						autocomplete="off"
+						autocomplete="one-time-code"
 						spellcheck="false"
 						bind:value={etproCode}
 						aria-invalid={etproCodeError ? 'true' : undefined}

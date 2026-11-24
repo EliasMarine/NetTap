@@ -123,12 +123,14 @@
 					<div class="form-grid">
 						<div class="field">
 							<div class="label-row"><label class="label" for="maxmind-key">MaxMind licence key</label>{@render configured(apiKeysStatus['MAXMIND_LICENSE_KEY'])}</div>
+							<!-- OLD CODE: no autocomplete (NET-367: Chrome filled the NetTap login into the secrets here, so the tab read as changed; one-time-code is a field its password manager never fills) -->
 							<input
 								class="input mono"
 								id="maxmind-key"
 								type="password"
 								bind:value={apiKeyValues['MAXMIND_LICENSE_KEY']}
 								placeholder={apiKeysStatus['MAXMIND_LICENSE_KEY'] ? 'Leave blank to keep current value' : 'Enter MaxMind licence key'}
+								autocomplete="one-time-code"
 							/>
 							<p class="field-help">Required for GeoIP map visualisations. Get a free key at <a class="link" href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">maxmind.com</a>.</p>
 						</div>
@@ -181,7 +183,8 @@
 						</div>
 						<div class="field">
 							<div class="label-row"><label class="label" for="smtp-password">SMTP password</label>{@render configured(apiKeysStatus['SMTP_PASSWORD'])}</div>
-							<input class="input" id="smtp-password" type="password" bind:value={apiKeyValues['SMTP_PASSWORD']} placeholder={apiKeysStatus['SMTP_PASSWORD'] ? 'Leave blank to keep current' : 'App password or SMTP password'} />
+							<!-- OLD CODE: no autocomplete (NET-367, as the MaxMind key) -->
+							<input class="input" id="smtp-password" type="password" bind:value={apiKeyValues['SMTP_PASSWORD']} placeholder={apiKeysStatus['SMTP_PASSWORD'] ? 'Leave blank to keep current' : 'App password or SMTP password'} autocomplete="one-time-code" />
 							<p class="field-help">For Gmail, use an App Password (not your account password).</p>
 						</div>
 						<div class="field">

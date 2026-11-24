@@ -121,7 +121,8 @@
 	let testingChannelId = $state('');
 
 	$effect(() => {
-		const addingInput = showAddForm && (newChannelName.trim() !== '' || Object.values(newChannelConfig).some((v) => v?.trim()));
+		// OLD CODE: const addingInput = showAddForm && (newChannelName.trim() !== '' || Object.values(newChannelConfig).some((v) => v?.trim())); (NET-365: the SMTP port binds as a number, and .trim threw)
+		const addingInput = showAddForm && (newChannelName.trim() !== '' || Object.values(newChannelConfig).some((v) => String(v ?? '').trim() !== ''));
 		// OLD CODE: dirty = prefsDirty || addingInput || (showRuleForm && newRuleChannels.length > 0); (NET-340: + the weekly report card)
 		dirty = prefsDirty || reportDirty || addingInput || (showRuleForm && newRuleChannels.length > 0);
 		// OLD CODE: busy = locked;
@@ -287,21 +288,43 @@
 		setTimeout(() => { message = ''; }, 5000);
 	}
 
+	/** NET-365: a closed add form starts fresh next time, whether it was cancelled or saved */
+	function closeAddForm() {
+		showAddForm = false;
+		newChannelType = 'discord';
+		newChannelName = '';
+		newChannelConfig = {};
+	}
+
+	/** NET-365: the same for the rule form */
+	function closeRuleForm() {
+		showRuleForm = false;
+		newRuleEventType = 'alert';
+		newRuleChannels = [];
+		newRuleSeverity = 3;
+	}
+
 	// Channel actions
 	async function handleAddChannel() {
 		addingChannel = true;
+		// NET-365: the message names the channel that was sent
+		const name = newChannelName;
 		const config = { ...newChannelConfig };
 		// Convert recipients to array for email
 		if (newChannelType === 'email' && config.recipients) {
 			(config as Record<string, unknown>).recipients = config.recipients.split(',').map((s: string) => s.trim()).filter(Boolean);
 		}
-		const result = await createChannel(newChannelType, newChannelName, config);
+		const result = await createChannel(newChannelType, name, config);
 		// OLD CODE: if (result) { … } else { showMessage('Failed to create channel.', 'error'); } (NET-224: no reason)
 		if (result.ok) {
-			showMessage(`Channel "${newChannelName}" created.`, 'success');
-			showAddForm = false;
-			newChannelName = '';
-			newChannelConfig = {};
+			// OLD CODE START — NET-365: the type survived, and the message read the live name after the await
+			// showMessage(`Channel "${newChannelName}" created.`, 'success');
+			// showAddForm = false;
+			// newChannelName = '';
+			// newChannelConfig = {};
+			// OLD CODE END
+			showMessage(`Channel "${name}" created.`, 'success');
+			closeAddForm();
 			// OLD CODE: await refresh.run(); (NET-273: the preferences reload too)
 			await afterChange();
 		} else {
@@ -363,8 +386,11 @@
 		// OLD CODE: if (result) { … } else { showMessage('Failed to create rule.', 'error'); } (NET-224: no reason)
 		if (result.ok) {
 			showMessage('Routing rule created.', 'success');
-			showRuleForm = false;
-			newRuleChannels = [];
+			// OLD CODE START — NET-365: the event type and severity survived into the next rule
+			// showRuleForm = false;
+			// newRuleChannels = [];
+			// OLD CODE END
+			closeRuleForm();
 			// OLD CODE: await refresh.run(); (NET-273: the preferences reload too)
 			await afterChange();
 		} else {
@@ -521,7 +547,8 @@ OLD CODE END -->
 
 	<Card title="Notification channels" sub={countLabel(failed.channels, channels.length, 'channel')} class="c-6">
 		{#snippet actions()}
-			<button class={['btn', !showAddForm && 'primary']} type="button" onclick={() => (showAddForm = !showAddForm)}>
+			<!-- OLD CODE: onclick={() => (showAddForm = !showAddForm)} (NET-365: Cancel hid the draft and the next open brought it back; off while a create runs so it can't clear the next draft) -->
+			<button class={['btn', !showAddForm && 'primary']} type="button" onclick={() => (showAddForm ? closeAddForm() : (showAddForm = true))} disabled={addingChannel}>
 				{showAddForm ? 'Cancel' : 'Add channel'}
 			</button>
 		{/snippet}
@@ -547,7 +574,15 @@ OLD CODE END -->
 					{#each channelTypeConfigs[newChannelType]?.fields ?? [] as field}
 						<div class="field">
 							<label class="label" for="cfg-{field.key}">{field.label}</label>
-							<input class="input" id="cfg-{field.key}" type={field.type} bind:value={newChannelConfig[field.key]} placeholder={field.placeholder} />
+							<!-- OLD CODE: the same input with no autocomplete (NET-367: Chrome filled the NetTap login into the SMTP password; one-time-code keeps its password manager out, it ignores "off") -->
+							<input
+								class="input"
+								id="cfg-{field.key}"
+								type={field.type}
+								bind:value={newChannelConfig[field.key]}
+								placeholder={field.placeholder}
+								autocomplete={field.type === 'password' ? 'one-time-code' : undefined}
+							/>
 						</div>
 					{/each}
 				</div>
@@ -607,11 +642,12 @@ OLD CODE END -->
 
 	<Card title="Routing rules" sub={countLabel(failed.rules, rules.length, 'rule')} class="c-6">
 		{#snippet actions()}
+			<!-- OLD CODE: onclick={() => (showRuleForm = !showRuleForm)} disabled={channels.length === 0} (NET-365: Cancel kept the draft, and deleting the last channel locked Cancel) -->
 			<button
 				class={['btn', !showRuleForm && 'primary']}
 				type="button"
-				onclick={() => (showRuleForm = !showRuleForm)}
-				disabled={channels.length === 0}
+				onclick={() => (showRuleForm ? closeRuleForm() : (showRuleForm = true))}
+				disabled={addingRule || (!showRuleForm && channels.length === 0)}
 			>
 				{showRuleForm ? 'Cancel' : 'Add rule'}
 			</button>

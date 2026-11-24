@@ -316,6 +316,15 @@
 	// CRUD actions
 	// ---------------------------------------------------------------------------
 
+	/** NET-366: a closed new-investigation form starts fresh next time, whether it was cancelled or created */
+	function closeNewForm() {
+		newTitle = '';
+		newDescription = '';
+		newSeverity = 'medium';
+		newTags = '';
+		showNewForm = false;
+	}
+
 	async function handleCreate() {
 		if (!newTitle.trim()) return;
 		creating = true;
@@ -335,11 +344,14 @@
 				failed('create the investigation');
 				return;
 			}
-			newTitle = '';
-			newDescription = '';
-			newSeverity = 'medium';
-			newTags = '';
-			showNewForm = false;
+			// OLD CODE START — NET-366: the same reset, now shared with Cancel
+			// newTitle = '';
+			// newDescription = '';
+			// newSeverity = 'medium';
+			// newTags = '';
+			// showNewForm = false;
+			// OLD CODE END
+			closeNewForm();
 			await refresh.run();
 		} finally {
 			creating = false;
@@ -412,7 +424,8 @@
 		<p class="page-sub">Track and manage security investigations</p>
 	</div>
 	<div class="head-actions">
-		<button class="btn primary" onclick={() => (showNewForm = !showNewForm)}>New investigation</button>
+		<!-- OLD CODE: onclick={() => (showNewForm = !showNewForm)} (NET-366: a second click hid the draft; it only opens now, and is off until a create and its refresh land) -->
+		<button class="btn primary" onclick={() => (showNewForm = true)} disabled={creating}>New investigation</button>
 	</div>
 </div>
 
@@ -463,7 +476,8 @@
 				</div>
 			</div>
 			<div class="form-actions">
-				<button class="btn" onclick={() => (showNewForm = false)}>Cancel</button>
+				<!-- OLD CODE: onclick={() => (showNewForm = false)} (NET-366: Cancel kept the case details for the next investigation) -->
+				<button class="btn" onclick={closeNewForm} disabled={creating}>Cancel</button>
 				<button class="btn primary" onclick={handleCreate} disabled={creating || !newTitle.trim()}>
 					{creating ? 'Creating…' : 'Create investigation'}
 				</button>

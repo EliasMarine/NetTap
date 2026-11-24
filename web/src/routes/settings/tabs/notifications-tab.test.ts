@@ -596,3 +596,156 @@ describe('Notification settings background checks', () => {
 		expect(screen.getByText('Event journal clean-up')).toBeInTheDocument();
 	});
 });
+
+// NET-365 / NET-367 (23 Nov QA): a closed add form starts fresh next time, and its secrets stay out of Chrome's password manager
+describe('Notification settings add forms start fresh', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const card = (title: string) => screen.getByRole('heading', { name: title }).closest('.card') as HTMLElement;
+	const field = (id: string) => document.getElementById(id) as HTMLInputElement;
+	const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body });
+
+	/** The lists from LISTS; every write goes to `write`, which may wait. */
+	function stubWrites(write: (url: string, init: RequestInit) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: RequestInit) => {
+				if (init?.method && init.method !== 'GET') {
+					const { status, body } = await write(url, init);
+					return reply(status, body);
+				}
+				return url in LISTS ? reply(200, LISTS[url]) : reply(500, {});
+			}),
+		);
+	}
+
+	async function draftSlackChannel(channels: HTMLElement) {
+		await fireEvent.click(within(channels).getByRole('button', { name: 'Add channel' }));
+		await fireEvent.change(field('channel-type'), { target: { value: 'slack' } });
+		await fireEvent.input(field('channel-name'), { target: { value: 'Ops Slack' } });
+		await fireEvent.input(field('cfg-webhook_url'), { target: { value: 'https://hooks.slack.com/services/T0/B0/x' } });
+	}
+
+	function expectFreshChannelForm() {
+		expect(field('channel-type')).toHaveValue('discord');
+		expect(field('channel-name')).toHaveValue('');
+		expect(field('cfg-webhook_url')).toHaveValue('');
+	}
+
+	it('Cancel clears a new channel, so the next one starts at Discord with nothing typed', async () => {
+		stubFetch(LISTS);
+		render(Page);
+		await screen.findByText('Home Discord');
+		const channels = card('Notification channels');
+
+		await draftSlackChannel(channels);
+		await fireEvent.click(within(channels).getByRole('button', { name: 'Cancel' }));
+		await fireEvent.click(within(channels).getByRole('button', { name: 'Add channel' }));
+
+		expectFreshChannelForm();
+	});
+
+	it('a create holds Cancel until it lands, names the channel it sent, and the next form starts fresh', async () => {
+		let land: () => void = () => {};
+		const landed = new Promise<void>((resolve) => (land = resolve));
+		stubWrites(async () => {
+			await landed;
+			return { status: 201, body: { id: 'ch2' } };
+		});
+		render(Page);
+		await screen.findByText('Home Discord');
+		const channels = card('Notification channels');
+
+		await draftSlackChannel(channels);
+		await fireEvent.click(within(channels).getByRole('button', { name: 'Create channel' }));
+		expect(within(channels).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+		await fireEvent.input(field('channel-name'), { target: { value: 'Typed during the save' } });
+
+		land();
+		expect(await screen.findByText('Channel "Ops Slack" created.')).toBeInTheDocument();
+		const add = within(channels).getByRole('button', { name: 'Add channel' });
+		await vi.waitFor(() => expect(add).not.toBeDisabled());
+		await fireEvent.click(add);
+		expectFreshChannelForm();
+	});
+
+	it('Cancel clears a new rule, so the next one starts at Alert, medium and above, with no channel ticked', async () => {
+		stubFetch(LISTS);
+		render(Page);
+		await screen.findByText('Home Discord');
+		const rules = card('Routing rules');
+
+		await fireEvent.click(within(rules).getByRole('button', { name: 'Add rule' }));
+		await fireEvent.change(screen.getByLabelText('Minimum severity'), { target: { value: '1' } });
+		await fireEvent.click(screen.getByRole('checkbox', { name: /Home Discord/ }));
+		await fireEvent.change(screen.getByLabelText('Event type'), { target: { value: 'data_cap' } });
+		await fireEvent.click(within(rules).getByRole('button', { name: 'Cancel' }));
+		await fireEvent.click(within(rules).getByRole('button', { name: 'Add rule' }));
+
+		expect(screen.getByLabelText('Event type')).toHaveValue('alert');
+		expect(screen.getByLabelText('Minimum severity')).toHaveValue('3');
+		expect(screen.getByRole('checkbox', { name: /Home Discord/ })).not.toBeChecked();
+	});
+
+	it('a saved rule leaves the next one at Alert, medium and above, with no channel ticked', async () => {
+		stubWrites(() => ({ status: 201, body: { id: 'r1' } }));
+		render(Page);
+		await screen.findByText('Home Discord');
+		const rules = card('Routing rules');
+
+		await fireEvent.click(within(rules).getByRole('button', { name: 'Add rule' }));
+		await fireEvent.change(screen.getByLabelText('Minimum severity'), { target: { value: '1' } });
+		await fireEvent.change(screen.getByLabelText('Event type'), { target: { value: 'data_cap' } });
+		await fireEvent.click(screen.getByRole('checkbox', { name: /Home Discord/ }));
+		await fireEvent.click(within(rules).getByRole('button', { name: 'Create rule' }));
+		expect(await screen.findByText('Routing rule created.')).toBeInTheDocument();
+
+		const add = within(rules).getByRole('button', { name: 'Add rule' });
+		await vi.waitFor(() => expect(add).not.toBeDisabled());
+		await fireEvent.click(add);
+		expect(screen.getByLabelText('Event type')).toHaveValue('alert');
+		expect(screen.getByLabelText('Minimum severity')).toHaveValue('3');
+		expect(screen.getByRole('checkbox', { name: /Home Discord/ })).not.toBeChecked();
+	});
+
+	it('deleting the last channel leaves an open rule draft cancellable', async () => {
+		let channelList = [CHANNEL];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: RequestInit) => {
+				if (url === '/api/notifications/channels/ch1' && init?.method === 'DELETE') {
+					channelList = [];
+					return reply(200, {});
+				}
+				if (url === '/api/notifications/channels') return reply(200, { channels: channelList, count: channelList.length });
+				return url in LISTS ? reply(200, LISTS[url]) : reply(500, {});
+			}),
+		);
+		render(Page);
+		await screen.findByText('Home Discord');
+		const rules = card('Routing rules');
+
+		await fireEvent.click(within(rules).getByRole('button', { name: 'Add rule' }));
+		await fireEvent.click(screen.getByRole('checkbox', { name: /Home Discord/ }));
+		await fireEvent.click(within(card('Notification channels')).getByRole('button', { name: 'Delete' }));
+		await screen.findByText('No channels configured');
+
+		const cancel = within(rules).getByRole('button', { name: 'Cancel' });
+		expect(cancel).not.toBeDisabled();
+		await fireEvent.click(cancel);
+		expect(screen.queryByLabelText('Event type')).not.toBeInTheDocument();
+		expect(within(rules).getByRole('button', { name: 'Add rule' })).toBeDisabled();
+	});
+
+	it("keeps Chrome's saved NetTap login out of a new email channel's SMTP password", async () => {
+		stubFetch(LISTS);
+		render(Page);
+		await screen.findByText('Home Discord');
+
+		await fireEvent.click(within(card('Notification channels')).getByRole('button', { name: 'Add channel' }));
+		await fireEvent.change(field('channel-type'), { target: { value: 'email' } });
+
+		expect(field('cfg-smtp_pass')).toHaveAttribute('type', 'password');
+		expect(field('cfg-smtp_pass')).toHaveAttribute('autocomplete', 'one-time-code');
+	});
+});
