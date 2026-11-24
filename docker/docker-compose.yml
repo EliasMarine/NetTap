@@ -1140,7 +1140,12 @@ services:
     # OLD CODE START — #138: a floating tag; nginx.conf's upstream "resolve" needs 1.27.3+
     # image: nginx:stable-alpine
     # OLD CODE END
-    image: nginx:1.30-alpine
+    # OLD CODE START — NET-361: compose never re-pulls a cached floating tag, and the G11 sat on 1.30.6, which
+    # has two HTTP/2 holes (CVE-2026-123007, CVE-2026-123633; fixed in 1.30.7) that nginx.conf's http2 now reaches.
+    # A patch tag that isn't cached is pulled by `up`, so every install gets the fixed build.
+    # image: nginx:1.30-alpine
+    # OLD CODE END
+    image: nginx:1.30.8-alpine
     container_name: nettap-nginx
     restart: unless-stopped
     <<: *logging-defaults
