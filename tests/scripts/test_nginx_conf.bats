@@ -70,7 +70,8 @@ _location() {
     zones=$(echo "$live" | grep -Ec '^[[:space:]]*zone [a-z]+ 64k;')
     [ "$servers" -eq 3 ] && [ "$resolved" -eq 3 ] && [ "$zones" -eq 3 ]
     # "resolve" needs nginx 1.27.3+: the image is pinned, not a floating tag
-    grep -Eq '^[[:space:]]*image: nginx:1\.(2[89]|[3-9][0-9])-alpine$' "${REPO_ROOT}/docker/docker-compose.yml"
+    # OLD CODE: grep -Eq '^[[:space:]]*image: nginx:1\.(2[89]|[3-9][0-9])-alpine$' "${REPO_ROOT}/docker/docker-compose.yml" (NET-361: pinned to a patch release)
+    grep -Eq '^[[:space:]]*image: nginx:1\.(2[89]|[3-9][0-9])(\.[0-9]+)?-alpine$' "${REPO_ROOT}/docker/docker-compose.yml"
 }
 
 @test "nginx: /grafana/ keeps its path and starts without Grafana (#71)" {

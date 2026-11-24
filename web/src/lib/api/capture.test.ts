@@ -133,6 +133,14 @@ describe('capture API client', () => {
 	// -- getCaptureMode -------------------------------------------------------
 
 	describe('getCaptureMode', () => {
+		// NET-361: the shared mode store gives it a deadline
+		it("hands the caller's signal to fetch", async () => {
+			mockFetchSuccess({ mode: 'mirror', interface: 'enp2s0' });
+			const signal = new AbortController().signal;
+			await getCaptureMode(signal);
+			expect(fetch).toHaveBeenCalledWith('/api/capture/mode', { signal });
+		});
+
 		it('returns parsed mode on success', async () => {
 			mockFetchSuccess({ mode: 'mirror', interface: 'enp2s0' });
 
@@ -251,6 +259,14 @@ describe('capture API client', () => {
 			mockFetchFailure(500);
 
 			await expect(getCaptureHealth()).rejects.toThrow('HTTP 500');
+		});
+
+		// NET-361: the shell's poll gives it a deadline
+		it("hands the caller's signal to fetch", async () => {
+			mockFetchSuccess({ mode: 'bridge', status: 'normal', capture_interface: 'br0', link_up: true, promisc_enabled: true, issues: [] });
+			const signal = new AbortController().signal;
+			await getCaptureHealth(signal);
+			expect(fetch).toHaveBeenCalledWith('/api/capture/health', { signal });
 		});
 
 		it('throws on network error', async () => {

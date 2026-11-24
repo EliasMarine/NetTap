@@ -139,6 +139,39 @@ describe('captureMode store', () => {
 		expect(get(captureMode)).toBe('mirror');
 	});
 
+	// NET-361: a request that never settled kept every later call waiting on it, and the chip read "Checking mode…"
+	it('gives up on a request after 15 s, says unknown, and the next call asks again', async () => {
+		vi.useFakeTimers();
+		try {
+			// AbortSignal.timeout on the fake clock: Node's own timer doesn't follow vi.useFakeTimers
+			const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+				const controller = new AbortController();
+				setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+				return controller.signal;
+			});
+			mockGetCaptureMode.mockImplementationOnce(
+				(signal?: AbortSignal) =>
+					new Promise((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason))),
+			);
+			mockGetCaptureMode.mockResolvedValue({ mode: 'mirror' });
+
+			const { captureMode, initCaptureMode } = await import('./captureMode');
+			void initCaptureMode();
+			await vi.advanceTimersByTimeAsync(14_999);
+			expect(get(captureMode)).toBeNull();
+
+			await vi.advanceTimersByTimeAsync(1);
+			expect(timeout).toHaveBeenCalledWith(15_000);
+			expect(get(captureMode)).toBe('unknown');
+
+			await initCaptureMode();
+			expect(mockGetCaptureMode).toHaveBeenCalledTimes(2);
+			expect(get(captureMode)).toBe('mirror');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('only initializes once', async () => {
 		mockGetCaptureMode.mockResolvedValue({ mode: 'mirror' });
 

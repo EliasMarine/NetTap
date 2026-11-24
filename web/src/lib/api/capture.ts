@@ -202,8 +202,10 @@ export function captureState(status: CaptureStatus | null): CaptureState {
 
 /**
  * Get the current capture mode (bridge, mirror or dhcp_gateway).
+ * @param signal - ends the request early (NET-361: the shared mode store gives it a deadline)
  */
-export async function getCaptureMode(): Promise<CaptureMode> {
+// OLD CODE: export async function getCaptureMode(): Promise<CaptureMode> { (NET-361: optional signal)
+export async function getCaptureMode(signal?: AbortSignal): Promise<CaptureMode> {
 	// OLD CODE START — #96: a failed request read as capture mode "Bridge"
 	// try {
 	// 	const res = await fetch('/api/capture/mode');
@@ -215,7 +217,8 @@ export async function getCaptureMode(): Promise<CaptureMode> {
 	// 	return { mode: 'bridge', interface: '' };
 	// }
 	// OLD CODE END
-	const res = await fetch('/api/capture/mode');
+	// OLD CODE: const res = await fetch('/api/capture/mode'); (NET-361)
+	const res = await fetch('/api/capture/mode', { signal });
 	if (!res.ok) {
 		throw new Error(`Capture mode request failed: HTTP ${res.status}`);
 	}
@@ -242,8 +245,10 @@ export async function fetchCaptureMode(): Promise<CaptureMode> {
 
 /**
  * Get capture health status.
+ * @param signal - ends the request early (NET-361: the shell's poll gives it a deadline)
  */
-export async function getCaptureHealth(): Promise<CaptureHealthResponse> {
+// OLD CODE: export async function getCaptureHealth(): Promise<CaptureHealthResponse> { (NET-361: optional signal)
+export async function getCaptureHealth(signal?: AbortSignal): Promise<CaptureHealthResponse> {
 	// OLD CODE START — #96: a failed request read as "Inline Bridge", status Down, link Down
 	// try {
 	// 	const res = await fetch('/api/capture/health');
@@ -262,7 +267,8 @@ export async function getCaptureHealth(): Promise<CaptureHealthResponse> {
 	// 	return { ...same 'down' default... };
 	// }
 	// OLD CODE END
-	const res = await fetch('/api/capture/health');
+	// OLD CODE: const res = await fetch('/api/capture/health'); (NET-361)
+	const res = await fetch('/api/capture/health', { signal });
 	if (!res.ok) {
 		throw new Error(`Capture health request failed: HTTP ${res.status}`);
 	}

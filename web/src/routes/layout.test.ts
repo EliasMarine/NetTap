@@ -67,12 +67,14 @@ const meRefused = () => new Response(JSON.stringify({ authenticated: false }), {
 // OLD CODE END
 /** /api/system/ping answers with `ping`, /api/auth/me with `me`; everything else with `other` (NotificationBell's requests: 503). */
 function stubFetch(
-	ping: () => Response | Promise<Response> = () => new Response(JSON.stringify({ status: 'ok' })),
+	// OLD CODE: ping: () => Response | Promise<Response> = …, (NET-361: the ping carries a deadline signal now)
+	ping: (init?: RequestInit) => Response | Promise<Response> = () => new Response(JSON.stringify({ status: 'ok' })),
 	me: (init?: RequestInit) => Response | Promise<Response> = meRefused,
 	other: (url: string, init?: RequestInit) => Response | Promise<Response> = () => new Response('{}', { status: 503 }),
 ) {
 	const fetchMock = vi.fn(async (url: string, init?: RequestInit) =>
-		url === '/api/system/ping' ? ping() : url === '/api/auth/me' ? me(init) : other(url, init),
+		// OLD CODE: url === '/api/system/ping' ? ping() : … (NET-361)
+		url === '/api/system/ping' ? ping(init) : url === '/api/auth/me' ? me(init) : other(url, init),
 	);
 	vi.stubGlobal('fetch', fetchMock);
 	vi.stubGlobal('EventSource', class { addEventListener() {} close() {} });
@@ -80,6 +82,26 @@ function stubFetch(
 }
 
 const pingCalls = (f: ReturnType<typeof vi.fn>) => f.mock.calls.filter(([u]) => u === '/api/system/ping').length;
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((res) => (resolve = res));
+	return { promise, resolve };
+}
+
+/** AbortSignal.timeout on the fake clock: Node's own timer doesn't follow vi.useFakeTimers. */
+function timeoutsOnFakeClock() {
+	const spy = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+		const controller = new AbortController();
+		setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+		return controller.signal;
+	});
+	onTestFinished(() => spy.mockRestore());
+	return spy;
+}
+/** A request that never answers: it ends only when its signal aborts. */
+const untilAborted = (init?: RequestInit) =>
+	new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
 
 function renderLayout(username: string | null = 'admin') {
 	return render(Layout, { props: { children, data: { username } } });
@@ -190,6 +212,9 @@ describe('layout daemon status', () => {
 
 	it('re-checks every 30 s with capture health and storage, and stops after unmount', async () => {
 		vi.useFakeTimers();
+		// NET-361: they answer, so the next tick asks again (one still out is skipped)
+		vi.mocked(captureApi.getCaptureHealth).mockRejectedValue(new Error('503'));
+		vi.mocked(systemApi.getStorageStatus).mockRejectedValue(new Error('503'));
 		let up = true;
 		const f = stubFetch(() => (up ? new Response(JSON.stringify({ status: 'ok' })) : new Response('{}', { status: 502 })));
 		const { unmount } = renderLayout();
@@ -219,6 +244,97 @@ describe('layout daemon status', () => {
 		await vi.advanceTimersByTimeAsync(90_000);
 		expect(pingCalls(f)).toBe(1);
 		hidden.mockRestore();
+	});
+
+	// NET-361: with several tabs open, QA saw 10 copies of the ping queued in one tab
+	describe('one request at a time', () => {
+		const shellCalls = (f: ReturnType<typeof vi.fn>) => [
+			pingCalls(f),
+			vi.mocked(captureApi.getCaptureHealth).mock.calls.length,
+			vi.mocked(systemApi.getStorageStatus).mock.calls.length,
+		];
+
+		it('sends no second ping, capture-health or storage request while the last one is out, each on its own', async () => {
+			vi.useFakeTimers();
+			// these ignore their deadline, so only the one-at-a-time rule holds them back
+			const ping = deferred<Response>();
+			const healthReply = deferred<captureApi.CaptureHealthResponse>();
+			const storageReply = deferred<systemApi.StorageStatus>();
+			const f = stubFetch(() => ping.promise);
+			vi.mocked(captureApi.getCaptureHealth).mockReturnValue(healthReply.promise);
+			vi.mocked(systemApi.getStorageStatus).mockReturnValue(storageReply.promise);
+			renderLayout();
+			await vi.advanceTimersByTimeAsync(90_000);
+			expect(shellCalls(f)).toEqual([1, 1, 1]);
+
+			healthReply.resolve(health('normal'));
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(shellCalls(f)).toEqual([1, 2, 1]); // health is asked again; the ping and storage are still out
+
+			ping.resolve(new Response(JSON.stringify({ status: 'ok' })));
+			storageReply.resolve({ disk_usage_percent: 10 } as systemApi.StorageStatus);
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(shellCalls(f)).toEqual([2, 3, 2]);
+		});
+
+		it("gives up on each after 15 s, says it can't reach NetTap, and asks again on the next tick", async () => {
+			vi.useFakeTimers();
+			const timeouts = timeoutsOnFakeClock();
+			const f = stubFetch(untilAborted);
+			vi.mocked(captureApi.getCaptureHealth).mockImplementation((signal) => untilAborted({ signal }) as never);
+			vi.mocked(systemApi.getStorageStatus).mockImplementation((signal) => untilAborted({ signal }) as never);
+			renderLayout();
+			await vi.advanceTimersByTimeAsync(14_999);
+			expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
+			expect(screen.queryByText('Capture status unknown')).not.toBeInTheDocument();
+
+			await vi.advanceTimersByTimeAsync(1);
+			expect(screen.getByText("Can't reach NetTap")).toBeInTheDocument();
+			expect(screen.getByText('Capture status unknown')).toBeInTheDocument();
+			expect(timeouts).toHaveBeenCalledWith(15_000);
+
+			await vi.advanceTimersByTimeAsync(15_000); // the 30 s tick
+			expect(shellCalls(f)).toEqual([2, 2, 2]);
+		});
+
+		it("doesn't let an older run's storage deadline clear the new run's disk-full warning", async () => {
+			vi.useFakeTimers();
+			timeoutsOnFakeClock();
+			let calls = 0;
+			vi.mocked(systemApi.getStorageStatus).mockImplementation((signal) =>
+				++calls === 1
+					? (untilAborted({ signal }) as never)
+					: Promise.resolve({ disk_usage_percent: 99, capture_paused_disk_full: true } as systemApi.StorageStatus),
+			);
+			renderLayout();
+			await vi.advanceTimersByTimeAsync(0);
+			pageStore.set({ url: new URL('http://localhost/login?next=%2Fsystem') }); // the sign-in page has no shell
+			await vi.advanceTimersByTimeAsync(0);
+			pageStore.set({ url: new URL('http://localhost/system') }); // signed in: a new run
+			await vi.advanceTimersByTimeAsync(0);
+			expect(screen.getByText('Packet capture paused: disk full')).toBeInTheDocument();
+
+			await vi.advanceTimersByTimeAsync(15_000); // the first run's request reaches its deadline
+			expect(screen.getByText('Packet capture paused: disk full')).toBeInTheDocument();
+		});
+
+		it("starts no second alert count while the shell's last refresh is out, and refreshes once it answers", async () => {
+			vi.useFakeTimers();
+			const pending = deferred<ReturnType<typeof counts>>();
+			let n = 0;
+			const fetcher = vi.fn(() => (++n === 2 ? pending.promise : Promise.resolve(counts(n))));
+			_configure({ fetcher: fetcher as never });
+			renderLayout();
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(fetcher).toHaveBeenCalledTimes(2); // the badge's first load and the first tick's refresh
+
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(fetcher).toHaveBeenCalledTimes(2);
+
+			pending.resolve(counts(5));
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(fetcher).toHaveBeenCalledTimes(3);
+		});
 	});
 });
 
@@ -343,6 +459,16 @@ describe('layout session expiry', () => {
 		expect(goto).not.toHaveBeenCalled();
 	});
 
+	// NET-361: one ping at a time, so the newer ping that starts the redirect comes from a new shell run (after a
+	// sign-in round trip), not from the next 30 s tick while the old one is still out
+	/** Leave the shell for the sign-in page and come back: the shell polls again at once. */
+	async function remountShell() {
+		pageStore.set({ url: new URL('http://localhost/login?next=%2Fsystem') });
+		await vi.advanceTimersByTimeAsync(0);
+		pageStore.set({ url: new URL('http://localhost/system') });
+		await vi.advanceTimersByTimeAsync(0);
+	}
+
 	it('does not show offline for an older ping that fails after the redirect has started', async () => {
 		vi.useFakeTimers();
 		let failOld!: (r: Response) => void;
@@ -351,7 +477,9 @@ describe('layout session expiry', () => {
 		stubFetch(() => (++calls === 1 ? old : signInFirst()));
 		vi.mocked(goto).mockReturnValueOnce(never());
 		renderLayout();
-		await vi.advanceTimersByTimeAsync(30_000);
+		// OLD CODE: await vi.advanceTimersByTimeAsync(30_000); (NET-361: the tick skips while the old ping is out)
+		await vi.advanceTimersByTimeAsync(0);
+		await remountShell();
 		expect(goto).toHaveBeenCalledTimes(1);
 
 		failOld(new Response('{}', { status: 502 }));
@@ -368,7 +496,9 @@ describe('layout session expiry', () => {
 		stubFetch(() => (++calls === 1 ? old : signInFirst()));
 		vi.mocked(goto).mockReturnValueOnce(never());
 		renderLayout();
-		await vi.advanceTimersByTimeAsync(30_000);
+		// OLD CODE: await vi.advanceTimersByTimeAsync(30_000); (NET-361: the tick skips while the old ping is out)
+		await vi.advanceTimersByTimeAsync(0);
+		await remountShell();
 		expect(goto).toHaveBeenCalledTimes(1);
 
 		failOld(new TypeError('Failed to fetch'));
@@ -405,25 +535,7 @@ describe('layout session expiry', () => {
 		const settle = async () => {
 			for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 		};
-		function deferred<T>() {
-			let resolve!: (value: T) => void;
-			const promise = new Promise<T>((res) => (resolve = res));
-			return { promise, resolve };
-		}
-
-		/** AbortSignal.timeout on the fake clock: Node's own timer doesn't follow vi.useFakeTimers. */
-		function timeoutsOnFakeClock() {
-			const spy = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
-				const controller = new AbortController();
-				setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
-				return controller.signal;
-			});
-			onTestFinished(() => spy.mockRestore());
-			return spy;
-		}
-		/** A request that never answers: it ends only when its signal aborts. */
-		const untilAborted = (init?: RequestInit) =>
-			new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+		// NET-361: deferred(), timeoutsOnFakeClock() and untilAborted() moved to file scope (the shell poll tests use them)
 
 		it('waits for a change in flight before asking again, and stays once it has succeeded', async () => {
 			const change = deferred<Response>();
@@ -513,14 +625,20 @@ describe('layout session expiry', () => {
 
 		it('gives up on a /me recheck after 10 s without leaving, so the next poll can ask again', async () => {
 			vi.useFakeTimers();
-			const timeouts = timeoutsOnFakeClock();
+			// OLD CODE: const timeouts = timeoutsOnFakeClock(); (NET-361: the ping calls AbortSignal.timeout too, so the spy can't tell them apart)
+			timeoutsOnFakeClock();
 			const f = stubFetch(signInFirst, untilAborted);
 			renderLayout();
 			await vi.advanceTimersByTimeAsync(0);
 			expect(meCalls(f)).toBe(1);
-			expect(timeouts).toHaveBeenCalledWith(10_000);
+			// OLD CODE: expect(timeouts).toHaveBeenCalledWith(10_000); (NET-361)
+			const meSignal = (f.mock.calls.find(([u]) => u === '/api/auth/me')?.[1] as RequestInit | undefined)?.signal;
+			await vi.advanceTimersByTimeAsync(9_999);
+			expect(meSignal?.aborted).toBe(false);
 
-			await vi.advanceTimersByTimeAsync(10_000);
+			// OLD CODE: await vi.advanceTimersByTimeAsync(10_000); (NET-361: the first 9 999 ms ran above)
+			await vi.advanceTimersByTimeAsync(1);
+			expect(meSignal?.aborted).toBe(true);
 			expect(goto).not.toHaveBeenCalled();
 			await vi.advanceTimersByTimeAsync(20_000); // the 30 s poll isn't held up by the check that hung
 			expect(meCalls(f)).toBe(2);

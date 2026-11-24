@@ -238,9 +238,14 @@ export async function getSystemHealth(): Promise<SystemHealth> {
 
 /**
  * Get detailed storage/disk usage and retention policy status.
+ * @param signal - ends the request early (NET-361: the shell's poll gives it a deadline)
  */
-export async function getStorageStatus(): Promise<StorageStatus> {
-	const res = await fetch('/api/storage/status');
+// OLD CODE START — NET-361: no way to end the request
+// export async function getStorageStatus(): Promise<StorageStatus> {
+// 	const res = await fetch('/api/storage/status');
+// OLD CODE END
+export async function getStorageStatus(signal?: AbortSignal): Promise<StorageStatus> {
+	const res = await fetch('/api/storage/status', { signal });
 
 	// OLD CODE START — #96: a failed request read as "0.0% used"
 	// if (!res.ok) {

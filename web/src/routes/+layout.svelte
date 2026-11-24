@@ -28,6 +28,9 @@
 	// The sidebar's Alerts badge: last 24 hours, the same snapshot Home and Alerts read (PLAN.md §4.1).
 	const ALERT_BADGE_HOURS = 24;
 	const SHELL_POLL_MS = 30_000;
+	/** NET-361: each shell request's deadline: under the 30 s poll, above the web routes' own daemon budgets
+	 * (ping 5 s, capture health and storage 10 s), so their specific errors normally arrive first. */
+	const SHELL_REQUEST_TIMEOUT_MS = 15_000;
 	/** The design system's phone breakpoint (bp-phone): below it the sidebar is a drawer. */
 	const PHONE_MAX = 760;
 
@@ -114,6 +117,22 @@
 	let redirecting = false;
 	/** Bumped when the poller stops, so a ping that began in an earlier run can't act on its reply. */
 	let shellRun = 0;
+	/** NET-361: the shell requests this run is still waiting for. A tick doesn't ask again on top of one, so a slow
+	 * reply can't pile up copies (QA saw 10 pings queued in one tab). The poller's cleanup starts a new set. */
+	let waiting = new Set<string>();
+
+	/** Sends `request` unless this run is still waiting for it. `request` must settle, never reject; `apply` runs
+	 * only while the run that asked is current, so a reply or deadline from before a sign-in writes nothing. */
+	function once<T>(key: string, request: () => Promise<T>, apply?: (value: T) => void) {
+		const run = waiting;
+		if (run.has(key)) return;
+		run.add(key);
+		void request()
+			.then((value) => {
+				if (run === waiting) apply?.(value);
+			})
+			.finally(() => run.delete(key));
+	}
 
 	// OLD CODE START — NET-358: left on the first 401, which can be a ping sent with the old cookie just
 	// before a password change landed; the sign-in page then bounced to / and the change's result was lost
@@ -163,7 +182,8 @@
 	async function checkDaemon() {
 		const run = shellRun;
 		try {
-			const res = await fetch('/api/system/ping');
+			// OLD CODE: const res = await fetch('/api/system/ping'); (NET-361: no deadline, so a queued ping never ended)
+			const res = await fetch('/api/system/ping', { signal: AbortSignal.timeout(SHELL_REQUEST_TIMEOUT_MS) });
 			// the reply is whatever JSON came back: the fields are only compared, never trusted
 			const body: { error?: unknown; status?: unknown } | null = res.ok || res.status === 401 ? await res.json() : null;
 			if (run !== shellRun || redirecting) return;
@@ -188,16 +208,34 @@
 		}
 	}
 
+	// OLD CODE START — NET-361: every tick sent each request again, even while the last one hadn't answered
+	// /** Shell values each fail on their own: a failed call shows "—"/unknown, never throws. */
+	// function pollShell() {
+	// 	checkDaemon();
+	// 	void initCaptureMode(); // a no-op once the daemon has named the mode
+	// 	getCaptureHealth()
+	// 		.then((h) => (captureHealth = h))
+	// 		.catch(() => (captureHealth = 'failed'));
+	// 	getStorageStatus()
+	// 		.then((s) => (storage = s))
+	// 		.catch(() => (storage = 'failed'));
+	// }
+	// OLD CODE END
 	/** Shell values each fail on their own: a failed call shows "—"/unknown, never throws. */
 	function pollShell() {
-		checkDaemon();
-		void initCaptureMode(); // a no-op once the daemon has named the mode
-		getCaptureHealth()
-			.then((h) => (captureHealth = h))
-			.catch(() => (captureHealth = 'failed'));
-		getStorageStatus()
-			.then((s) => (storage = s))
-			.catch(() => (storage = 'failed'));
+		const deadline = () => AbortSignal.timeout(SHELL_REQUEST_TIMEOUT_MS);
+		once('ping', checkDaemon); // it checks its own run
+		void initCaptureMode(); // a no-op once the daemon has named the mode; it shares one request in flight
+		once(
+			'health',
+			() => getCaptureHealth(deadline()).catch(() => 'failed' as const),
+			(h) => (captureHealth = h),
+		);
+		once(
+			'storage',
+			() => getStorageStatus(deadline()).catch(() => 'failed' as const),
+			(s) => (storage = s),
+		);
 	}
 
 	$effect(() => {
@@ -207,10 +245,12 @@
 		const timer = setInterval(() => {
 			if (document.hidden || redirecting) return; // paused while the tab is in the background
 			pollShell();
-			refreshAlertSnapshots();
+			// OLD CODE: refreshAlertSnapshots(); (NET-361: a late tick could start a second count beside the last)
+			once('alerts', refreshAlertSnapshots);
 		}, SHELL_POLL_MS);
 		return () => {
 			shellRun++;
+			waiting = new Set();
 			clearInterval(timer);
 		};
 	});

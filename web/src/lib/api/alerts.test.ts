@@ -66,7 +66,8 @@ describe('alerts API client', () => {
 
 			const result = await getAlertCount();
 
-			expect(fetch).toHaveBeenCalledWith('/api/alerts/count');
+			// OLD CODE: expect(fetch).toHaveBeenCalledWith('/api/alerts/count'); (NET-361: the call carries a signal)
+			expect(fetch).toHaveBeenCalledWith('/api/alerts/count', { signal: undefined });
 			expect(result.counts.total).toBe(42);
 			expect(result.counts.high).toBe(3);
 		});
@@ -83,17 +84,28 @@ describe('alerts API client', () => {
 
 			await getAlertCount({ from: '2026-02-25T00:00:00Z' });
 
-			expect(fetch).toHaveBeenCalledWith(
-				expect.stringContaining('/api/alerts/count?')
-			);
+			// OLD CODE: expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/alerts/count?')); (NET-361)
+			expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/alerts/count?'), { signal: undefined });
+		});
+
+		// NET-361: the alert snapshot gives every count a deadline
+		it('hands the caller\'s signal to fetch', async () => {
+			mockFetchSuccess({ from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } });
+			const signal = new AbortController().signal;
+			await getAlertCount({}, signal);
+			expect(fetch).toHaveBeenCalledWith('/api/alerts/count', { signal });
 		});
 
 		it('counts the activity alerts only when asked (NET-191)', async () => {
 			mockFetchSuccess({ from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } });
 			await getAlertCount({ from: 'a', to: 'b', activity: true });
 			await getAlertCount({ from: 'a', to: 'b', activity: false });
-			expect(fetch).toHaveBeenNthCalledWith(1, '/api/alerts/count?from=a&to=b&activity=true');
-			expect(fetch).toHaveBeenNthCalledWith(2, '/api/alerts/count?from=a&to=b');
+			// OLD CODE START — NET-361: the call carries a signal
+			// expect(fetch).toHaveBeenNthCalledWith(1, '/api/alerts/count?from=a&to=b&activity=true');
+			// expect(fetch).toHaveBeenNthCalledWith(2, '/api/alerts/count?from=a&to=b');
+			// OLD CODE END
+			expect(fetch).toHaveBeenNthCalledWith(1, '/api/alerts/count?from=a&to=b&activity=true', { signal: undefined });
+			expect(fetch).toHaveBeenNthCalledWith(2, '/api/alerts/count?from=a&to=b', { signal: undefined });
 		});
 	});
 

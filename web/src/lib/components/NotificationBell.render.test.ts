@@ -28,7 +28,10 @@ function stubFetch(reply: () => { ok: boolean; status: number; body: unknown }) 
 
 async function openBell() {
 	render(NotificationBell);
-	await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/notifications?limit=15'));
+	// OLD CODE: await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/notifications?limit=15')); (NET-361: with a deadline)
+	await vi.waitFor(() =>
+		expect(fetch).toHaveBeenCalledWith('/api/notifications?limit=15', { signal: expect.any(AbortSignal) }),
+	);
 	await new Promise((r) => setTimeout(r, 0));
 	await fireEvent.click(screen.getByRole('button', { name: /^Notifications/ }));
 }
@@ -150,6 +153,90 @@ describe('NotificationBell Escape (NET-370)', () => {
 			expect(outside).toHaveFocus();
 		} finally {
 			outside.remove();
+		}
+	});
+});
+
+// NET-361: with several tabs open, polls stacked up behind each other in the browser
+describe('NotificationBell polling', () => {
+	const listCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith('/api/notifications?'));
+	const answer = () => ({ ok: true, status: 200, json: async () => ({ notifications: [NOTE], unreadCount: 1 }) });
+
+	/** /api/notifications answers from `list`; the alert-conversion call always succeeds. */
+	function stubList(list: (init?: RequestInit) => Promise<unknown>) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: RequestInit) =>
+				url.startsWith('/api/notifications?') ? list(init) : { ok: true, status: 200, json: async () => ({}) },
+			),
+		);
+	}
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it('sends no second list request while one is out, then polls again once it answers', async () => {
+		vi.useFakeTimers();
+		let release!: (reply: unknown) => void;
+		stubList(() => (listCalls().length === 1 ? new Promise((resolve) => (release = resolve)) : Promise.resolve(answer())));
+		render(NotificationBell);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(listCalls()).toHaveLength(1);
+
+		await fireEvent.click(screen.getByRole('button', { name: /^Notifications/ })); // an empty list asks on open
+		await vi.advanceTimersByTimeAsync(60_000); // and the poll ticks
+		expect(listCalls()).toHaveLength(1);
+
+		release(answer());
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(listCalls()).toHaveLength(2);
+	});
+
+	it('gives up on a list request after 15 s, so the next poll fills the list', async () => {
+		vi.useFakeTimers();
+		// AbortSignal.timeout on the fake clock: Node's own timer doesn't follow vi.useFakeTimers
+		const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+			return controller.signal;
+		});
+		try {
+			stubList((init) =>
+				listCalls().length === 1
+					? new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)))
+					: Promise.resolve(answer()),
+			);
+			render(NotificationBell);
+			await vi.advanceTimersByTimeAsync(14_999);
+			const first = (listCalls()[0][1] as RequestInit | undefined)?.signal;
+			expect(first?.aborted).toBe(false);
+
+			await vi.advanceTimersByTimeAsync(1);
+			expect(first?.aborted).toBe(true);
+			expect(timeout).toHaveBeenCalledWith(15_000);
+
+			await vi.advanceTimersByTimeAsync(45_000); // the 60 s poll
+			expect(listCalls()).toHaveLength(2);
+			await fireEvent.click(screen.getByRole('button', { name: /^Notifications/ }));
+			expect(screen.getByText('Port scan from 10.0.0.9')).toBeInTheDocument();
+		} finally {
+			timeout.mockRestore();
+		}
+	});
+
+	it('skips the poll while the tab is hidden (the stream still reaches it)', async () => {
+		vi.useFakeTimers();
+		stubList(() => Promise.resolve(answer()));
+		render(NotificationBell);
+		await vi.advanceTimersByTimeAsync(0);
+		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+		try {
+			await vi.advanceTimersByTimeAsync(180_000);
+			expect(listCalls()).toHaveLength(1);
+		} finally {
+			hidden.mockRestore();
 		}
 	});
 });

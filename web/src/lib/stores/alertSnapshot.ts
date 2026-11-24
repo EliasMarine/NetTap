@@ -36,7 +36,10 @@ export const alertSnapshots: Readable<Record<number, AlertSnapshot>> = { subscri
 let generation = 0;
 let generationStart = Date.now();
 const inFlight = new Map<number, { generation: number; promise: Promise<AlertSnapshot> }>();
-let fetcher: Fetcher = (p) => getAlertCount(p);
+/** NET-361: under the shell's 30 s refresh, above the web route's 10 s daemon budget. */
+const COUNT_TIMEOUT_MS = 15_000;
+// OLD CODE: let fetcher: Fetcher = (p) => getAlertCount(p); (NET-361: a stalled count, body included, outlived the next refresh)
+let fetcher: Fetcher = (p) => getAlertCount(p, AbortSignal.timeout(COUNT_TIMEOUT_MS));
 let clock: () => number = Date.now;
 
 /** Test seam. */

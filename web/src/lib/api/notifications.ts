@@ -14,9 +14,14 @@ export interface NotificationsResponse {
 
 /**
  * Fetch recent notifications and unread count.
+ * @param signal - ends the request early (NET-361: the bell gives it a deadline)
  */
-export async function getNotifications(limit: number = 20): Promise<NotificationsResponse> {
-	const res = await fetch(`/api/notifications?limit=${limit}`);
+// OLD CODE START — NET-361: no way to end the request
+// export async function getNotifications(limit: number = 20): Promise<NotificationsResponse> {
+// 	const res = await fetch(`/api/notifications?limit=${limit}`);
+// OLD CODE END
+export async function getNotifications(limit: number = 20, signal?: AbortSignal): Promise<NotificationsResponse> {
+	const res = await fetch(`/api/notifications?limit=${limit}`, { signal });
 
 	// OLD CODE START — #96: a failed request read as "No notifications"
 	// if (!res.ok) {

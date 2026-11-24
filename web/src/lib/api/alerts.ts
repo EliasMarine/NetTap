@@ -257,10 +257,13 @@ export async function getAlerts(
 // OLD CODE END
 export async function getAlertCount(
 	/** `activity`: count the activity alerts (ET rates them informational or unknown) instead */
-	opts: TimeRangeParams & { activity?: boolean } = {}
+	opts: TimeRangeParams & { activity?: boolean } = {},
+	/** NET-361: ends the request early (the shared alert snapshot gives it a deadline) */
+	signal?: AbortSignal
 ): Promise<AlertCountResponse> {
 	const query = buildQuery({ from: opts.from, to: opts.to, activity: opts.activity ? 'true' : undefined });
-	const res = await fetch(`/api/alerts/count${query}`);
+	// OLD CODE: const res = await fetch(`/api/alerts/count${query}`); (NET-361)
+	const res = await fetch(`/api/alerts/count${query}`, { signal });
 
 	// OLD CODE START — #96: a failure read as zero alerts
 	// if (!res.ok) {

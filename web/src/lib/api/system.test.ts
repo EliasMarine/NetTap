@@ -100,8 +100,17 @@ describe('system API client', () => {
 
 			const result = await getStorageStatus();
 
-			expect(fetch).toHaveBeenCalledWith('/api/storage/status');
+			// OLD CODE: expect(fetch).toHaveBeenCalledWith('/api/storage/status'); (NET-361: the call carries a signal)
+			expect(fetch).toHaveBeenCalledWith('/api/storage/status', { signal: undefined });
 			expect(result).toEqual(expected);
+		});
+
+		// NET-361: the shell's poll gives it a deadline
+		it("hands the caller's signal to fetch", async () => {
+			mockFetchSuccess({ disk_usage_percent: 1 });
+			const signal = new AbortController().signal;
+			await getStorageStatus(signal);
+			expect(fetch).toHaveBeenCalledWith('/api/storage/status', { signal });
 		});
 
 		it('throws on HTTP error instead of reporting 0% used', async () => {
