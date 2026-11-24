@@ -21,6 +21,27 @@ describe('Subnet calculator page', () => {
 		expect(fact('Usable hosts')).toBe('2');
 	});
 
+	// NET-362 (RFC 3021): a /31's two addresses are both endpoints, and a /32 is one host; neither has a broadcast
+	it('gives a /31 two usable endpoints and no broadcast, and a /32 one host and no broadcast', async () => {
+		render(Page);
+		const field = screen.getByLabelText('IP address');
+		await fireEvent.input(field, { target: { value: '192.0.2.9/31' } });
+		expect(fact('CIDR block')).toBe('192.0.2.8/31');
+		expect(fact('First usable IP')).toBe('192.0.2.8');
+		expect(fact('Last usable IP')).toBe('192.0.2.9');
+		expect(fact('Broadcast address')).toBe('None (point-to-point)');
+		expect(fact('Usable hosts')).toBe('2');
+
+		await fireEvent.input(field, { target: { value: '192.0.2.9/32' } });
+		expect(fact('First usable IP')).toBe('192.0.2.9');
+		expect(fact('Last usable IP')).toBe('192.0.2.9');
+		expect(fact('Broadcast address')).toBe('None (single host)');
+
+		await fireEvent.input(field, { target: { value: '192.0.2.9/30' } });
+		expect(fact('Broadcast address')).toBe('192.0.2.11');
+		expect(fact('Last usable IP')).toBe('192.0.2.10');
+	});
+
 	it('says the address is invalid, and shows the empty state when there is none', async () => {
 		render(Page);
 		const field = screen.getByLabelText('IP address');
