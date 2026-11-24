@@ -65,6 +65,98 @@ describe('Investigations page', () => {
 });
 
 
+// NET-366 (23 Nov QA): Cancel kept the case details, so the next investigation inherited them
+describe('Investigations — the new-investigation form starts fresh', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const EMPTY = {
+		'/api/investigations': { investigations: [] },
+		'/api/investigations/stats': { total: 0, by_status: {}, by_severity: {} },
+	};
+	const field = (id: string) => document.getElementById(id) as HTMLInputElement | null;
+	const newButton = () => screen.getByRole('button', { name: 'New investigation' });
+
+	async function draftCase() {
+		await fireEvent.click(newButton());
+		await fireEvent.input(field('inv-title')!, { target: { value: 'Router scan' } });
+		await fireEvent.input(field('inv-description')!, { target: { value: 'Port sweep from the IoT VLAN' } });
+		await fireEvent.input(field('inv-tags')!, { target: { value: 'scan, iot' } });
+		await fireEvent.change(field('inv-severity')!, { target: { value: 'critical' } });
+	}
+
+	function expectFreshForm() {
+		expect(field('inv-title')).toHaveValue('');
+		expect(field('inv-description')).toHaveValue('');
+		expect(field('inv-tags')).toHaveValue('');
+		expect(field('inv-severity')).toHaveValue('medium');
+	}
+
+	async function openPage() {
+		render(InvestigationsPage);
+		await vi.waitFor(() => expect(screen.getByText('No investigations yet')).toBeInTheDocument());
+	}
+
+	it('Cancel clears the title, description, tags and severity, so the next one starts at its defaults', async () => {
+		stubDaemon(EMPTY);
+		await openPage();
+
+		await draftCase();
+		await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+		expect(field('inv-title')).toBeNull();
+		await fireEvent.click(newButton());
+
+		expectFreshForm();
+	});
+
+	it('a second click on New investigation keeps the draft: only Cancel discards it', async () => {
+		stubDaemon(EMPTY);
+		await openPage();
+
+		await draftCase();
+		await fireEvent.click(newButton());
+
+		expect(field('inv-title')).toHaveValue('Router scan');
+		expect(field('inv-severity')).toHaveValue('critical');
+	});
+
+	it('holds Cancel and New investigation until a create and its refresh land, then opens a fresh form', async () => {
+		let postLand: () => void = () => {};
+		let refreshLand: () => void = () => {};
+		const postLanded = new Promise<void>((resolve) => (postLand = resolve));
+		const refreshLanded = new Promise<void>((resolve) => (refreshLand = resolve));
+		let posted = false;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: { method?: string }) => {
+				const path = url.split('?')[0] as keyof typeof EMPTY;
+				if (path === '/api/investigations' && init?.method === 'POST') {
+					await postLanded;
+					posted = true;
+					return { ok: true, status: 201, json: async () => ({ id: 'i1', title: 'Router scan' }) };
+				}
+				if (posted) await refreshLanded;
+				return EMPTY[path] ? { ok: true, status: 200, json: async () => EMPTY[path] } : { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+		await openPage();
+
+		await draftCase();
+		await fireEvent.click(screen.getByRole('button', { name: 'Create investigation' }));
+		expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+		expect(newButton()).toBeDisabled();
+
+		postLand();
+		await vi.waitFor(() => expect(field('inv-title')).toBeNull());
+		expect(newButton()).toBeDisabled();
+
+		refreshLand();
+		await vi.waitFor(() => expect(newButton()).not.toBeDisabled());
+		await fireEvent.click(newButton());
+		expectFreshForm();
+		expect(screen.getByRole('button', { name: 'Cancel' })).not.toBeDisabled();
+	});
+});
+
 // NET-349: the drawer is modal now, so its failures show inside it, kept per investigation
 describe('Investigations — failures inside the drawer', () => {
 	afterEach(() => vi.unstubAllGlobals());

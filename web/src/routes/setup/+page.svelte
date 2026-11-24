@@ -1593,13 +1593,14 @@
 
 						<div class="field">
 							<label for="unifi-api-key" class="label">API key</label>
+							<!-- OLD CODE: autocomplete="off" (NET-367: Chrome ignores "off" and could fill a saved NetTap login here on a reinstall; one-time-code is a field its password manager never fills) -->
 							<input
 								id="unifi-api-key"
 								type="password"
 								class="input"
 								placeholder="Paste your UniFi API key"
 								bind:value={unifiApiKey}
-								autocomplete="off"
+								autocomplete="one-time-code"
 							/>
 							<span class="field-help">Create an API key in your UniFi controller under Settings → Integrations.</span>
 						</div>

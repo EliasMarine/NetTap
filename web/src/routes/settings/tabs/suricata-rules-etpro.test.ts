@@ -292,7 +292,8 @@ describe('Suricata rules page — ET Pro card', () => {
 		render(Page);
 		const input = (await screen.findByLabelText('ET Pro code')) as HTMLInputElement;
 		expect(input).toHaveAttribute('type', 'password');
-		expect(input).toHaveAttribute('autocomplete', 'off');
+		// OLD CODE: expect(input).toHaveAttribute('autocomplete', 'off'); (NET-367: Chrome ignores "off" for saved logins)
+		expect(input).toHaveAttribute('autocomplete', 'one-time-code');
 
 		await fireEvent.input(input, { target: { value: 'abcd1234ABCD5678' } });
 		await fireEvent.click(screen.getByRole('button', { name: 'Save code' }));

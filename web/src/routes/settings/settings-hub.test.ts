@@ -602,6 +602,79 @@ describe('Settings hub — what does not hold navigation', () => {
 	});
 });
 
+// NET-365 / NET-367 (23 Nov QA): only what the user changed holds navigation
+describe('Settings hub — untouched forms do not hold navigation', () => {
+	const channelsCard = () => within(panel()).getByRole('heading', { name: 'Notification channels' }).closest('.card') as HTMLElement;
+	const field = (id: string) => document.getElementById(id) as HTMLInputElement;
+
+	it('a new channel cancelled and reopened with nothing typed does not hold a tab switch (NET-365)', async () => {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(within(channelsCard()).getByRole('button', { name: 'Add channel' }));
+		await fireEvent.input(field('channel-name'), { target: { value: 'Ops Slack' } });
+		await fireEvent.click(within(channelsCard()).getByRole('button', { name: 'Cancel' }));
+		await fireEvent.click(within(channelsCard()).getByRole('button', { name: 'Add channel' }));
+
+		await openTab('About');
+		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+		expect(screen.queryByText(/You have unsaved changes/)).not.toBeInTheDocument();
+	});
+
+	it('an SMTP port typed alone holds a tab switch, and Cancel lets it go (NET-365)', async () => {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(within(channelsCard()).getByRole('button', { name: 'Add channel' }));
+		await fireEvent.change(field('channel-type'), { target: { value: 'email' } });
+		await fireEvent.input(field('cfg-smtp_port'), { target: { value: '587' } });
+
+		await fireEvent.click(tab('About'));
+		expect(screen.getByText('You have unsaved changes in Notifications.')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+		await fireEvent.click(within(channelsCard()).getByRole('button', { name: 'Cancel' }));
+		await fireEvent.click(within(channelsCard()).getByRole('button', { name: 'Add channel' }));
+
+		await openTab('About');
+		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+	});
+
+	it.each<[string, Record<string, Route>]>([
+		[
+			'integrations',
+			{
+				'/api/integrations/unifi/status': () => ({
+					body: { configured: true, controller_url: 'https://192.168.1.1', site_id: 'default', connected: true, last_poll_time: 0, cache_counts: { clients: 0, devices: 0 }, last_error: null },
+				}),
+			},
+		],
+		['api-keys', { '/api/settings/api-keys': () => ({ body: { keys: { MAXMIND_LICENSE_KEY: true, SMTP_PASSWORD: true } } }) }],
+		[
+			'suricata-rules',
+			{
+				'/api/suricata/rules/live': () => ({
+					body: { available: true, enabled_rules: 1, disabled_rules: 0, last_updated: null, sources: [], schedule: '0 0 * * *', error: null },
+				}),
+				'/api/suricata/rules/custom': () => ({ body: { content: '', rule_count: 0, max_rules: 2000, max_bytes: 262144 } }),
+				'/api/suricata/rules/commercial': () => ({ body: { configured: true, active: true, last_update_ok: true, applying: false, activation: null } }),
+			},
+		],
+	])("%s: every secret field is one Chrome's password manager never fills, and the loaded tab does not hold a switch (NET-367)", async (id, routes) => {
+		resetNavigation(`http://localhost/settings?tab=${id}`);
+		stubFetch(routes);
+		render(Page);
+		await flush();
+
+		const secrets = Array.from(panel().querySelectorAll('input[type="password"]'));
+		expect(secrets.length).toBeGreaterThan(0);
+		for (const input of secrets) expect(input).toHaveAttribute('autocomplete', 'one-time-code');
+
+		await openTab('About');
+		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+		expect(screen.queryByText(/You have unsaved changes/)).not.toBeInTheDocument();
+	});
+});
+
 describe("Settings hub — the top bar's Refresh", () => {
 	it.each([
 		['Notifications', true],

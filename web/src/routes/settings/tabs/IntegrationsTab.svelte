@@ -282,13 +282,14 @@
 
 					<div class="field">
 						<div class="label-row"><label class="label" for="unifi-api-key">API key</label>{@render configured(unifiConfigured)}</div>
+						<!-- OLD CODE: autocomplete="off" (NET-367: Chrome's password manager ignores "off" and filled the NetTap login here, so the tab read as changed; one-time-code is a field it never fills) -->
 						<input
 							class="input mono"
 							id="unifi-api-key"
 							type="password"
 							bind:value={unifiApiKey}
 							placeholder={unifiConfigured ? 'Leave blank to keep current key' : 'Paste your UniFi API key'}
-							autocomplete="off"
+							autocomplete="one-time-code"
 							spellcheck="false"
 						/>
 						<p class="field-help">

@@ -238,6 +238,8 @@ describe('setup wizard UniFi test connection', () => {
 		await fireEvent.click(await screen.findByRole('checkbox'));
 		await fireEvent.input(screen.getByLabelText('Controller URL'), { target: { value: 'https://10.0.0.1' } });
 		await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'wrong-key' } });
+		// NET-367: Chrome's password manager ignores "off"; it never fills a one-time-code field
+		expect(screen.getByLabelText('API key')).toHaveAttribute('autocomplete', 'one-time-code');
 
 		await fireEvent.click(screen.getByRole('button', { name: /Test connection/ }));
 
