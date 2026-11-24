@@ -62,9 +62,18 @@ describe('notifications API client', () => {
 
 			const result = await getNotifications(10);
 
-			expect(fetch).toHaveBeenCalledWith('/api/notifications?limit=10');
+			// OLD CODE: expect(fetch).toHaveBeenCalledWith('/api/notifications?limit=10'); (NET-361: the call carries a signal)
+			expect(fetch).toHaveBeenCalledWith('/api/notifications?limit=10', { signal: undefined });
 			expect(result.notifications).toHaveLength(1);
 			expect(result.unreadCount).toBe(1);
+		});
+
+		// NET-361: the bell gives the list request a deadline
+		it("hands the caller's signal to fetch", async () => {
+			mockFetchSuccess({ notifications: [], unreadCount: 0 });
+			const signal = new AbortController().signal;
+			await getNotifications(15, signal);
+			expect(fetch).toHaveBeenCalledWith('/api/notifications?limit=15', { signal });
 		});
 
 		it('throws on HTTP error instead of reporting no notifications', async () => {

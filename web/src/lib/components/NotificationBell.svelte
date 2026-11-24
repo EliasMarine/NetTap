@@ -25,11 +25,17 @@
 	// #96: the last fetch failed, so an empty list is not "No notifications"
 	let fetchFailed = $state(false);
 
+	/** NET-361: under the 30 s fallback poll, so a hung request always ends and clears `loading`. */
+	const LIST_TIMEOUT_MS = 15_000;
+
 	// Fetch notifications
 	async function fetchNotifications() {
+		// NET-361: one request at a time (mount, dropdown and poll share it), so slow replies can't pile up copies
+		if (loading) return;
 		loading = true;
 		try {
-			const res = await getNotifications(15);
+			// OLD CODE: const res = await getNotifications(15); (NET-361: no deadline)
+			const res = await getNotifications(15, AbortSignal.timeout(LIST_TIMEOUT_MS));
 			notifications = res.notifications;
 			unreadCount = res.unreadCount;
 			fetchFailed = false;
@@ -69,7 +75,8 @@
 		// Fallback polling — slower when SSE is active
 		const interval = setInterval(
 			() => {
-				fetchNotifications();
+				// OLD CODE: fetchNotifications(); (NET-361: hidden tabs polled too; the stream still reaches them)
+				if (!document.hidden) fetchNotifications();
 			},
 			stream.isConnected() ? 60_000 : 30_000
 		);

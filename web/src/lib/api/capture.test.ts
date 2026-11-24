@@ -253,6 +253,14 @@ describe('capture API client', () => {
 			await expect(getCaptureHealth()).rejects.toThrow('HTTP 500');
 		});
 
+		// NET-361: the shell's poll gives it a deadline
+		it("hands the caller's signal to fetch", async () => {
+			mockFetchSuccess({ mode: 'bridge', status: 'normal', capture_interface: 'br0', link_up: true, promisc_enabled: true, issues: [] });
+			const signal = new AbortController().signal;
+			await getCaptureHealth(signal);
+			expect(fetch).toHaveBeenCalledWith('/api/capture/health', { signal });
+		});
+
 		it('throws on network error', async () => {
 			mockFetchReject();
 

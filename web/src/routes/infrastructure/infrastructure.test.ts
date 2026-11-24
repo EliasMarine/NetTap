@@ -110,7 +110,8 @@ describe('Infrastructure pipeline in mirror mode', () => {
 
 	async function renderPage() {
 		render(InfrastructurePage);
-		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/capture/health'));
+		// OLD CODE: await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/capture/health')); (NET-361: the call carries a signal)
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/capture/health', { signal: undefined }));
 		await new Promise((r) => setTimeout(r, 0));
 	}
 
