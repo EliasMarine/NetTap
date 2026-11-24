@@ -91,6 +91,19 @@ Plan reviewed by Codex: `VERDICT: APPROVED` in round 5 of 5 (`.codex-review/2026
   - a refused download briefly opens and closes a tab;
   - with no `window.opener` (the blocked-pop-up link), the user reads the explanation on the tab's own page instead.
 
+## Review of #368 (24 Nov)
+
+- **Security review:** no findings. **TypeScript review:** no Critical or High.
+- **Medium 1, fixed with a test:** DNS by device shows a daemon reason only for a 400. A 502 carrying raw text (`index_not_found_exception …`) keeps the retry hint and Try again, and the text stays hidden (`dns-page.test.ts`).
+- **Medium 2, fixed with a test:** picking a client in the NXDOMAIN table after a typo clears the IP error (the "typo after a lookup" test).
+- **Deploy script:** `deploy-qa-fixes-2026-11-23.sh` step 7 now checks through nginx:
+  - DNS by device for `not-an-address` → 400;
+  - a 2001-window download with `reply=page` → `404 text/html`;
+  - the same download without it → `404 application/json`.
+- **Follow-ups, not done here:**
+  - **Low 3:** the subnet calculator accepts malformed input such as `1..2.3` and `/24abc`. The lead is filing it in Linear.
+  - **Lows 4 and 5:** deferred by the lead. Their details are in the TypeScript review of #368.
+
 ## Verification
 
 - `cd web && npx vitest run`: all pass. `npx svelte-check`: 0 errors, 2 warnings that were already there (DrawerSection, KVRow). `npm run check:colors`: clean.
