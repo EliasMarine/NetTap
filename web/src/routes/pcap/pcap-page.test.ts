@@ -20,11 +20,15 @@ vi.mock('$lib/api/capture', async (importActual) => ({
 }));
 
 let open: ReturnType<typeof vi.fn>;
+/** The download's tab: window.open returns it, and only it may report a refusal (NET-373) */
+let tab: { close: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
 	vi.mocked(api.getPcapFiles).mockResolvedValue({ count: 0, files: [] });
 	vi.mocked(api.checkPcapFilter).mockImplementation(async (filter) => ({ ok: true, filter }));
-	open = vi.fn();
+	tab = { close: vi.fn() };
+	// OLD CODE: open = vi.fn(); (NET-373: a null return now means the browser blocked the tab)
+	open = vi.fn(() => tab);
 	vi.stubGlobal('open', open);
 });
 afterEach(() => {
@@ -102,6 +106,85 @@ describe('PCAP Search: Download filtered window', () => {
 		expect(from().type).toBe('datetime-local');
 		expect(to().type).toBe('datetime-local');
 		expect(screen.getByText(/Download filtered saves the last hour unless you set a start and an end here/)).toBeTruthy();
+		expect(screen.getByText(/a window that holds too many says how many here/)).toBeTruthy();
 		expectNoNestedInteractive(document.body);
+	});
+});
+
+// NET-373: a refused download opened its raw JSON in the new tab, away from the dates
+describe('PCAP Search: a refused download says why beside its dates', () => {
+	const EMPTY = 'No capture file holds packets from this window.';
+
+	/** What lib/server/download-error-page.ts posts from the download's tab. */
+	function refusal(message: string, opts: { source?: unknown; origin?: string; type?: string } = {}) {
+		const event = new MessageEvent('message', {
+			data: { type: opts.type ?? api.DOWNLOAD_ERROR_MESSAGE, message },
+			origin: opts.origin ?? window.location.origin,
+		});
+		// jsdom's MessageEvent takes only a real window as its source
+		Object.defineProperty(event, 'source', { value: 'source' in opts ? opts.source : tab });
+		window.dispatchEvent(event);
+	}
+
+	async function downloadWindow2001() {
+		await setUp('ip.addr == 192.0.2.123');
+		await fireEvent.input(from(), { target: { value: '2001-01-01T00:00:00' } });
+		await fireEvent.input(to(), { target: { value: '2001-01-01T00:01:00' } });
+		await download();
+	}
+
+	it('asks for the refusal as a page, and shows it beside the dates, keeping the filter and dates', async () => {
+		await downloadWindow2001();
+		expect(opened().get('reply')).toBe('page');
+		refusal(EMPTY);
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent(EMPTY);
+		expect(alert.id).toBe('pcap-download-error');
+		expect(from()).toHaveAttribute('aria-describedby', 'pcap-download-error');
+		expect(tab.close).toHaveBeenCalledTimes(1);
+		// jsdom writes a whole minute without its seconds
+		expect(from().value).toMatch(/^2001-01-01T00:00(:00)?$/);
+		expect(to().value).toMatch(/^2001-01-01T00:01(:00)?$/);
+		expect((screen.getByLabelText('Wireshark display filter') as HTMLInputElement).value).toBe('ip.addr == 192.0.2.123');
+	});
+
+	it('ignores a message from another window, another origin or of another kind', async () => {
+		await downloadWindow2001();
+		refusal(EMPTY, { source: {} });
+		refusal(EMPTY, { origin: 'https://elsewhere.example' });
+		refusal(EMPTY, { type: 'something-else' });
+		await Promise.resolve();
+		expect(screen.queryByText(EMPTY)).toBeNull();
+		expect(tab.close).not.toHaveBeenCalled();
+	});
+
+	it('ignores the answer once the dates have changed, and leaves its tab open', async () => {
+		await downloadWindow2001();
+		await fireEvent.input(to(), { target: { value: '2001-01-01T00:02:00' } });
+		refusal(EMPTY);
+		await Promise.resolve();
+		expect(screen.queryByText(EMPTY)).toBeNull();
+		expect(tab.close).not.toHaveBeenCalled();
+	});
+
+	it('clears the last refusal when the same download is tried again', async () => {
+		await downloadWindow2001();
+		refusal('Another download is running; try again when it finishes.');
+		expect(await screen.findByText('Another download is running; try again when it finishes.')).toBeTruthy();
+		await download();
+		expect(screen.queryByRole('alert')).toBeNull();
+		expect(open).toHaveBeenCalledTimes(2);
+	});
+
+	it('offers a plain link when the browser blocks the tab, and clears it once used', async () => {
+		open.mockReturnValueOnce(null);
+		await downloadWindow2001();
+		expect(screen.getByRole('alert')).toHaveTextContent('Your browser blocked the download tab.');
+		const link = screen.getByRole('link', { name: 'Start the download' });
+		expect(link.getAttribute('href')).toBe(open.mock.calls[0][0]);
+		link.addEventListener('click', (e) => e.preventDefault()); // jsdom can't navigate
+		await fireEvent.click(link);
+		expect(screen.queryByRole('alert')).toBeNull();
+		expect(from().value).toMatch(/^2001-01-01T00:00(:00)?$/);
 	});
 });

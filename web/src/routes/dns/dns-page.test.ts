@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import DnsPage from './+page.svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
@@ -234,11 +234,12 @@ describe('DNS page — DNS by device', () => {
 
 	const domains = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ domain: `${prefix}${i}.example`, count: n - i, query_types: [] }));
 
-	function stubDevice(answer: (hours: number) => unknown) {
+	function stubDevice(answer: (hours: number) => unknown, nxdomains?: unknown[]) {
 		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async (url: string) => {
+				if (nxdomains && url.startsWith('/api/dns/nxdomain')) return reply({ from: '', to: '', nxdomains });
 				if (!url.startsWith('/api/dns/device/')) return fail;
 				const q = new URL(url, 'http://x').searchParams;
 				const hours = (Date.parse(q.get('to') ?? '') - Date.parse(q.get('from') ?? '')) / 3_600_000;
@@ -275,6 +276,102 @@ describe('DNS page — DNS by device', () => {
 		render(DnsPage);
 		await lookUp();
 		expect(await screen.findByText('Showing 50 of 60 domains')).toBeInTheDocument();
+	});
+
+	// NET-364: a typo in the Device IP field read as "check that NetTap is running"
+	const box = () => screen.getByPlaceholderText(/192\.168/);
+	const deviceCalls = () => vi.mocked(fetch).mock.calls.map((c) => String(c[0])).filter((u) => u.startsWith('/api/dns/device/'));
+	const IP_ERROR = 'That is not an IP address. Enter one like 192.168.1.100 or 2001:db8::1.';
+	const deviceCard = () => screen.getByRole('heading', { name: 'DNS by device' }).closest('.card') as HTMLElement;
+
+	it('says a typed value is not an IP address and looks nothing up', async () => {
+		stubDevice(() => domains(1, 'd'));
+		render(DnsPage);
+		for (const typed of ['not-an-address', '999.999.999.999']) {
+			await fireEvent.input(box(), { target: { value: typed } });
+			await fireEvent.click(screen.getByRole('button', { name: 'Lookup' }));
+			expect(screen.getByText(IP_ERROR)).toHaveAttribute('role', 'alert');
+			expect(box()).toHaveAttribute('aria-invalid', 'true');
+		}
+		expect(deviceCalls()).toEqual([]);
+		expect(deviceCard()).not.toHaveTextContent(/Check that NetTap is running/);
+		expect(within(deviceCard()).getByText('No device chosen')).toBeInTheDocument();
+	});
+
+	it('keeps the device on screen when a typo follows a lookup, and clears the error on a good one or a picked client', async () => {
+		stubDevice(() => domains(1, 'd'), [{ domain: 'gone.example', count: 2, clients: ['192.168.1.30'] }]);
+		render(DnsPage);
+		await lookUp();
+		expect(await screen.findByText('d0.example')).toBeInTheDocument();
+		await fireEvent.input(box(), { target: { value: '192.168.1.' } });
+		await fireEvent.keyDown(box(), { key: 'Enter' });
+		expect(screen.getByText(IP_ERROR)).toBeInTheDocument();
+		expect(screen.getByText('d0.example')).toBeInTheDocument();
+		expect(deviceCalls()).toHaveLength(1);
+		await lookUp();
+		expect(screen.queryByText(IP_ERROR)).not.toBeInTheDocument();
+
+		// a client picked from the NXDOMAIN table replaces the typo, so its error goes too
+		await fireEvent.input(box(), { target: { value: 'nope' } });
+		await fireEvent.keyDown(box(), { key: 'Enter' });
+		expect(screen.getByText(IP_ERROR)).toBeInTheDocument();
+		await fireEvent.click(await screen.findByRole('button', { name: '192.168.1.30' }));
+		expect(screen.queryByText(IP_ERROR)).not.toBeInTheDocument();
+		expect(box()).toHaveValue('192.168.1.30');
+		expect(deviceCalls().at(-1)).toMatch(/^\/api\/dns\/device\/192\.168\.1\.30/);
+	});
+
+	// only a 400 is a refusal worth showing: any other failure keeps the retry hint and never shows the daemon's raw text
+	it('keeps the retry hint and Try again for a failure that is not a refusal', async () => {
+		const raw = 'index_not_found_exception: no such index [zeek-dns-*]';
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) =>
+				url.startsWith('/api/dns/device/') ? { ok: false, status: 502, json: async () => ({ error: raw }) } : fail,
+			),
+		);
+		render(DnsPage);
+		await lookUp();
+		expect(await screen.findByText("Couldn't load DNS records for 192.168.1.20: the request failed.")).toBeInTheDocument();
+		const card = deviceCard();
+		expect(card).toHaveTextContent('Check that NetTap is running on the System page, then try again.');
+		expect(within(card).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+		expect(card).not.toHaveTextContent(/index_not_found_exception/);
+	});
+
+	it("shows the daemon's reason for a refused lookup, without Try again, and keeps the device", async () => {
+		for (const reason of ['That is not an IP address.', 'from must be 1970 or later']) {
+			vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string) =>
+					url.startsWith('/api/dns/device/') ? { ok: false, status: 400, json: async () => ({ error: reason }) } : fail,
+				),
+			);
+			const view = render(DnsPage);
+			await lookUp();
+			expect(await screen.findByText(reason)).toBeInTheDocument();
+			expect(screen.getByText("Couldn't load DNS records for 192.168.1.20: the request failed.")).toBeInTheDocument();
+			const card = deviceCard();
+			expect(card).not.toHaveTextContent(/Check that NetTap is running/);
+			expect(within(card).queryByRole('button', { name: 'Try again' })).toBeNull();
+			expect(card.querySelector('.card-sub')).toHaveTextContent('Domains 192.168.1.20 looked up');
+			view.unmount();
+		}
+	});
+
+	it('reloads the device on screen for a new range, not what is typed in the box', async () => {
+		stubDevice((hours) => domains(1, hours > 2 ? 'day' : 'hour'));
+		render(DnsPage);
+		await lookUp();
+		expect(await screen.findByText('day0.example')).toBeInTheDocument();
+		await fireEvent.input(box(), { target: { value: '10.0.0.9' } });
+		await fireEvent.click(screen.getByRole('button', { name: '1h' }));
+		expect(await screen.findByText('hour0.example')).toBeInTheDocument();
+		expect(deviceCalls().every((u) => u.startsWith('/api/dns/device/192.168.1.20'))).toBe(true);
+		expect(deviceCard().querySelector('.card-sub')).toHaveTextContent('Domains 192.168.1.20 looked up');
+		expect(box()).toHaveValue('10.0.0.9');
 	});
 });
 

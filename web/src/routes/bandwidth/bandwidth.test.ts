@@ -173,6 +173,38 @@ const ALL = {
 };
 
 describe('Bandwidth — cards', () => {
+
+	// NET-368: the breakdown's count, and its kept rows, only say what a reply said
+	const breakdown = () => screen.getByRole('heading', { name: 'Per-device breakdown' }).closest('.card') as HTMLElement;
+	const breakdownSub = () => breakdown().querySelector('.card-sub')?.textContent;
+
+	it('NET-368: the breakdown names no device count before its first reply or after it fails', async () => {
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+		const view = render(Page);
+		expect(breakdownSub()).toBe('This month');
+		view.unmount();
+		stubDaemon({ '/api/usage/month': MONTH });
+		render(Page);
+		expect(await screen.findByText("Couldn't load the per-device breakdown: the request failed.")).toBeInTheDocument();
+		expect(breakdownSub()).toBe('This month');
+	});
+
+	it('NET-368: a successful empty reply counts 0 devices', async () => {
+		stubDaemon({ ...ALL, '/api/bandwidth/devices': { from: '', to: '', devices: [] } });
+		render(Page);
+		await vi.waitFor(() => expect(breakdownSub()).toBe('This month · 0 devices'));
+	});
+
+	it('NET-368: rows kept after a failed refresh say they are the last ones loaded, in the breakdown itself', async () => {
+		stubDaemon(ALL);
+		render(Page);
+		await vi.waitFor(() => expect(breakdownSub()).toBe('This month · 2 devices'));
+		stubDaemon({ ...ALL, '/api/bandwidth/devices': undefined });
+		await refreshPage();
+		await vi.waitFor(() => expect(breakdown()).toHaveTextContent("Couldn't refresh the per-device breakdown; showing the last figures loaded."));
+		expect(breakdown().querySelectorAll('tbody tr')).toHaveLength(2);
+		expect(breakdownSub()).toBe('This month · 2 devices');
+	});
 	afterEach(() => vi.unstubAllGlobals());
 
 	it('shows the month KPIs, the daily chart, top consumers, the table and the heatmap', async () => {

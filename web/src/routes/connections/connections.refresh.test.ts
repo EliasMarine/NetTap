@@ -250,7 +250,8 @@ describe('Connections refresh contract: the load guard', () => {
 		vi.mocked(getConnections).mockReturnValueOnce(old.promise).mockReturnValueOnce(filtered.promise);
 
 		const run = refreshPage();
-		await fireEvent.click(screen.getByRole('button', { name: 'Rejected' }));
+		// OLD CODE: await fireEvent.click(screen.getByRole('button', { name: 'Rejected' })); (NET-371: the pill reads Reset)
+		await fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
 		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, state: 'rejected' }));
 		filtered.resolve(table('rejected'));
 		await flush();
@@ -259,7 +260,8 @@ describe('Connections refresh contract: the load guard', () => {
 		expect(await run).toBe('ok');
 
 		expect(rowLabels()).toEqual(['Open connection from 10.0.0.8 to 8.8.8.8']);
-		expect(screen.getByRole('button', { name: 'Rejected' })).toHaveAttribute('aria-pressed', 'true');
+		// OLD CODE: expect(screen.getByRole('button', { name: 'Rejected' })).toHaveAttribute('aria-pressed', 'true'); (NET-371)
+		expect(screen.getByRole('button', { name: 'Reset' })).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	it('navigation before completion: nothing is written and "Updated" never moves', async () => {

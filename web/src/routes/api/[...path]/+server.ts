@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestEvent } from '@sveltejs/kit';
 import { daemonFetch } from '$lib/server/daemon.js';
+import { downloadErrorPage } from '$lib/server/download-error-page.js';
 
 /**
  * Catch-all proxy for /api/* routes not handled by more specific route files.
@@ -191,6 +192,11 @@ async function proxyToDaemon({ url, request, params }: CatchAllEvent, method: st
 	}
 
 	const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
+	// NET-373: PCAP Search opens its download as a tab (reply=page); a refusal before the first packet
+	// reads as words there and reaches the page beside its dates, instead of raw JSON
+	if (method === 'GET' && path === '/api/pcap/download' && url.searchParams.get('reply') === 'page' && !res.ok) {
+		return downloadErrorPage((data as { error?: unknown }).error, res.status);
+	}
 	// OLD CODE: return json(data, { status: res.status }); (NET-200: a picture's 404 no-store must reach the browser, or a stale miss is cached)
 	// OLD CODE START — NET-344: the export's busy 503 must keep its Retry-After
 	// const cacheControl = res.headers.get('cache-control');

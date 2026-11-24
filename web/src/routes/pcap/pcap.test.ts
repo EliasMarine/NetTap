@@ -100,6 +100,12 @@ describe('PCAP search page integration', () => {
 		expect(url).toContain('filter=');
 	});
 
+	// NET-373: only PCAP Search's own tab asks for a refusal as a page
+	it('asks for a refusal as a page only when told to', () => {
+		expect(new URL(getDownloadUrl('dns', {}), 'http://x').searchParams.has('reply')).toBe(false);
+		expect(new URL(getDownloadUrl('dns', { reply: 'page' }), 'http://x').searchParams.get('reply')).toBe('page');
+	});
+
 	it('formats bytes correctly', () => {
 		expect(formatBytes(0)).toBe('0 B');
 		// decimal units (NET-166)

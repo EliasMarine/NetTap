@@ -8,6 +8,7 @@ import {
 	getSuspiciousDns,
 	getDnsStats,
 } from './dns';
+import { HttpError } from './drilldown';
 
 function mockFetchSuccess(body: unknown): void {
 	vi.stubGlobal(
@@ -79,6 +80,18 @@ describe('DNS API client', () => {
 		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
 			await expect(getDeviceDns('10.0.0.1')).rejects.toThrow('HTTP 500');
+		});
+
+		// NET-364: a refusal carries its status and the daemon's reason, so the page can show it
+		it("rejects a refused request with the daemon's reason and status 400", async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({ ok: false, status: 400, json: () => Promise.resolve({ error: 'That is not an IP address.' }) }),
+			);
+			const err = await getDeviceDns('not-an-address').catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(HttpError);
+			expect((err as HttpError).status).toBe(400);
+			expect((err as HttpError).message).toBe('That is not an IP address.');
 		});
 	});
 

@@ -57,7 +57,9 @@
 	let dailyChart = $state<BandwidthChart | null>(null);
 	let devices = $state<DeviceUsage[]>([]);
 	let heatmap = $state<HeatmapResponse | null>(null);
-	let loading = $state(false);
+	// OLD CODE: let loading = $state(false); (NET-368: the server render and the first paint showed the empty states)
+	// true until the first load lands: the cards may say "none" only after a reply said so
+	let loading = $state(true);
 	// OLD CODE START — never set since #96; each card shows its own error state
 	// let error = $state('');
 	// OLD CODE END
@@ -70,6 +72,14 @@
 	const RETRY_HINT = 'Check that NetTap is running on the System page, then try again.';
 	/** The most rows the daemon's per-device endpoint returns. */
 	const DEVICE_LIMIT = 200;
+	/** The breakdown's device count, only once a reply gave it or its rows are on screen (NET-368) */
+	const deviceCount = $derived(
+		devices.length === 0 && (loading || devicesFailed)
+			? ''
+			: devices.length >= DEVICE_LIMIT
+				? `top ${DEVICE_LIMIT} devices`
+				: `${devices.length} ${devices.length === 1 ? 'device' : 'devices'}`,
+	);
 
 	// ---------------------------------------------------------------------------
 	// Helpers
@@ -691,16 +701,23 @@
 	<!-- OLD CODE START — 2026-11-06 (O4): a full page of rows read as every device
 	<Card class="c-12" title="Per-device breakdown" sub="This month · {devices.length} {devices.length === 1 ? 'device' : 'devices'}">
 	OLD CODE END -->
+	<!-- OLD CODE START — NET-368: the count read "0 devices" before any reply and after a failed first one
 	<Card
 		class="c-12"
 		title="Per-device breakdown"
 		sub="This month · {devices.length >= DEVICE_LIMIT ? `top ${DEVICE_LIMIT} devices` : `${devices.length} ${devices.length === 1 ? 'device' : 'devices'}`}"
 	>
+	OLD CODE END -->
+	<Card class="c-12" title="Per-device breakdown" sub="This month{deviceCount ? ` · ${deviceCount}` : ''}">
 		{#if devices.length > 0}
 			<DataTable columns={DEVICE_COLUMNS} rows={devices} ariaLabel="Per-device breakdown" rowKey={(d) => d.ip} initialSort={{ key: 'total_bytes', dir: 'desc' }} />
 			{#each ipv6Notes as note (note)}
 				<p class="notice is-warn load-note" role="note"><Icon name="warn" /><span>{note}</span></p>
 			{/each}
+			<!-- NET-368: the kept rows are the last month that loaded, so say so (Top consumers already did) -->
+			{#if devicesFailed}
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the per-device breakdown', true)}</span></p>
+			{/if}
 		{:else if devicesFailed}
 			<CardState state="error" title={loadFailed('the per-device breakdown')} message={RETRY_HINT} onaction={() => refresh.run()} />
 		{:else if loading}

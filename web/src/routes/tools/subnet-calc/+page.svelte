@@ -51,7 +51,11 @@
 
 		return {
 			networkAddress: intToIp(network),
-			broadcastAddress: intToIp(broadcast),
+			// OLD CODE START — NET-362: a /31's second endpoint (and a /32's host) read as its broadcast address
+			// broadcastAddress: intToIp(broadcast),
+			// OLD CODE END
+			// RFC 3021: a /31 is two endpoints with no directed broadcast; a /32 is one host
+			broadcastAddress: prefix === 31 ? 'None (point-to-point)' : prefix === 32 ? 'None (single host)' : intToIp(broadcast),
 			firstUsable: intToIp(firstUsable),
 			lastUsable: intToIp(lastUsable),
 			totalHosts,
@@ -96,7 +100,8 @@
 		result
 			? [
 					{ label: 'Network address', value: result.networkAddress, mono: true },
-					{ label: 'Broadcast address', value: result.broadcastAddress, mono: true },
+					// OLD CODE: { label: 'Broadcast address', value: result.broadcastAddress, mono: true }, (NET-362: words when there is none)
+					{ label: 'Broadcast address', value: result.broadcastAddress, mono: result.cidr < 31 },
 					{ label: 'First usable IP', value: result.firstUsable, mono: true },
 					{ label: 'Last usable IP', value: result.lastUsable, mono: true },
 					{ label: 'Total hosts', value: fmt(result.totalHosts) },
