@@ -80,8 +80,9 @@
 		};
 	});
 
-	// Close dropdown on outside click
+	// Close dropdown on outside click, or on Escape from the bell or inside the panel (NET-370)
 	let bellRef: HTMLDivElement | undefined = $state(undefined);
+	let bellButton: HTMLButtonElement | undefined = $state(undefined);
 
 	$effect(() => {
 		if (!open) return;
@@ -90,8 +91,22 @@
 				open = false;
 			}
 		}
+		function handleKeydown(e: KeyboardEvent) {
+			// body: focus fell out of the open panel (Mark all read removes itself); elsewhere, Escape is that control's own
+			if (e.key !== 'Escape' || !(bellRef?.contains(e.target as Node) || e.target === document.body)) return;
+			e.preventDefault();
+			// one Escape closes only this: the alert detail closes on any Escape that reaches the window
+			e.stopPropagation();
+			open = false;
+			bellButton?.focus();
+		}
 		document.addEventListener('click', handleClick);
-		return () => document.removeEventListener('click', handleClick);
+		document.addEventListener('keydown', handleKeydown);
+		// OLD CODE: return () => document.removeEventListener('click', handleClick); (NET-370: + the Escape listener)
+		return () => {
+			document.removeEventListener('click', handleClick);
+			document.removeEventListener('keydown', handleKeydown);
+		};
 	});
 
 	function toggleDropdown() {
@@ -152,6 +167,7 @@
 	<button
 		class="icon-btn"
 		type="button"
+		bind:this={bellButton}
 		onclick={toggleDropdown}
 		aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
 		aria-expanded={open}

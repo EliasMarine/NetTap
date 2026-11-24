@@ -81,6 +81,8 @@ describe('Settings hub — tabs from the URL', () => {
 		['suricata-rules', 'Rules Suricata runs'],
 		['notifications', 'Notification channels'],
 		['backup', 'Export configuration'],
+		// NET-363: Infrastructure's Configure UniFi lands here
+		['integrations', 'UniFi controller'],
 	])('?tab=%s opens that panel', async (id, heading) => {
 		resetNavigation(`http://localhost/settings?tab=${id}`);
 		stubFetch();

@@ -94,6 +94,8 @@ describe('Infrastructure — UniFi reads that failed', () => {
 
 		expect(await screen.findByText(/Connect your UniFi controller/)).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't load the UniFi status/)).not.toBeInTheDocument();
+		// NET-363: a bare /settings opened Notifications
+		expect(screen.getByRole('link', { name: 'Configure UniFi' })).toHaveAttribute('href', '/settings?tab=integrations');
 	});
 });
 

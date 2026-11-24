@@ -1108,9 +1108,12 @@ OLD CODE END -->
 	.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 	.finding { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--sp-3); align-items: start; padding: var(--sp-3) 0; }
 	.finding + .finding { border-top: 1px solid var(--line); }
-	.finding-body { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--text-sm); min-width: 0; }
+	/* OLD CODE: .finding-body { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--text-sm); min-width: 0; } (NET-372: an unbroken name widened the page at 320 px) */
+	/* overflow-wrap is inherited: an unbroken device name breaks in the sentence and in its button */
+	.finding-body { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--text-sm); min-width: 0; overflow-wrap: anywhere; }
 	.finding-meta { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
-	.finding-device { background: none; border: 0; padding: 0; cursor: pointer; }
+	/* OLD CODE: .finding-device { background: none; border: 0; padding: 0; cursor: pointer; } (NET-372: .link's nowrap kept a long name on one line, past the card) */
+	.finding-device { background: none; border: 0; padding: 0; cursor: pointer; white-space: normal; text-align: start; }
 	.ok-line { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-sm); color: var(--text-2); }
 	.todo { margin-top: var(--sp-4); }
 </style>
