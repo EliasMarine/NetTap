@@ -84,10 +84,24 @@ if ! "${COMPOSE[@]}" up -d --no-deps nettap-web nettap-storage-daemon; then
     exit 1
 fi
 echo "   ✓ Up"
-if sudo docker exec nettap-nginx cat /etc/nginx/nginx.conf 2>/dev/null | cmp -s - docker/nginx.conf; then
-    echo "   ✓ nginx already has this nginx.conf — not touched"
+# OLD CODE START — NET-361: nginx was recreated only for a changed nginx.conf, untested, and the pinned image
+# change (1.30.8) went unnoticed
+# if sudo docker exec nettap-nginx cat /etc/nginx/nginx.conf 2>/dev/null | cmp -s - docker/nginx.conf; then
+#     echo "   ✓ nginx already has this nginx.conf — not touched"
+# else
+#     echo "   nginx.conf changed — recreating nettap-nginx (the dashboard drops for a few seconds)"
+#     if "${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-nginx; then …
+# OLD CODE END
+NGINX_IMAGE=$(grep -E '^[[:space:]]+image:[[:space:]]+nginx:' docker/docker-compose.yml | head -1 | awk '{print $2}')
+if sudo docker exec nettap-nginx cat /etc/nginx/nginx.conf 2>/dev/null | cmp -s - docker/nginx.conf \
+    && [ "$(sudo docker inspect -f '{{.Config.Image}}' nettap-nginx 2>/dev/null)" = "$NGINX_IMAGE" ]; then
+    echo "   ✓ nginx already runs $NGINX_IMAGE with this nginx.conf — not touched"
+# A one-off container tests the new conf on the new image (and pulls it) before the live one is replaced
+elif ! "${COMPOSE[@]}" run --rm --no-deps --entrypoint nginx nettap-nginx -t; then
+    echo "   ✗ nginx -t rejected the new nginx.conf on $NGINX_IMAGE — the running nginx was left as it is"
+    FAILED=1
 else
-    echo "   nginx.conf changed — recreating nettap-nginx (the dashboard drops for a few seconds)"
+    echo "   nginx.conf or image changed — recreating nettap-nginx on $NGINX_IMAGE (the dashboard drops for a few seconds)"
     if "${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-nginx; then
         echo "   ✓ nettap-nginx recreated"
     else
@@ -118,6 +132,9 @@ check_eq "/api/health answers" "$(curl -sk -o /dev/null --max-time 20 -w '%{http
 # NET-361: with "http2 on" all tabs share one connection; before that PR lands, HTTP/1.1 is expected
 if grep -Eq '^[[:space:]]*http2[[:space:]]+on;' docker/nginx.conf; then WANT_HTTP=2; else WANT_HTTP=1.1; fi
 check_eq "the dashboard speaks HTTP/$WANT_HTTP" "$(curl -sk --http2 -o /dev/null --max-time 20 -w '%{http_version}' "$BASE/login")" "$WANT_HTTP"
+# NET-361: 1.30.7+ carries the 2026 HTTP/2 and TLS fixes; the running binary must be the pinned one
+WANT_NGINX=$(printf '%s' "$NGINX_IMAGE" | sed -E 's/^nginx:([0-9.]+).*/\1/')
+check_eq "nginx runs the pinned version" "$(sudo docker exec nettap-nginx nginx -v 2>&1 | sed -E 's|.*nginx/||')" "$WANT_NGINX"
 PING=$(signed_in "$BASE/api/system/ping")
 check_eq "signed-in /api/system/ping says ok" "$(printf '%s' "$PING" | grep -o '"status": *"ok"' | head -1 | tr -d ' ')" '"status":"ok"'
 for page in / /settings?tab=integrations /infrastructure /iot /investigations /bandwidth /dns /connections /pcap /tools/subnet-calc; do
