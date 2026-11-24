@@ -234,11 +234,12 @@ describe('DNS page — DNS by device', () => {
 
 	const domains = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ domain: `${prefix}${i}.example`, count: n - i, query_types: [] }));
 
-	function stubDevice(answer: (hours: number) => unknown) {
+	function stubDevice(answer: (hours: number) => unknown, nxdomains?: unknown[]) {
 		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async (url: string) => {
+				if (nxdomains && url.startsWith('/api/dns/nxdomain')) return reply({ from: '', to: '', nxdomains });
 				if (!url.startsWith('/api/dns/device/')) return fail;
 				const q = new URL(url, 'http://x').searchParams;
 				const hours = (Date.parse(q.get('to') ?? '') - Date.parse(q.get('from') ?? '')) / 3_600_000;
@@ -297,8 +298,8 @@ describe('DNS page — DNS by device', () => {
 		expect(within(deviceCard()).getByText('No device chosen')).toBeInTheDocument();
 	});
 
-	it('keeps the device on screen when a typo follows a lookup, and clears the error on a good one', async () => {
-		stubDevice(() => domains(1, 'd'));
+	it('keeps the device on screen when a typo follows a lookup, and clears the error on a good one or a picked client', async () => {
+		stubDevice(() => domains(1, 'd'), [{ domain: 'gone.example', count: 2, clients: ['192.168.1.30'] }]);
 		render(DnsPage);
 		await lookUp();
 		expect(await screen.findByText('d0.example')).toBeInTheDocument();
@@ -309,6 +310,34 @@ describe('DNS page — DNS by device', () => {
 		expect(deviceCalls()).toHaveLength(1);
 		await lookUp();
 		expect(screen.queryByText(IP_ERROR)).not.toBeInTheDocument();
+
+		// a client picked from the NXDOMAIN table replaces the typo, so its error goes too
+		await fireEvent.input(box(), { target: { value: 'nope' } });
+		await fireEvent.keyDown(box(), { key: 'Enter' });
+		expect(screen.getByText(IP_ERROR)).toBeInTheDocument();
+		await fireEvent.click(await screen.findByRole('button', { name: '192.168.1.30' }));
+		expect(screen.queryByText(IP_ERROR)).not.toBeInTheDocument();
+		expect(box()).toHaveValue('192.168.1.30');
+		expect(deviceCalls().at(-1)).toMatch(/^\/api\/dns\/device\/192\.168\.1\.30/);
+	});
+
+	// only a 400 is a refusal worth showing: any other failure keeps the retry hint and never shows the daemon's raw text
+	it('keeps the retry hint and Try again for a failure that is not a refusal', async () => {
+		const raw = 'index_not_found_exception: no such index [zeek-dns-*]';
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) =>
+				url.startsWith('/api/dns/device/') ? { ok: false, status: 502, json: async () => ({ error: raw }) } : fail,
+			),
+		);
+		render(DnsPage);
+		await lookUp();
+		expect(await screen.findByText("Couldn't load DNS records for 192.168.1.20: the request failed.")).toBeInTheDocument();
+		const card = deviceCard();
+		expect(card).toHaveTextContent('Check that NetTap is running on the System page, then try again.');
+		expect(within(card).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+		expect(card).not.toHaveTextContent(/index_not_found_exception/);
 	});
 
 	it("shows the daemon's reason for a refused lookup, without Try again, and keeps the device", async () => {
