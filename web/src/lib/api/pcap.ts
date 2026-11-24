@@ -187,11 +187,24 @@ export async function previewPcap(
 /**
  * Get download URL for filtered PCAP.
  */
+// OLD CODE START — NET-373: no way to ask for a refusal as a page
+// export function getDownloadUrl(
+// 	filter: string,
+// 	opts: { from?: string; to?: string } = {}
+// ): string {
+// 	const query = buildQuery({ filter, from: opts.from, to: opts.to });
+// 	return `/api/pcap/download${query}`;
+// }
+// OLD CODE END
+/** The `type` of the message a refused download's page posts to the PCAP page that opened it (NET-373). */
+export const DOWNLOAD_ERROR_MESSAGE = 'nettap:pcap-download-error';
+
+/** `reply: 'page'`: opened as a tab, a refusal comes back as a readable page that tells the PCAP page why (NET-373). */
 export function getDownloadUrl(
 	filter: string,
-	opts: { from?: string; to?: string } = {}
+	opts: { from?: string; to?: string; reply?: 'page' } = {}
 ): string {
-	const query = buildQuery({ filter, from: opts.from, to: opts.to });
+	const query = buildQuery({ filter, from: opts.from, to: opts.to, reply: opts.reply });
 	return `/api/pcap/download${query}`;
 }
 

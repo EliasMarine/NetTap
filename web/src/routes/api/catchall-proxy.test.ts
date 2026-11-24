@@ -139,6 +139,46 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 		}
 	});
 
+	// NET-373: PCAP Search opens its download as a tab and asks for a refusal as a page
+	it('answers a refused PCAP download asked for as a page with readable HTML, and forwards the URL as sent', async () => {
+		daemonFetch.mockResolvedValue(
+			new Response(JSON.stringify({ error: 'No capture file holds packets from this window.' }), {
+				status: 404,
+				headers: { 'Content-Type': 'application/json' },
+			}),
+		);
+		const res = await GET(event('/api/pcap/download?filter=dns&from=2001-01-01T00%3A00%3A00.000Z&reply=page') as never);
+		expect(res.status).toBe(404);
+		expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+		expect(res.headers.get('cache-control')).toBe('no-store');
+		expect(await res.text()).toContain('No capture file holds packets from this window.');
+		expect(daemonFetch.mock.calls[0][0]).toBe('/api/pcap/download?filter=dns&from=2001-01-01T00%3A00%3A00.000Z&reply=page');
+	});
+
+	it('keeps JSON for a refused download without reply=page, and for other paths', async () => {
+		for (const path of ['/api/pcap/download?filter=dns', '/api/pcap/files?reply=page']) {
+			daemonFetch.mockResolvedValue(
+				new Response(JSON.stringify({ error: 'nope' }), { status: 404, headers: { 'Content-Type': 'application/json' } }),
+			);
+			const res = await GET(event(path) as never);
+			expect(res.status, path).toBe(404);
+			expect(res.headers.get('content-type'), path).toContain('application/json');
+			expect(await res.json(), path).toEqual({ error: 'nope' });
+		}
+	});
+
+	it('streams a PCAP download asked for as a page unchanged when it succeeds', async () => {
+		daemonFetch.mockResolvedValue(
+			new Response('pcapbytes', {
+				headers: { 'Content-Type': 'application/vnd.tcpdump.pcap', 'Content-Disposition': 'attachment; filename=nettap_filtered.pcap' },
+			}),
+		);
+		const res = await GET(event('/api/pcap/download?filter=dns&reply=page') as never);
+		expect(res.status).toBe(200);
+		expect(await res.text()).toBe('pcapbytes');
+		expect(res.headers.get('content-disposition')).toContain('nettap_filtered.pcap');
+	});
+
 	it('streams PCAP bodies through unchanged', async () => {
 		daemonFetch.mockResolvedValue(
 			new Response('pcapbytes', {

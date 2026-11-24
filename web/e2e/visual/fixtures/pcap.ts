@@ -22,4 +22,6 @@ export const PCAP_ROUTES: FixtureRoute[] = [
 		empty: { count: 0, files: [] } satisfies PcapFilesResponse,
 		populated: { count: files.length, files } satisfies PcapFilesResponse,
 	},
+	// NET-373: TShark accepts every filter, so Download filtered turns on (the download itself: fixture-daemon.ts)
+	{ path: '/api/pcap/check-filter', method: 'POST', empty: { ok: true, filter: '' } },
 ];

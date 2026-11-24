@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import {
 		getPcapFiles,
 		searchPcaps,
@@ -12,6 +12,7 @@
 		formatRelativeTime,
 		QUICK_FILTERS,
 		PROTO_FILTER_MAP,
+		DOWNLOAD_ERROR_MESSAGE,
 	} from '$lib/api/pcap';
 	import type {
 		PcapFile,
@@ -90,6 +91,12 @@
 	// NET-189: the download's own window (datetime-local text); both empty = the page's range
 	let downloadFrom = $state('');
 	let downloadTo = $state('');
+	/** NET-373: why the last download didn't start, shown beside its dates */
+	let downloadProblem = $state('');
+	/** The tab the current download opened: only it may report a refusal (NET-373) */
+	let downloadTab: Window | null = null;
+	/** A download whose tab the browser blocked, offered as a plain link */
+	let blockedUrl = $state('');
 	let loading = $state(false);
 	let error = $state('');
 
@@ -758,17 +765,58 @@
 		return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
 	}
 
+	// OLD CODE START — NET-373: a refused download's JSON opened in the new tab, away from the dates
+	// function downloadFiltered() {
+	// 	// OLD CODE: if (!bpfFilter.trim()) return; (NET-347: only a filter TShark accepted, or couldn't check)
+	// 	if (!bpfFilter.trim() || !downloadReady) return;
+	// 	const span = downloadWindow();
+	// 	if (typeof span === 'string') {
+	// 		error = span;
+	// 		return;
+	// 	}
+	// 	error = '';
+	// 	window.open(getDownloadUrl(bpfFilter, span), '_blank');
+	// }
+	// OLD CODE END
 	function downloadFiltered() {
-		// OLD CODE: if (!bpfFilter.trim()) return; (NET-347: only a filter TShark accepted, or couldn't check)
 		if (!bpfFilter.trim() || !downloadReady) return;
 		const span = downloadWindow();
 		if (typeof span === 'string') {
-			error = span;
+			downloadProblem = span;
 			return;
 		}
-		error = '';
-		window.open(getDownloadUrl(bpfFilter, span), '_blank');
+		// a retry with the same filter and dates must not keep the last refusal on screen
+		downloadProblem = '';
+		blockedUrl = '';
+		const url = getDownloadUrl(bpfFilter, { ...span, reply: 'page' });
+		downloadTab = window.open(url, '_blank');
+		if (!downloadTab) {
+			downloadProblem = 'Your browser blocked the download tab.';
+			blockedUrl = url;
+		}
 	}
+
+	/** A refusal from the download's tab (lib/server/download-error-page.ts): say it here and close the tab */
+	function onDownloadMessage(e: MessageEvent) {
+		const data: unknown = e.data;
+		if (e.origin !== window.location.origin || !downloadTab || e.source !== downloadTab) return;
+		if (!data || typeof data !== 'object' || !('type' in data) || data.type !== DOWNLOAD_ERROR_MESSAGE) return;
+		if (!('message' in data) || typeof data.message !== 'string') return;
+		downloadProblem = data.message;
+		downloadTab.close();
+		downloadTab = null;
+	}
+
+	// Another filter, window or range: the last download's answer no longer belongs beside these fields.
+	// Its tab, if it is still open, keeps its own readable page.
+	$effect(() => {
+		void [bpfFilter, downloadFrom, downloadTo, selectedTimeRange];
+		untrack(() => {
+			downloadTab = null;
+			downloadProblem = '';
+			blockedUrl = '';
+		});
+	});
 
 	function downloadFile(file: string) {
 		window.open(getFileDownloadUrl(file), '_blank');
@@ -900,6 +948,8 @@
 		{@render downloadCell(f)}
 	</div>
 {/snippet}
+
+<svelte:window onmessage={onDownloadMessage} />
 
 <svelte:head>
 	<title>PCAP Search - NetTap</title>
@@ -1033,13 +1083,28 @@
 		{/if}
 		<div class="toolbar">
 			<label class="word" for="pcap-download-from">Download from</label>
-			<input id="pcap-download-from" class="input when" type="datetime-local" step="1" bind:value={downloadFrom} />
+			<!-- OLD CODE: the date inputs had no aria-describedby (NET-373: a refusal is shown beside them) -->
+			<input id="pcap-download-from" class="input when" type="datetime-local" step="1" bind:value={downloadFrom} aria-describedby={downloadProblem ? 'pcap-download-error' : undefined} />
 			<label class="word" for="pcap-download-to">to</label>
-			<input id="pcap-download-to" class="input when" type="datetime-local" step="1" bind:value={downloadTo} />
+			<input id="pcap-download-to" class="input when" type="datetime-local" step="1" bind:value={downloadTo} aria-describedby={downloadProblem ? 'pcap-download-error' : undefined} />
 		</div>
+		{#if downloadProblem}
+			<p id="pcap-download-error" class="field-error download-error" role="alert">
+				{downloadProblem}
+				{#if blockedUrl}
+					<a class="link" href={blockedUrl} target="_blank" rel="noopener" onclick={() => { downloadProblem = ''; blockedUrl = ''; }}>Start the download</a>
+				{/if}
+			</p>
+		{/if}
+		<!-- OLD CODE START — NET-373: a refusal now arrives here, not in a new tab
 		<p class="field-help download-help">
 			Download filtered saves the {range.words} unless you set a start and an end here. One download reads a limited
 			number of packets, so keep the window short; a window that holds too many opens a message saying how many.
+		</p>
+		OLD CODE END -->
+		<p class="field-help download-help">
+			Download filtered saves the {range.words} unless you set a start and an end here. One download reads a limited
+			number of packets, so keep the window short; a window that holds too many says how many here.
 		</p>
 		<div class="toolbar">
 			<Pills
@@ -1257,6 +1322,7 @@
 	.word { font-size: var(--text-sm); color: var(--text-3); }
 	.when { width: auto; }
 	.download-help { margin-top: calc(var(--sp-2) * -1); margin-bottom: var(--sp-4); }
+	.download-error { margin-top: calc(var(--sp-2) * -1); margin-bottom: var(--sp-3); }
 	.note { margin-bottom: var(--sp-3); }
 	.pick-hint { margin-top: var(--sp-2); }
 	/* NET-347: TShark's refusal keeps its own line breaks (the caret under the bad token) */

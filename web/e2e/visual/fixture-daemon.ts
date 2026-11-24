@@ -36,6 +36,18 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 	res.end(JSON.stringify(body));
 }
 
+/** A capture file's global header alone: a valid, empty pcap. */
+const EMPTY_PCAP = Buffer.from('d4c3b2a1020004000000000000000000ffff000001000000', 'hex');
+
+/** NET-373: PCAP Search's filtered download. A window before 2010 is refused as the daemon does; any other is a capture. */
+function pcapDownload(res: ServerResponse, query: URLSearchParams): void {
+	if (Date.parse(query.get('from') ?? '') < Date.UTC(2010, 0, 1)) {
+		return send(res, 404, { error: 'No capture file holds packets from this window.' });
+	}
+	res.writeHead(200, { 'Content-Type': 'application/vnd.tcpdump.pcap', 'Content-Disposition': 'attachment; filename=nettap_filtered.pcap' });
+	res.end(EMPTY_PCAP);
+}
+
 /** Exact paths win over patterns, so /api/devices/count is never taken for a device id. */
 function findRoute(method: string, pathname: string): FixtureRoute | undefined {
 	const candidates = ROUTES.filter((r) => !r.method || r.method === method);
@@ -77,7 +89,7 @@ async function control(req: IncomingMessage, res: ServerResponse, pathname: stri
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
 	const method = req.method ?? 'GET';
-	const { pathname } = new URL(req.url ?? '/', 'http://fixture');
+	const { pathname, searchParams } = new URL(req.url ?? '/', 'http://fixture');
 
 	if (pathname.startsWith('/__fixture/')) return control(req, res, pathname);
 
@@ -87,6 +99,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 		return send(res, 401, { error: 'Unauthorized' });
 	}
 
+	if (method === 'GET' && pathname === '/api/pcap/download' && mode !== 'error') return pcapDownload(res, searchParams);
 	const route = findRoute(method, pathname);
 	if (!route) console.error(`[fixture-daemon] MISSING FIXTURE ${method} ${pathname} (mode ${mode})`);
 	if (mode === 'error') return send(res, 503, { error: 'Service unavailable (fixture error mode)' });
