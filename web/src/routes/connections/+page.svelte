@@ -112,7 +112,8 @@
 		{ value: 'all', label: 'All' },
 		{ value: 'established', label: 'Established' },
 		{ value: 'closed', label: 'Closed' },
-		{ value: 'rejected', label: 'Rejected' },
+		// OLD CODE: { value: 'rejected', label: 'Rejected' }, (NET-371: its rows read "Reset"; the daemon's group is REJ, RSTO, RSTR)
+		{ value: 'rejected', label: 'Reset' },
 		{ value: 'timeout', label: 'Timeout' },
 	];
 
@@ -1211,6 +1212,10 @@
 				<option value="100">100 rows</option>
 			</select>
 		</div>
+		{#if stateFilter === 'rejected'}
+			<!-- NET-371: the daemon's 'rejected' group, the rows whose Result reads Reset -->
+			<p class="field-help reset-help">Reset shows sessions Zeek ended as REJ (refused at the start), RSTO or RSTR (reset by either side).</p>
+		{/if}
 
 		{#if loading && connections.length === 0 && !connectionsFailed}
 			<CardState state="loading" title="Loading connections" />
@@ -1304,6 +1309,7 @@
 	.dest { display: inline-flex; flex-direction: column; line-height: 1.3; }
 	.org { color: var(--text-3); font-size: var(--text-xs); }
 	.result { display: inline-flex; align-items: center; gap: var(--sp-2); }
+	.reset-help { margin-bottom: var(--sp-3); }
 	.raw { color: var(--text-3); font-size: var(--text-xs); }
 	.rows { width: auto; }
 	button.chip { border: 0; font-family: inherit; cursor: pointer; }

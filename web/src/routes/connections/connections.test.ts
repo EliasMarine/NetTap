@@ -267,12 +267,38 @@ describe('Connections — sorting', () => {
 		expect(header).toHaveAttribute('aria-sort', 'ascending');
 	});
 
+	// OLD CODE START — NET-371: the pill said "Rejected" while its rows said "Reset"
+	// it("filters by state on the daemon and shows its rows as they come", async () => {
+	// 	const { container, getByRole } = await renderWith([row('a', { zeek: { conn: { conn_state: 'REJ' } } }), row('b')]);
+	// 	await fireEvent.click(getByRole('button', { name: 'Rejected' }));
+	// 	await flush();
+	// 	expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, state: 'rejected' }));
+	// 	expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
+	// });
+	// OLD CODE END
 	it("filters by state on the daemon and shows its rows as they come", async () => {
 		const { container, getByRole } = await renderWith([row('a', { zeek: { conn: { conn_state: 'REJ' } } }), row('b')]);
-		await fireEvent.click(getByRole('button', { name: 'Rejected' }));
+		await fireEvent.click(getByRole('button', { name: 'Reset' }));
 		await flush();
 		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, state: 'rejected' }));
 		expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
+	});
+
+	// NET-371: the Reset pill (the daemon's 'rejected' group: REJ, RSTO, RSTR) and its rows' Result use one word
+	it('names the reset group with the word its rows show, and says which codes it holds', async () => {
+		const { container, getByRole, queryByText } = await renderWith([row('a', { zeek: { conn: { conn_state: 'REJ' } } })]);
+		const pills = [...getByRole('group', { name: 'Connection state' }).querySelectorAll('button')].map((b) => b.textContent?.trim());
+		expect(pills).toEqual(['All', 'Established', 'Closed', 'Reset', 'Timeout']);
+		const help = /Reset shows sessions Zeek ended as REJ \(refused at the start\), RSTO or RSTR \(reset by either side\)\./;
+		expect(queryByText(help)).toBeNull();
+		await fireEvent.click(getByRole('button', { name: 'Reset' }));
+		await flush();
+		expect(queryByText(help)).not.toBeNull();
+		expect(container.querySelector('tbody .result')?.textContent).toContain('Reset');
+		expect(container.querySelector('tbody .result')?.textContent).toContain('REJ');
+		await fireEvent.click(within(getByRole('group', { name: 'Connection state' })).getByRole('button', { name: 'All' }));
+		await flush();
+		expect(queryByText(help)).toBeNull();
 	});
 
 	it("shows the service from network.protocol, not protocol's transport entry", async () => {
