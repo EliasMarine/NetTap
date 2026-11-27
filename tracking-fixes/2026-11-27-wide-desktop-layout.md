@@ -6,12 +6,12 @@
 
 | Phase | Linear | What | Status | PR | On the G11 |
 |---|---|---|---|---|---|
-| 1 | NET-376 | Short cards stay short beside long tables | In progress | — | — |
+| 1 | NET-376 | Short cards stay short beside long tables | In review | #369 | — |
 | 2 | NET-377 | Records first on Connections and Log Explorer; Alert summary beside Home's chart | Todo | — | — |
 | 3 | NET-378 | DNS and PCAP keep a selection in view; remove DNS's duplicate card | Todo | — | — |
 | 4 | NET-379 | Detail panel beside the list instead of a modal on wide screens (Live first) | Todo | — | — |
 
-Update this table, and the Linear issue, when a phase starts, merges and is verified on the G11.
+Update this table, and the Linear issue, when a phase starts, merges and is verified on the G11. Linear (NET-375 and its sub-issues) has the live status. This file is updated in each phase's PR, so a phase's G11 result lands with the next phase.
 
 ## Root problems
 
@@ -58,7 +58,15 @@ Records sit at 1,918 px (Connections › Sessions), 1,483 px (Log Explorer › L
 - **Tests:** `e2e/visual/short-cards.visual.ts` checks that a short card's height doesn't change when its neighbour grows, at 1920 and 2560. `live.visual.ts` checks the flat-map cap.
 - **Deploy:** `scripts/remote/deploy-layout-streamline.sh` (web only; reused by later phases).
 
-**Results:** pending.
+**Results (before merge):**
+- New visual tests: 11 tests, at 1440, 1920 and 2560 wide plus a tablet and phone check. Repeated 3×, 34 passed.
+- Negative checks: with correction 11 removed, all 9 desktop tests fail. With `.fit` ungated, the tablet test fails.
+- Full `test:visual`: 428 passed, 68 skipped (reduced-motion).
+- vitest: 6,380 passed. svelte-check: 0 errors. `check:colors` and `check:e2e`: clean. Build: OK.
+- `/codex-review`: approved after 4 rounds. Its findings covered the phone and tablet breakpoints, the Live feed's own `.fit`, the expanded map, and test and probe soundness. `/ponytail-review` said ship.
+- Visual check at 1920: Top talkers and Protocols stack at their own heights beside the feed, and the Protocols donut is at its 160 px minimum.
+
+**G11 verification:** `scratchpad/g11-layout-verify.cjs` waits for loaded cards, measures each card's stretch (a card in a `.stack` is measured via its column), and grows each card of every pair in turn. Before the deploy, it failed on exactly the nine cards above, as it should.
 
 ## Phase 2: records first (NET-377)
 
