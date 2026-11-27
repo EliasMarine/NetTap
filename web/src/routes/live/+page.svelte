@@ -658,8 +658,8 @@
 	<p class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('the filtered figures', true)}</p>
 {/if}
 
-<!-- OLD CODE: <div class="grid"> (the side cards stack beside the feed) -->
-<div class="grid live-grid">
+<!-- OLD CODE: <div class="grid live-grid"> (its rules placed the side cards beside a two-row feed; NET-376 uses a .stack column) -->
+<div class="grid">
 	<!-- OLD CODE START: sub="Connections, throughput and devices · last 5 minutes" (O8) OLD CODE END -->
 	<!-- OLD CODE START: sub="Connections, throughput and LAN addresses · last 5 minutes" (NET-237, TRF-1: records exist only once a connection ends) OLD CODE END -->
 	<Card class="c-12" title="Right now" sub="Bandwidth is live · the rest counts connections that ended in the last 5 minutes">
@@ -710,48 +710,54 @@
 		onretry={() => refresh.run()}
 	/>
 
-	<!-- OLD CODE START: sub="Bytes and connections per device · last 5 minutes" (O11: LAN sources only; O7: filtered from the daemon) OLD CODE END -->
-	<!-- OLD CODE START: sub="Bytes and connections per LAN address · last 5 minutes…" (NET-237) OLD CODE END -->
-	<Card class="c-4 live-side" title="Top talkers" sub="Bytes and connections per LAN address · ended in the last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
-		{#if talkerItems.length > 0}
-			<DeviceList items={talkerItems} mode="select" selectedKey={deviceFilter ?? undefined} onselect={(item) => setDeviceFilter(item.key)} />
-		{:else if hasActiveFilter && filteredFailed}
-			<CardState state="error" title={loadFailed('the filtered top talkers')} message="Check that NetTap is running on the System page, then try again." onaction={() => loadFiltered()} />
-		{:else if hasActiveFilter && !filteredDashboard}
-			<CardState state="loading" title="Loading top talkers" />
-		{:else if dashboard}
-			<CardState state="empty" title={hasActiveFilter ? 'No devices match these filters' : 'No devices talking yet'} message="Devices appear here once they send traffic." />
-		{:else if error}
-			<CardState state="error" title={error} message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
-		{:else}
-			<CardState state="loading" title="Loading top talkers" />
-		{/if}
-	</Card>
+	<!-- NET-376: Top talkers and Protocols share one column beside the feed, each at its own height.
+	     OLD CODE: both were grid items (class="c-4 live-side") placed in columns 1–4 beside a feed that
+	     spanned two rows, so the feed's height was split between them (5,418 px each on the G11). -->
+	<div class="stack c-4 fit live-stack">
+		<!-- OLD CODE START: sub="Bytes and connections per device · last 5 minutes" (O11: LAN sources only; O7: filtered from the daemon) OLD CODE END -->
+		<!-- OLD CODE START: sub="Bytes and connections per LAN address · last 5 minutes…" (NET-237) OLD CODE END -->
+		<Card class="c-4" title="Top talkers" sub="Bytes and connections per LAN address · ended in the last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
+			{#if talkerItems.length > 0}
+				<DeviceList items={talkerItems} mode="select" selectedKey={deviceFilter ?? undefined} onselect={(item) => setDeviceFilter(item.key)} />
+			{:else if hasActiveFilter && filteredFailed}
+				<CardState state="error" title={loadFailed('the filtered top talkers')} message="Check that NetTap is running on the System page, then try again." onaction={() => loadFiltered()} />
+			{:else if hasActiveFilter && !filteredDashboard}
+				<CardState state="loading" title="Loading top talkers" />
+			{:else if dashboard}
+				<CardState state="empty" title={hasActiveFilter ? 'No devices match these filters' : 'No devices talking yet'} message="Devices appear here once they send traffic." />
+			{:else if error}
+				<CardState state="error" title={error} message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
+			{:else}
+				<CardState state="loading" title="Loading top talkers" />
+			{/if}
+		</Card>
 
-	<!-- OLD CODE START: sub="Share of connections · last 5 minutes…" (NET-237) OLD CODE END -->
-	<Card class="c-4 live-side" col title="Protocols" sub="Share of connections · ended in the last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
-		{#if protocolItems.some((p) => p.value > 0)}
-			<Donut
-				items={protocolItems}
-				total={protocolTotal}
-				centreLabel="connections"
-				formatValue={(v) => v.toLocaleString('en-GB')}
-				ariaLabel="Protocols across {protocolTotal?.toLocaleString('en-GB') ?? 'the'} connections"
-			/>
-		{:else if hasActiveFilter && filteredFailed}
-			<CardState state="error" title={loadFailed('the filtered protocols')} message="Check that NetTap is running on the System page, then try again." onaction={() => loadFiltered()} />
-		{:else if hasActiveFilter && !filteredDashboard}
-			<CardState state="loading" title="Loading protocols" />
-		{:else if dashboard}
-			<CardState state="empty" title={hasActiveFilter ? 'No connections match these filters' : 'No protocols yet'} message="The protocol split appears here once connections arrive." />
-		{:else if error}
-			<CardState state="error" title={error} message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
-		{:else}
-			<CardState state="loading" title="Loading protocols" />
-		{/if}
-	</Card>
+		<!-- OLD CODE START: sub="Share of connections · last 5 minutes…" (NET-237) OLD CODE END -->
+		<Card class="c-4" col title="Protocols" sub="Share of connections · ended in the last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
+			{#if protocolItems.some((p) => p.value > 0)}
+				<Donut
+					items={protocolItems}
+					total={protocolTotal}
+					centreLabel="connections"
+					formatValue={(v) => v.toLocaleString('en-GB')}
+					ariaLabel="Protocols across {protocolTotal?.toLocaleString('en-GB') ?? 'the'} connections"
+				/>
+			{:else if hasActiveFilter && filteredFailed}
+				<CardState state="error" title={loadFailed('the filtered protocols')} message="Check that NetTap is running on the System page, then try again." onaction={() => loadFiltered()} />
+			{:else if hasActiveFilter && !filteredDashboard}
+				<CardState state="loading" title="Loading protocols" />
+			{:else if dashboard}
+				<CardState state="empty" title={hasActiveFilter ? 'No connections match these filters' : 'No protocols yet'} message="The protocol split appears here once connections arrive." />
+			{:else if error}
+				<CardState state="error" title={error} message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
+			{:else}
+				<CardState state="loading" title="Loading protocols" />
+			{/if}
+		</Card>
+	</div>
 
-	<Card class="c-8 live-feed" title="Live connections" sub={feedSub}>
+	<!-- OLD CODE: <Card class="c-8 live-feed" …> (NET-376: fit, so a short feed doesn't stretch to the stack either) -->
+	<Card class="c-8 fit live-feed" title="Live connections" sub={feedSub}>
 		{#if dashboard}
 			<div class="toolbar">
 				<Pills options={protocolPills} value={protocolFilter ?? 'all'} onchange={pickProtocol} ariaLabel="Protocol" />
@@ -842,11 +848,16 @@
 	/* The system's new-row flash (tr.new, bundle.css:310) on a row the DataTable renders; the system
 	   CSS stops it under reduced motion */
 	:global(.live-feed tr:has(.row-new) td) { animation: rowin 900ms var(--ease); }
-	/* Top talkers and Protocols stack in the first four columns, beside the feed; below 1100 px the
-	   system's own spans apply */
+	/* OLD CODE START — NET-376: the feed spanned two rows, so its height was split between the side cards
 	@container app (min-width: 1101px) {
 		.live-grid { grid-auto-flow: row dense; }
 		.live-grid > :global(.live-side) { grid-column: 1 / span 4; }
 		.live-grid > :global(.live-feed) { grid-column: 5 / span 8; grid-row: span 2; }
+	}
+	OLD CODE END */
+	/* On tablets the two cards rejoin the grid and pair half-width (c-4 spans 6), as before NET-376.
+	   Not on phones: there the stack must keep its box, which the phone rule .grid > * spans 12. */
+	@container app (760px < width <= 1100px) {
+		.live-stack { display: contents; }
 	}
 </style>

@@ -1711,7 +1711,7 @@ OLD CODE END -->
 		{/if}
 	</Card>
 
-	<Card class="c-4" title="Alert categories" sub={failed.categories ? 'Check failed' : `${enhancedCategories.length} categories · alerts per category · ${range.words}`}>
+	<Card class="c-4 fit" title="Alert categories" sub={failed.categories ? 'Check failed' : `${enhancedCategories.length} categories · alerts per category · ${range.words}`}>
 		{#if !loaded}
 			<CardState state="loading" title="Loading alert categories" />
 		{:else if failed.categories}
@@ -1736,7 +1736,7 @@ OLD CODE END -->
 
 	<!-- OLD CODE: sub={failed.signatures ? 'Check failed' : `${topSignatures.length} rules · alerts per rule · select one to filter the list`} (NET-160: a partial list says so) -->
 	<!-- OLD CODE: …· alerts per rule · select one to filter the list`}> (a rule opens its own page) -->
-	<Card class="c-8" title="Top signatures" sub={failed.signatures ? 'Check failed' : `${topPartial.signatures ?? `${topSignatures.length} rules`} · alerts per rule · select a rule to see what it means`}>
+	<Card class="c-8 fit" title="Top signatures" sub={failed.signatures ? 'Check failed' : `${topPartial.signatures ?? `${topSignatures.length} rules`} · alerts per rule · select a rule to see what it means`}>
 		{#snippet actions()}
 			<SearchField id="alerts-signature-search" label="Search signatures" placeholder="Search signatures…" size="toolbar" bind:value={signatureSearch} />
 		{/snippet}

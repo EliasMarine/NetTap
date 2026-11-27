@@ -68,6 +68,8 @@ Top to bottom:
 3. **Hero chart and side card:** one hero card in `c-8` (or `c-7`) beside one in `c-4` (or `c-5`). At most two hero cards per screen.
 4. **Detail cards and tables.**
 
+A card beside a longer one, whose height depends on the data, takes `fit` (correction 11), so a short card never becomes a tall empty box.
+
 Every card has a title and a sub that states the unit and the window ("GB per hour · last 24 hours"). Pages are always full width: never set `max-width` on a page container.
 
 ## Components (`src/lib/components/ui/`)
@@ -159,6 +161,7 @@ From the system README: sentence case everywhere (titles, buttons, labels), UK s
 8. At 1100 px and below, the last half-width card of a run of one, three or five (like the side card of a c-8 hero row) takes the full row, instead of sitting alone on half a row.
 9. In a `col` card the donut stacks above its legend and grows into the card's free height.
 10. On phones the TopBar shows again under the menu bar (system.css hides it), so search and the notification inbox stay reachable. Search shares its row with Refresh and the bell; warning chips wrap, and the "Updated" text and the ⌘K hint give way.
+11. On desktop (wider than 1100 px) a `.fit` card keeps its own height instead of stretching to the tallest card in its row (NET-376). Put it on both cards of a pair whose heights depend on the data, such as a short summary beside a long table; never on a hero chart, which fills its row on purpose. Live's Top talkers and Protocols share one `.stack` column beside the feed.
 
 Every `<button>` sets an explicit text colour (the browser default is black). Focus rings use `--focus`.
 

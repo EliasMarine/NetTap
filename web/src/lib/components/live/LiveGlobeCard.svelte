@@ -347,6 +347,9 @@
 	.globe-stage { position: relative; height: 640px; min-width: 0; border-radius: var(--r-md); overflow: hidden; }
 	/* The flat map sizes itself from its width */
 	.globe-stage.is-flat { height: auto; display: grid; align-content: center; min-height: 320px; }
+	/* NET-376: on a wide screen the flat map stops growing at the globe's 640 px height, centred in its
+	   column (DotMap draws at 0.44 × its width, DotMap.svelte:83). Expanded, it uses the whole window. */
+	.globe-card:not(.is-expanded) .globe-stage.is-flat { width: 100%; max-width: calc(640px / 0.44); justify-self: center; }
 	/* Pausing the page stops the flat map's flowing arcs too */
 	.is-paused :global(.arc) { animation-play-state: paused; }
 

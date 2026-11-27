@@ -808,7 +808,7 @@ OLD CODE END -->
 			note={rangeLabel} />
 
 		<!-- OLD CODE: <Card class="c-4" hero title="Smart home health" …> (NET-192 PR 4: the hero is the row's c-8 card, Findings) -->
-		<Card class="c-4" title="Smart home health" sub="Trust score out of 100 · from {fleet.scored_device_count} of {fleet.device_count} devices · {rangeLabel}">
+		<Card class="c-4 fit" title="Smart home health" sub="Trust score out of 100 · from {fleet.scored_device_count} of {fleet.device_count} devices · {rangeLabel}">
 			<div class="trust-top">
 				<!-- OLD CODE START — NET-158: no scored device drew 0, grade F
 				<Ring value={healthScore} ariaLabel="Smart home health {healthScore} of 100, grade {healthGrade}" />
@@ -827,7 +827,7 @@ OLD CODE END -->
 			{@render scores(scoreRows(fleet, fleet.devices))}
 		</Card>
 
-		<Card class="c-8" hero title="Findings" sub="From the privacy and protocol checks · {rangeLabel}">
+		<Card class="c-8 fit" hero title="Findings" sub="From the privacy and protocol checks · {rangeLabel}">
 			{#snippet actions()}
 				{#if findings.length > 0}<span class="chip is-warn">{findings.length} findings</span>{/if}
 			{/snippet}

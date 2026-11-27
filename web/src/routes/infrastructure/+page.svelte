@@ -1515,7 +1515,7 @@ OLD CODE END -->
 		{/if}
 	</Card>
 
-	<Card title="Logstash pipeline" sub="Log enrichment, GeoIP and hostname resolution" class="c-5">
+	<Card title="Logstash pipeline" sub="Log enrichment, GeoIP and hostname resolution" class="c-5 fit">
 		{#if logstashStats}
 			{@const ls = logstashStats}
 			<dl class="facts flush">
@@ -1552,7 +1552,7 @@ OLD CODE END -->
 		{/if}
 	</Card>
 
-	<Card title="OpenSearch cluster" sub={opensearchSub} class="c-7">
+	<Card title="OpenSearch cluster" sub={opensearchSub} class="c-7 fit">
 		{#if cluster}
 			{@const cl = cluster}
 			<dl class="facts flush">

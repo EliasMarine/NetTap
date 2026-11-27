@@ -973,14 +973,14 @@
 		)}
 	</Card>
 
-	<Card title="Domains" sub="Queries and clients per domain · {rangeWords} · top 50" class="c-8">
+	<Card title="Domains" sub="Queries and clients per domain · {rangeWords} · top 50" class="c-8 fit">
 		{@render section(
 			{ what: 'top domains', failed: domainsFailed, has: topDomains.length > 0, emptyTitle: 'No domains recorded.', emptyMessage: 'Check that Zeek is capturing DNS traffic.' },
 			domainsBody,
 		)}
 	</Card>
 
-	<Card title="Query types" sub="Share of queries by record type · {rangeWords}" class="c-4">
+	<Card title="Query types" sub="Share of queries by record type · {rangeWords}" class="c-4 fit">
 		{@render section(
 			{ what: 'query types', failed: typesFailed, has: queryTypes.length > 0, emptyTitle: 'No query type data available.', emptyMessage: 'Record types appear once Zeek sees DNS traffic.' },
 			typesBody,
@@ -1079,7 +1079,7 @@
 		{/if}
 	</Card>
 
-	<Card title="NXDOMAIN errors" sub="Lookups for names that don't exist · {rangeWords}" class="c-6">
+	<Card title="NXDOMAIN errors" sub="Lookups for names that don't exist · {rangeWords}" class="c-6 fit">
 		<span id="nxdomain-section" class="anchor"></span>
 		<!-- OLD CODE: emptyMessage: "That's a good sign." (NET-225: encrypted lookups aren't checked at all) -->
 		{@render section(
@@ -1088,7 +1088,7 @@
 		)}
 	</Card>
 
-	<Card title="Suspicious DNS patterns" sub="Possible beaconing, tunnelling and generated names · {rangeWords}" class="c-6">
+	<Card title="Suspicious DNS patterns" sub="Possible beaconing, tunnelling and generated names · {rangeWords}" class="c-6 fit">
 		<!-- OLD CODE START — #96: a failed check showed "No suspicious DNS patterns detected"
 		{#if suspicious.length === 0 && !loading}
 		OLD CODE END -->

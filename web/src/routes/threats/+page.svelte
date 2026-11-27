@@ -776,7 +776,7 @@
 		<Card
 			title="Beaconing"
 			sub="Connections repeated on a schedule · {rangeText}{beaconCheckedAt ? ` · checked ${beaconCheckedAt}` : ''}"
-			class="c-6"
+			class="c-6 fit"
 		>
 			{#snippet actions()}
 				<span class={['chip', beacons.length > 0 && 'is-warn']}
@@ -844,7 +844,7 @@
 
 		<!-- DNS anomalies -->
 		<!-- OLD CODE: sub="Up to 5 of each finding · {rangeText}" (a row opens why it was listed) -->
-		<Card title="DNS anomalies" sub="Up to 5 of each finding · select one to see why it was listed · {rangeText}" class="c-6">
+		<Card title="DNS anomalies" sub="Up to 5 of each finding · select one to see why it was listed · {rangeText}" class="c-6 fit">
 			{#snippet actions()}
 				<span class={['chip', (dnsAnomalies.dga_suspects?.length ?? 0) + (dnsAnomalies.nxdomain_spikes?.length ?? 0) > 0 && 'is-warn']}
 					>{failedChecks.has('dns_anomalies') ? 'check failed' : plural(dnsFindings, 'finding')}</span
