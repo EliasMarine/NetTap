@@ -1258,7 +1258,7 @@
 		{/if}
 	</Card>
 
-	<Card title="Available files" sub="{filesUnknown ? 'Capture files' : `${files.length} files`} · {range.words}" class="c-8">
+	<Card title="Available files" sub="{filesUnknown ? 'Capture files' : `${files.length} files`} · {range.words}" class="c-8 fit">
 		<!-- NET-249: a timeline pick narrows this list; the notice says to what, and Show all clears it -->
 		<span id="files-section" class="anchor"></span>
 		{#if filesFailed && !filesLoading}
@@ -1292,7 +1292,7 @@
 		{/if}
 	</Card>
 
-	<Card title="Protocols in preview" sub="Packets per protocol · share of the preview" class="c-4">
+	<Card title="Protocols in preview" sub="Packets per protocol · share of the preview" class="c-4 fit">
 		{#if protocolBreakdown.length === 0}
 			<CardState state="empty" icon="connections" title="No preview loaded" message="Load a file preview to see protocol distribution." />
 		{:else}

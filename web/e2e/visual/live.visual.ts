@@ -8,7 +8,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { LIVE_ROUTES } from './fixtures/live.ts';
-import { expectNoConsoleErrors, expectReached, setMode, sweep, VIEWPORTS, watchApi, watchConsole } from './harness.ts';
+import { expectNoConsoleErrors, expectReached, setMode, settle, sweep, VIEWPORTS, watchApi, watchConsole } from './harness.ts';
 
 const LIVE = { route: '/live', mode: 'populated' } as const;
 
@@ -28,12 +28,13 @@ function readMap(page: Page): Promise<{ markup: string; animations: number }> {
 	}));
 }
 
-async function openLive(page: Page, init?: () => void) {
+async function openLive(page: Page, init?: () => void, viewport: { width: number; height: number } = VIEWPORTS[0]) {
 	await setMode('populated');
 	const errors = watchConsole(page);
 	const apiIdle = watchApi(page);
 	if (init) await page.addInitScript(init);
-	await page.setViewportSize(VIEWPORTS[0]);
+	// OLD CODE: await page.setViewportSize(VIEWPORTS[0]); (NET-376: the flat-map cap is checked at 2560)
+	await page.setViewportSize(viewport);
 	await page.goto('/live');
 	await expectReached(page, '/live', /Live/);
 	await apiIdle();
@@ -124,6 +125,54 @@ test('/live populated: the flat map this browser picked', async ({ page }, testI
 		await expect(card(page).locator('.globe-stage')).toHaveClass(/is-paused/);
 		expect(await playState()).toBe('paused');
 	}
+	expectNoConsoleErrors(errors, LIVE);
+});
+
+/** The flat map's stage against its grid track (the globe body's first column) and the map's own height. */
+function flatGeometry(page: Page) {
+	return card(page).locator('.globe-body').evaluate((body) => {
+		const stage = body.querySelector('.globe-stage')!.getBoundingClientRect();
+		const svg = body.querySelector('.globe-stage svg')!.getBoundingClientRect();
+		const cs = getComputedStyle(body);
+		const track = parseFloat(cs.gridTemplateColumns.split(' ')[0]);
+		const trackLeft = body.getBoundingClientRect().left + parseFloat(cs.paddingLeft);
+		return { track, stageWidth: stage.width, left: stage.left - trackLeft, right: trackLeft + track - stage.right, svgHeight: svg.height };
+	});
+}
+
+const CAP = 640 / 0.44; // the globe stage's 640 px height at DotMap's 0.44 height ratio
+
+test('/live populated: on a wide screen the flat map stops at the globe height, centred, but not when expanded (NET-376)', async ({ page }, testInfo) => {
+	test.skip(testInfo.project.name === 'reduced-motion', 'layout only: the app pass covers it');
+	const errors = await openLive(page, () => localStorage.setItem('nettap-display-settings', JSON.stringify({ liveMap: 'flat' })), { width: 2560, height: 1440 });
+	await expect(card(page)).toHaveAttribute('data-backend', 'flat');
+	await settle(page);
+
+	// 2560: the column is wider than the cap, so the map is capped at 640 px tall and centred in it
+	const wide = await flatGeometry(page);
+	expect(wide.track, '2560: the map column is wider than the cap').toBeGreaterThan(CAP + 10);
+	expect(Math.abs(wide.stageWidth - CAP), '2560: the stage is capped').toBeLessThanOrEqual(1);
+	expect(Math.abs(wide.svgHeight - 640), '2560: the map is the globe height').toBeLessThanOrEqual(2);
+	expect(Math.abs(wide.left - wide.right), '2560: centred in its column').toBeLessThanOrEqual(2);
+
+	// 1920: the column is narrower than the cap, so the map fills it and keeps its 0.44 shape
+	await page.setViewportSize({ width: 1920, height: 1080 });
+	await expect.poll(async () => Math.abs((await flatGeometry(page)).stageWidth - (await flatGeometry(page)).track), { message: '1920: the stage fills its column' }).toBeLessThanOrEqual(1);
+	const mid = await flatGeometry(page);
+	expect(mid.track, '1920: the column is narrower than the cap').toBeLessThan(CAP);
+	await expect.poll(async () => Math.abs((await flatGeometry(page)).svgHeight - Math.round(mid.track * 0.44)), { message: '1920: the map keeps its shape' }).toBeLessThanOrEqual(2);
+
+	// Expanded at 2560 the map uses the room; collapsed it is capped again
+	await page.setViewportSize({ width: 2560, height: 1440 });
+	await settle(page);
+	const expand = card(page).getByRole('button', { name: 'Expand' });
+	await expand.click();
+	const dialog = page.getByRole('dialog', { name: 'Where your traffic goes' });
+	await expect(dialog).toHaveAttribute('aria-modal', 'true');
+	await expect.poll(async () => (await flatGeometry(page)).stageWidth, { message: 'expanded: not capped' }).toBeGreaterThan(CAP + 10);
+	await page.keyboard.press('Escape');
+	await expect(dialog).toHaveCount(0);
+	await expect.poll(async () => Math.abs((await flatGeometry(page)).stageWidth - CAP), { message: 'collapsed: capped again' }).toBeLessThanOrEqual(1);
 	expectNoConsoleErrors(errors, LIVE);
 });
 

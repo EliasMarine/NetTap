@@ -466,7 +466,7 @@
 		{/if}
 	</Card>
 
-	<Card title="Drive health" sub="SMART readings from the data drive" class="c-6">
+	<Card title="Drive health" sub="SMART readings from the data drive" class="c-6 fit">
 		{#snippet actions()}
 			{#if failed.smart || smartHealth?.healthy === null}
 				<span class="chip">Unknown</span>
@@ -585,7 +585,7 @@
 		{/if}
 	</Card>
 
-	<Card title="Services" sub="Optional analysis tools · installed version" class="c-6">
+	<Card title="Services" sub="Optional analysis tools · installed version" class="c-6 fit">
 		{#snippet actions()}
 			{#if cyberchefStatus?.available}
 				<a href="/system/cyberchef" class="link">Open CyberChef</a>

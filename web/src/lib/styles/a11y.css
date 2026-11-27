@@ -86,3 +86,12 @@ html:has(.app.nav-open) { overflow: hidden; }
   .topbar .top-right { flex-wrap: wrap; justify-content: flex-end; min-width: 0; max-width: 100%; }
   .topbar .top-right .chip { max-width: 100%; white-space: normal; }
 }
+
+/* 11. bundle.css:165 (.grid) leaves align-items at stretch, so a card took the height of the
+       tallest card in its row: a short card beside a long table was mostly empty box (Live's Top
+       talkers 5,418 px tall beside the feed, DNS's Query types 2,311 px beside Domains; NET-376).
+       On desktop a .fit card keeps its own height. Put it on both cards of a pair whose heights
+       depend on the data, so whichever is shorter stays short; never on a hero chart, which fills
+       its row on purpose. At 1100 px and below the system re-pairs cards (c-4 spans 6), so .fit
+       would act on other pairs: desktop only. */
+@container app (width > 1100px) { .grid > .fit { align-self: start; } }
