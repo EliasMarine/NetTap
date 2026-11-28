@@ -37,7 +37,7 @@
 		"vitest": "^4.1.12"
 	},
 	"dependencies": {
-		"argon2": "^0.41.0",
+		"argon2": "^0.45.2",
 		"jsonwebtoken": "^9.0.0"
 	}
 }
