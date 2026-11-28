@@ -155,6 +155,52 @@ def _report_result(
     return {"result": result, "refused": refused or [], "error": error}
 
 
+REPORT_EMAIL_MAX_BYTES = 90_000  # of HTML: Gmail clips an HTML body past about 102 KB
+
+
+def compose_report_message(
+    subject: str,
+    from_addr: str,
+    to: list[str],
+    text: str,
+    html: str | None = None,
+    logo: tuple[str, bytes] | None = None,
+) -> tuple[str, str | None]:
+    """NET-381: a report email on the wire, and why its HTML part was dropped (None: kept).
+
+    Plain text alone without html; with it, multipart/alternative of the text and the HTML,
+    the HTML wrapped in multipart/related with the logo when `logo` is (cid without <>, PNG).
+    Any failure composing the HTML side, or HTML over REPORT_EMAIL_MAX_BYTES, falls back to
+    the plain message: the styling never costs the email. Never touches SMTP. A bad header
+    value raises (the caller records it), as before.
+    """
+    msg = EmailMessage()
+    msg["Subject"] = subject.replace("\r", " ").replace("\n", " ")
+    msg["From"] = from_addr
+    msg["To"] = ", ".join(to)
+    msg.set_content(text, cte="quoted-printable")
+    plain = msg.as_string()
+    if html is None:
+        return plain, None
+    size = len(html.encode())
+    if size > REPORT_EMAIL_MAX_BYTES:
+        return plain, f"size {size} bytes"
+    stage = "html"
+    try:  # msg grows in place: the plain wire string is already taken
+        msg.add_alternative(html, subtype="html", cte="quoted-printable")
+        if logo is not None:
+            stage = "logo"
+            cid, png = logo
+            related = msg.get_payload()[1]
+            related.add_related(png, "image", "png", cid=f"<{cid}>")
+            related.set_param("type", "text/html")  # RFC 2387: the root part's type
+        stage = "serialise"
+        wire = msg.as_string()
+    except Exception as exc:  # the plain message still goes
+        return plain, f"{stage}: {type(exc).__name__}"
+    return wire, None
+
+
 def _reason(exc: BaseException) -> str:
     """A failed send in plain words, without the URL: Telegram and Discord URLs carry tokens."""
     if isinstance(exc, TimeoutError):  # asyncio's and the socket's, on 3.11+
@@ -908,10 +954,16 @@ class NotificationHub:
         return refused if isinstance(refused, dict) else {}
 
     def send_report_email(
-        self, recipients: list[str], subject: str, text: str
+        self,
+        recipients: list[str],
+        subject: str,
+        text: str,
+        html: str | None = None,
+        logo: tuple[str, bytes] | None = None,
     ) -> dict[str, Any]:
         """NET-340: a report as plain text, through the SMTP server _send_email falls back to
         (Settings › API keys), with no severity tag. Blocking: the report job's thread calls it.
+        NET-381: with `html` (and `logo`), also the branded HTML part; one SMTP attempt either way.
 
         {"result": sent | partly_sent | failed | not_configured, "refused": [addresses],
         "error": reason or None}. Nothing is retried here, and no address is logged.
@@ -925,12 +977,20 @@ class NotificationHub:
         ):
             return _report_result("not_configured", "no valid recipients")
         try:
-            msg = EmailMessage()  # a bad header value raises: a result too
-            msg["Subject"] = subject.replace("\r", " ").replace("\n", " ")
-            msg["From"] = smtp.from_addr
-            msg["To"] = ", ".join(recipients)
-            msg.set_content(text, cte="quoted-printable")
-            refused = self._smtp_send(*smtp, list(recipients), msg.as_string())
+            # OLD CODE START — NET-381: composed by compose_report_message (adds the HTML part)
+            # msg = EmailMessage()  # a bad header value raises: a result too
+            # msg["Subject"] = subject.replace("\r", " ").replace("\n", " ")
+            # msg["From"] = smtp.from_addr
+            # msg["To"] = ", ".join(recipients)
+            # msg.set_content(text, cte="quoted-printable")
+            # refused = self._smtp_send(*smtp, list(recipients), msg.as_string())
+            # OLD CODE END
+            wire, dropped = compose_report_message(
+                subject, smtp.from_addr, list(recipients), text, html, logo
+            )
+            if dropped:
+                logger.warning("Report email: HTML part dropped (%s)", dropped)
+            refused = self._smtp_send(*smtp, list(recipients), wire)
         except smtplib.SMTPRecipientsRefused as exc:
             logger.warning("Report email: every recipient was refused")
             return _report_result("failed", str(_reason(exc)), sorted(exc.recipients))

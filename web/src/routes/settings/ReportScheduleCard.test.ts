@@ -53,7 +53,7 @@ describe('Weekly report card (NET-340)', () => {
 
 		expect(await screen.findByText('Times are in Europe/London.')).toBeInTheDocument();
 		expect(
-			screen.getByText(/^Internet use, alerts, new devices, offline incidents and the data cap, as plain-text email to these addresses\./),
+			screen.getByText(/^Internet use, alerts, new devices, offline incidents and the data cap, by email to these addresses\./),
 		).toBeInTheDocument();
 	});
 
