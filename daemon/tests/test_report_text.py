@@ -5,7 +5,14 @@ import unicodedata
 
 import pytest
 
-from services.report_text import NETWORK_TEXT_MAX, POSTURE_LINE, clean, render_email
+from services.report_text import (
+    NETWORK_TEXT_MAX,
+    POSTURE_LINE,
+    RECIPIENT_LINE,
+    clean,
+    explanations,
+    render_email,
+)
 
 GB = 10**9
 
@@ -243,11 +250,12 @@ def test_unavailable_and_missing_sections_say_so():
     )
     del report["sections"]["offline"]
     lines = render_email(report)[1].splitlines()
+    # NET-381: no underline under the title, so the line follows it directly
     assert (
-        lines[lines.index("Alerts") + 2]
+        lines[lines.index("Alerts") + 1]
         == "Not available this time. It ran out of time."
     )
-    assert lines[lines.index("Offline incidents") + 2] == "Not available this time."
+    assert lines[lines.index("Offline incidents") + 1] == "Not available this time."
 
 
 def test_a_provisional_week_shows_the_at_least_figure_floored():
@@ -295,3 +303,86 @@ def test_a_truncated_journal_reads_at_least_and_extra_devices_are_counted():
 def test_the_text_has_no_emoji():
     _subject, text = render_email(_report())
     assert not any(unicodedata.category(ch) == "So" for ch in text)
+
+
+# --- NET-381: the tidied plain-text part --------------------------------------------
+
+BLOCKLIST = "A community domain blocklist matched a lookup."
+PHISHING = "It's on the phishing list."
+CHECK = "Check which device made the lookup."
+
+
+def _worst(*rows: tuple[str, str, str]) -> list[dict]:
+    return [
+        {"rule": rule, "severity": 1, "count": 10 - n, "what": what, "todo": todo}
+        for n, (rule, what, todo) in enumerate(rows)
+    ]
+
+
+def test_explanations_print_each_paragraph_once():
+    worst = _worst(
+        ("Phishing DNS", PHISHING, CHECK),
+        ("Malware TLS", BLOCKLIST, CHECK),
+        ("Malware DNS", BLOCKLIST, CHECK),
+        ("Exploit", "Shaped like an exploit.", "Update the device."),
+    )
+    assert explanations(worst) == [
+        (PHISHING, CHECK),
+        (BLOCKLIST, "Same as rule 1."),
+        ("Same as rule 2.", ""),
+        ("Shaped like an exploit.", "Update the device."),
+    ]
+
+
+def test_the_worst_rules_in_the_text_repeat_no_paragraph():
+    alerts = {
+        **_report()["sections"]["alerts"],
+        "worst": _worst(
+            ("Phishing DNS", PHISHING, CHECK),
+            ("Malware TLS", BLOCKLIST, CHECK),
+            ("Malware DNS", BLOCKLIST, CHECK),
+        ),
+    }
+    text = render_email(_report(alerts=alerts))[1]
+    assert text.count(CHECK) == 1 and text.count(BLOCKLIST) == 1
+    lines = text.splitlines()
+    i = lines.index("  3. Malware DNS (high, 8 alerts)")
+    assert lines[i + 1] == "     Same as rule 2."
+    assert "     What to do: Same as rule 1." in lines
+
+
+def test_sections_have_no_ascii_underline_and_end_with_the_recipient_line():
+    text = render_email(_report())[1]
+    assert not any(set(ln) == {"-"} for ln in text.splitlines())
+    assert text.rstrip().endswith(RECIPIENT_LINE)
+
+
+def test_warnings_under_a_removed_cap_say_so_across_a_month_rollover():
+    report = _report()
+    report["period"] = {**report["period"], "first": "2026-10-26", "last": "2026-11-01"}
+    cap = {
+        **report["sections"]["data_cap"],
+        "cap_bytes": None,
+        "percent": None,
+        "crossings": [
+            {
+                "month": "2026-10",
+                "threshold": 80,
+                "cap": 1200 * 10**6,
+                "at": "2026-10-28T10:00:00Z",
+            }
+        ],
+    }
+    lines = render_email(_report(data_cap=cap) | {"period": report["period"]})[
+        1
+    ].splitlines()
+    i = lines.index("No data cap is set now. Warnings recorded under an earlier cap:")
+    assert lines[i + 1] == "Passed 80% of 1.2 GB on 28 Oct."
+
+
+def test_a_monthly_report_says_monthly_in_the_subject_and_title():
+    report = _report()
+    report["frequency"] = "monthly"
+    subject, text = render_email(report)
+    assert subject.startswith("NetTap monthly report: ")
+    assert text.splitlines()[0] == "NetTap monthly report"

@@ -22,6 +22,11 @@ POSTURE_LINE = (
     "Security posture: open NetTap and choose Security posture (/compliance) for the "
     "full picture."
 )
+# NET-381: says why the email came and where the list lives (any cadence)
+RECIPIENT_LINE = (
+    "You get this email because your address is on a report schedule in Settings › "
+    "Notifications on this NetTap."
+)
 _NOUN = {"daily": "day", "weekly": "week", "monthly": "month"}
 _SEVERITY = {1: "high", 2: "medium", 3: "low"}
 _QUIET = "No alerts recorded: a quiet day, or Suricata wasn't running"
@@ -53,9 +58,12 @@ def render_email(report: dict) -> tuple[str, str]:
     )
     tz = period["tz"]
     frequency = report.get("frequency")
-    title = " ".join(
-        w for w in ("NetTap", frequency if frequency in _NOUN else "", "report") if w
-    )
+    # OLD CODE START — NET-381: the HTML part needs the same cadence as its heading
+    # title = " ".join(
+    #     w for w in ("NetTap", frequency if frequency in _NOUN else "", "report") if w
+    # )
+    # OLD CODE END
+    title = f"NetTap {heading(report).lower()}"
     dates = _span(first, last)
     noun = _NOUN.get(frequency, "period")
     sections = report.get("sections") or {}
@@ -68,9 +76,47 @@ def render_email(report: dict) -> tuple[str, str]:
         ),
         _block("Offline incidents", sections.get("offline"), lambda s: _offline(s, tz)),
         _block("Data cap", sections.get("data_cap"), lambda s: _data_cap(s, tz, last)),
-        [POSTURE_LINE],
+        [POSTURE_LINE, RECIPIENT_LINE],
     ]
     return f"{title}: {dates}", "\n\n".join("\n".join(b) for b in blocks) + "\n"
+
+
+def heading(report: dict) -> str:
+    """Weekly report, Daily report, Monthly report, or Report: the subject's own cadence."""
+    frequency = report.get("frequency")
+    return f"{frequency.capitalize()} report" if frequency in _NOUN else "Report"
+
+
+def explanations(worst: list[dict]) -> list[tuple[str, str]]:
+    """(explanation, what to do) per ranked rule, each paragraph printed once: a rule whose
+    pair an earlier rule already showed reads ("Same as rule N.", ""), and a single repeated
+    paragraph reads "Same as rule N." in its place. "" means nothing to show."""
+    pairs: dict[tuple[str, str], int] = {}
+    whats: dict[str, int] = {}
+    todos: dict[str, int] = {}
+    out = []
+    for n, w in enumerate(worst, 1):
+        what, todo = clean(w.get("what", ""), None), clean(w.get("todo", ""), None)
+        if (what, todo) in pairs:
+            out.append((f"Same as rule {pairs[(what, todo)]}.", ""))
+            continue
+        pairs[(what, todo)] = n
+        out.append((_once(what, whats, n), _once(todo, todos, n)))
+    return out
+
+
+def _once(text: str, seen: dict[str, int], n: int) -> str:
+    if not text:
+        return ""
+    first = seen.setdefault(text, n)
+    return text if first == n else f"Same as rule {first}."
+
+
+def day_count(d: dict) -> tuple[str, str]:
+    """(the count as shown, why it reads that way) for one day of alerts."""
+    stored, count = d["stored"], d["count"]
+    shown = "–" if stored == "absent" and not count else f"{count:,}"
+    return shown, _STORED.get(stored) or ("" if count else _QUIET)
 
 
 # --- formatting --------------------------------------------------------------------
@@ -117,7 +163,8 @@ def _severity(level: Any) -> str:
 
 
 def _block(title: str, section: Any, render: Callable[[dict], list[str]]) -> list[str]:
-    lines = [title, "-" * len(title)]
+    # OLD CODE: lines = [title, "-" * len(title)]  (NET-381: the underline was noise; a blank line separates blocks)
+    lines = [title]
     if not isinstance(section, dict) or section.get("status") not in ("ok", "partial"):
         note = section.get("note") if isinstance(section, dict) else None
         return [*lines, f"Not available this time. {note or ''}".rstrip()]
@@ -159,9 +206,12 @@ def _alerts(s: dict) -> list[str]:
         f"{sev['3']:,} low{other}."
     ]
     for d in s["days"]:
-        stored, count = d["stored"], d["count"]
-        shown = "–" if stored == "absent" and not count else f"{count:,}"
-        why = _STORED.get(stored) or ("" if count else _QUIET)
+        # OLD CODE START — NET-381: moved to day_count, shared with the HTML part
+        # stored, count = d["stored"], d["count"]
+        # shown = "–" if stored == "absent" and not count else f"{count:,}"
+        # why = _STORED.get(stored) or ("" if count else _QUIET)
+        # OLD CODE END
+        shown, why = day_count(d)
         lines.append(f"  {_weekday(d['date']):<10} {shown:>7}  {why}".rstrip())
     worst = s.get("worst")
     if worst is None:
@@ -171,13 +221,22 @@ def _alerts(s: dict) -> list[str]:
         ]
     if worst:
         lines.append("Worst rules:")
-    for n, w in enumerate(worst, 1):
-        lines += [
+    # OLD CODE START — NET-381: one blocklist's rules printed the same paragraphs four times
+    # for n, w in enumerate(worst, 1):
+    #     lines += [
+    #         f"  {n}. {clean(w['rule'])} ({_severity(w['severity'])}, "
+    #         f"{_count(w['count'], 'alert')})",
+    #         f"     {clean(w.get('what', ''), None)}",
+    #         f"     What to do: {clean(w.get('todo', ''), None)}",
+    #     ]
+    # OLD CODE END
+    for n, (w, (what, todo)) in enumerate(zip(worst, explanations(worst)), 1):
+        lines.append(
             f"  {n}. {clean(w['rule'])} ({_severity(w['severity'])}, "
-            f"{_count(w['count'], 'alert')})",
-            f"     {clean(w.get('what', ''), None)}",
-            f"     What to do: {clean(w.get('todo', ''), None)}",
-        ]
+            f"{_count(w['count'], 'alert')})"
+        )
+        lines += [f"     {what}"] if what else []
+        lines += [f"     What to do: {todo}"] if todo else []
     return lines
 
 
@@ -234,7 +293,8 @@ def _data_cap(s: dict, tz: str, last: date) -> list[str]:
             f"{_at_least(s['used_counted'])} counted under the current rules."
         ]
         if cap
-        else ["No data cap is set now."]
+        # OLD CODE: else ["No data cap is set now."]  (NET-381: the warnings below then read as current)
+        else ["No data cap is set now. Warnings recorded under an earlier cap:"]
     )
     if cap and s["used_provisional"] != s["used_counted"]:
         lines.append(f"Provisional total: {_gb(s['used_provisional'])}.")

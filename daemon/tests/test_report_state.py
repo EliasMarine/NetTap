@@ -50,10 +50,15 @@ class Hub:
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
+        self.parts: list[tuple] = []  # (html, logo) per attempt (NET-381)
         self.during = None
 
-    def send_report_email(self, recipients, subject, text) -> dict:
+    # OLD CODE: def send_report_email(self, recipients, subject, text) -> dict: (NET-381: html, logo)
+    def send_report_email(
+        self, recipients, subject, text, html=None, logo=None
+    ) -> dict:
         self.calls.append(list(recipients))
+        self.parts.append((html, logo))
         if self.during:
             self.during()
         return {"result": "sent", "refused": [], "error": None}
@@ -86,6 +91,15 @@ def contents(monkeypatch):
     monkeypatch.setattr("services.report_sections.build_sections", build)
     text = types.SimpleNamespace(render_email=lambda report: ("Subject", "Body"))
     monkeypatch.setitem(sys.modules, "services.report_text", text)
+    # NET-381: a working HTML renderer that records the cid it was given
+    built.cids = []
+
+    def render_html(report, cid):
+        built.cids.append(cid)
+        return f"<p>{cid}</p>"
+
+    page = types.SimpleNamespace(render_html=render_html, logo_png=lambda: b"PNG")
+    monkeypatch.setitem(sys.modules, "services.report_html", page)
     built.build = build
     return built
 
@@ -200,6 +214,32 @@ def test_one_due_schedule_per_tick(rig):
     assert len(rig.hub.calls) == 2
     rig.tick()
     assert len(rig.hub.calls) == 2
+
+
+def test_each_send_carries_the_html_part_with_its_own_logo_cid(rig, contents):
+    rig.confirmed()
+    rig.confirmed_below_the_api()
+    rig.clock.now = MONDAY_0805
+    rig.tick()
+    rig.tick()
+    assert len(rig.hub.parts) == 2
+    for (html, (cid, png)), rendered in zip(rig.hub.parts, contents.cids):
+        assert cid == rendered and html == f"<p>{cid}</p>" and png == b"PNG"
+        assert "@" in cid and not cid.startswith("<")
+    assert contents.cids[0] != contents.cids[1]
+
+
+def test_a_failed_html_render_still_sends_the_plain_email(rig, monkeypatch):
+    def broken(report, cid):
+        raise ValueError("bad template")
+
+    monkeypatch.setattr(sys.modules["services.report_html"], "render_html", broken)
+    sid = rig.confirmed()["id"]
+    rig.clock.now = MONDAY_0805
+    rig.tick()
+    assert rig.hub.calls == [["owner@example.com"]]
+    assert rig.hub.parts == [(None, None)]
+    assert rig.gen.view(sid)["last_delivery"]["result"] == "sent"
 
 
 def test_three_missed_boundaries_give_one_report(rig, contents):

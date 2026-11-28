@@ -19,6 +19,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta, timezone
+from email.utils import make_msgid
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -79,6 +80,24 @@ logger = logging.getLogger("nettap.services.report_generator")
 CLAIM_RETRY = timedelta(
     hours=1
 )  # after a failed claim write (a full disk), before rebuilding
+
+
+def _html_part(report: dict) -> tuple[str | None, tuple[str, bytes] | None]:
+    """NET-381: the branded HTML part and its logo, (html, (cid, png)); (None, None) when
+    rendering fails, so the week's email still goes as plain text (the claim already stands)."""
+    try:
+        from services.report_html import logo_png, render_html
+
+        png = logo_png()
+        cid = make_msgid(domain="nettap.local")[1:-1] if png else None
+        return render_html(report, cid), ((cid, png) if png else None)
+    except Exception as exc:
+        logger.error(
+            "Report %s: HTML part not rendered, sending plain text: %s",
+            report.get("id"),
+            type(exc).__name__,
+        )
+        return None, None
 
 
 class ReportGenerator:
@@ -673,8 +692,14 @@ class ReportGenerator:
                 from services.report_text import render_email
 
                 subject, text = render_email(report)
+                # OLD CODE START — NET-381: plain text only
+                # out = self._hub.send_report_email(
+                #     list(claim["recipients"]), subject, text
+                # )
+                # OLD CODE END
+                html, logo = _html_part(report)
                 out = self._hub.send_report_email(
-                    list(claim["recipients"]), subject, text
+                    list(claim["recipients"]), subject, text, html, logo
                 )
             except Exception as exc:  # never retried: the claim already stands
                 logger.error(

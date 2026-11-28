@@ -25,7 +25,8 @@
 
 	const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 	const HOURS = Array.from({ length: 24 }, (_, h) => h);
-	const WHAT_IS_SENT = 'Internet use, alerts, new devices, offline incidents and the data cap, as plain-text email to these addresses';
+	// OLD CODE: …and the data cap, as plain-text email to these addresses (NET-381: the email has an HTML part now)
+	const WHAT_IS_SENT = 'Internet use, alerts, new devices, offline incidents and the data cap, by email to these addresses';
 
 	interface Form {
 		enabled: boolean;

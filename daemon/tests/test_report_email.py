@@ -113,3 +113,132 @@ def test_no_valid_recipients_sends_nothing(hub, recipients):
     result, _s, _t = _send(hub, smtp_cls, recipients)
     assert result["result"] == "not_configured"
     smtp_cls.assert_not_called()
+
+
+# --- NET-381: the branded HTML part ---------------------------------------------------
+
+from email.message import EmailMessage  # noqa: E402
+
+from services.notification_hub import (  # noqa: E402
+    REPORT_EMAIL_MAX_BYTES,
+    compose_report_message,
+)
+from services.report_html import logo_png, render_html  # noqa: E402
+from tests.test_report_html import owner_week  # noqa: E402
+
+CID = "171.42.9@nettap.local"
+
+
+def _send_rich(hub, smtp_cls, logo=True, report=None):
+    report = report or _report()
+    subject, text = render_email(report)
+    html = render_html(report, CID if logo else None)
+    parts = (html, (CID, logo_png()) if logo else None)
+    with patch.object(hub_module.smtplib, "SMTP", smtp_cls):
+        return hub.send_report_email(TO, subject, text, *parts), text, html
+
+
+def _wire(server):
+    raw = server.sendmail.call_args.args[2]
+    raw.encode("ascii")  # 7-bit safe on the wire
+    return message_from_string(raw, policy=policy.default)
+
+
+def test_the_html_part_and_its_logo_go_as_alternative_and_related(hub):
+    smtp_cls, server = _smtp()
+    result, text, html = _send_rich(hub, smtp_cls)
+    assert result == {"result": "sent", "refused": [], "error": None}
+    assert server.sendmail.call_count == 1
+    msg = _wire(server)
+    assert msg["To"] == "owner@example.net, Partner@Example.net"
+    assert server.sendmail.call_args.args[1] == TO
+    assert msg.get_content_type() == "multipart/alternative"
+    plain, related = msg.get_payload()
+    assert plain.get_content_type() == "text/plain" and plain.get_content() == text
+    assert plain["Content-Transfer-Encoding"] == "quoted-printable"
+    assert related.get_content_type() == "multipart/related"
+    assert related.get_param("type") == "text/html"
+    page, image = related.get_payload()
+    assert page.get_content_type() == "text/html"
+    assert page.get_content().rstrip("\n") == html
+    assert page["Content-Transfer-Encoding"] == "quoted-printable"
+    assert image.get_content_type() == "image/png"
+    assert image.get_content() == logo_png() and logo_png().startswith(b"\x89PNG")
+    assert image["Content-ID"].strip("<>") == CID and f"cid:{CID}" in html
+
+
+def test_html_without_a_logo_is_the_second_alternative(hub):
+    smtp_cls, server = _smtp()
+    _send_rich(hub, smtp_cls, logo=False)
+    plain, page = _wire(server).get_payload()
+    assert page.get_content_type() == "text/html" and "cid:" not in page.get_content()
+
+
+def test_a_failure_composing_the_html_sends_the_plain_email_once(hub, caplog):
+    smtp_cls, server = _smtp()
+    with patch.object(EmailMessage, "add_related", side_effect=ValueError("bad")):
+        with caplog.at_level("WARNING"):
+            result, text, _html = _send_rich(hub, smtp_cls)
+    assert result["result"] == "sent" and server.sendmail.call_count == 1
+    msg = _wire(server)
+    assert msg.get_content_type() == "text/plain" and msg.get_content() == text
+    assert any(
+        "HTML part dropped (logo: ValueError)" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_html_over_the_size_budget_goes_as_plain_text(hub, monkeypatch, caplog):
+    monkeypatch.setattr(hub_module, "REPORT_EMAIL_MAX_BYTES", 1000)
+    smtp_cls, server = _smtp()
+    with caplog.at_level("WARNING"):
+        result, text, _html = _send_rich(hub, smtp_cls)
+    assert result["result"] == "sent" and server.sendmail.call_count == 1
+    assert _wire(server).get_content() == text
+    assert any("HTML part dropped (size " in r.getMessage() for r in caplog.records)
+
+
+def test_an_smtp_failure_with_html_is_failed_after_one_attempt(hub):
+    smtp_cls, server = _smtp(error=smtplib.SMTPDataError(554, b"rejected"))
+    result, _t, _h = _send_rich(hub, smtp_cls)
+    assert result["result"] == "failed" and server.sendmail.call_count == 1
+
+
+def _busy() -> dict:
+    report = owner_week()
+    devices = report["sections"]["new_devices"]
+    one = {**devices["listed"][3], "name": "Living-room television " + "x" * 100}
+    devices.update(count=50, listed=[one] * 50)
+    incident = {
+        "mac": "AA:BB:CC:00:00:09",
+        "name": "Back-garden camera " + "y" * 100,
+        "from": "2026-11-21T09:12:00Z",
+        "to": "2026-11-21T10:30:00Z",
+        "minutes": 78,
+        "state": "returned",
+        "detail": None,
+    }
+    report["sections"]["offline"].update(incidents=[incident] * 200, watched_now=12)
+    return report
+
+
+def test_a_busy_week_keeps_its_html_and_logo_under_the_size_budget():
+    report = _busy()
+    subject, text = render_email(report)
+    html = render_html(report, CID)
+    wire, dropped = compose_report_message(
+        subject,
+        "n@example.invalid",
+        ["o@example.invalid"],
+        text,
+        html,
+        (CID, logo_png()),
+    )
+    assert dropped is None and len(html.encode()) < REPORT_EMAIL_MAX_BYTES
+    msg = message_from_string(wire, policy=policy.default)
+    page, image = msg.get_payload()[1].get_payload()
+    assert page.get_content().rstrip("\n") == html and image.get_content() == logo_png()
+    assert "and 180 more: see the Reports page in NetTap." in html  # 20 of 200 listed
+    assert (
+        "Watched now:</span> 12." in html
+    )  # the line after the outages survives the cut
+    assert text.count("Back-garden camera") == 200  # the plain part keeps every one
